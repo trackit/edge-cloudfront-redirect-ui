@@ -1,0 +1,121 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/trackit/cloudfront-redirect-rules/shared/rewrite-rule.schema.json",
+  "title": "Rewrite rule item (frMatchRule)",
+  "$comment": "The DynamoDB item shape the Lambda@Edge reads for a rewrite (origin-request). Modeled on ForwardRewriteRule/ForwardSettings from the source project's redirect-rule-types.ts. forwardSettings.origin is assigned straight to request.origin, so it mirrors the CloudFront origin structure from @types/aws-lambda.",
+  "type": "object",
+  "required": ["pk", "sk", "type", "matches", "forwardSettings"],
+  "additionalProperties": false,
+  "properties": {
+    "pk": {
+      "type": "string",
+      "description": "Host, e.g. www.example.com. DynamoDB partition key.",
+      "minLength": 1
+    },
+    "sk": {
+      "type": "string",
+      "description": "REWRITE#<priority>, priority zero-padded to 5 digits; lower = higher priority; unique per host per type.",
+      "pattern": "^REWRITE#[0-9]{5}$"
+    },
+    "type": { "const": "frMatchRule" },
+    "matches": {
+      "type": "array",
+      "items": { "$ref": "redirect-rule.schema.json#/definitions/match" }
+    },
+    "forwardSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "At least one of origin / pathAndQS is meaningful; a rewrite that changes neither does nothing.",
+      "anyOf": [{ "required": ["origin"] }, { "required": ["pathAndQS"] }],
+      "properties": {
+        "origin": {
+          "$comment": "Discriminated union: exactly one of s3 / custom, matching CloudFrontOrigin (with the extended custom protocol) in redirect-rule-types.ts / @types/aws-lambda.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "s3": { "$ref": "#/definitions/s3Origin" },
+            "custom": { "$ref": "#/definitions/customOrigin" }
+          },
+          "oneOf": [{ "required": ["s3"] }, { "required": ["custom"] }]
+        },
+        "pathAndQS": {
+          "type": "string",
+          "description": "Rewritten path (and optional query string) the request is forwarded with."
+        },
+        "useIncomingQueryString": { "type": "boolean" }
+      }
+    },
+    "disabled": {
+      "type": "boolean",
+      "$comment": "Optional. Not present in the source runtime type — the edge does NOT yet honor it. ER-101 must skip rules where disabled=true, or this is a no-op."
+    }
+  },
+  "definitions": {
+    "cloudFrontHeaders": {
+      "$comment": "CloudFrontHeaders: lower-cased header name -> array of { key?, value }.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["value"],
+          "additionalProperties": false,
+          "properties": {
+            "key": { "type": "string" },
+            "value": { "type": "string" }
+          }
+        }
+      }
+    },
+    "s3Origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authMethod", "customHeaders", "domainName", "path"],
+      "properties": {
+        "authMethod": { "enum": ["origin-access-identity", "none"] },
+        "customHeaders": { "$ref": "#/definitions/cloudFrontHeaders" },
+        "domainName": { "type": "string", "minLength": 1 },
+        "path": { "type": "string" },
+        "region": {
+          "type": "string",
+          "$comment": "Required by the type when authMethod is origin-access-identity; must be absent when authMethod is none."
+        }
+      },
+      "if": {
+        "properties": { "authMethod": { "const": "origin-access-identity" } }
+      },
+      "then": { "required": ["region"] },
+      "else": { "not": { "required": ["region"] } }
+    },
+    "customOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "customHeaders",
+        "domainName",
+        "keepaliveTimeout",
+        "path",
+        "port",
+        "protocol",
+        "readTimeout",
+        "sslProtocols"
+      ],
+      "properties": {
+        "customHeaders": { "$ref": "#/definitions/cloudFrontHeaders" },
+        "domainName": { "type": "string", "minLength": 1 },
+        "keepaliveTimeout": { "type": "integer" },
+        "path": { "type": "string" },
+        "port": { "type": "integer" },
+        "protocol": {
+          "$comment": "CloudFrontCustomOrigin protocol (http/https) extended per redirect-rule-types.ts.",
+          "enum": ["http", "https", "http-only", "https-only", "match-viewer"]
+        },
+        "readTimeout": { "type": "integer" },
+        "sslProtocols": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/trackit/cloudfront-redirect-rules/shared/redirect-rule.schema.json",
+  "title": "Redirect rule item (erMatchRule)",
+  "$comment": "The DynamoDB item shape the Lambda@Edge reads for a redirect (viewer-request). Modeled on EdgeRedirectRule/MatchCondition from the source project's redirect-rule-types.ts.",
+  "type": "object",
+  "required": ["pk", "sk", "type", "statusCode", "redirectURL", "matches"],
+  "additionalProperties": false,
+  "properties": {
+    "pk": {
+      "type": "string",
+      "description": "Host, e.g. www.example.com. DynamoDB partition key.",
+      "minLength": 1
+    },
+    "sk": {
+      "type": "string",
+      "description": "REDIRECT#<priority>, priority zero-padded to 5 digits; lower = higher priority; unique per host per type.",
+      "pattern": "^REDIRECT#[0-9]{5}$"
+    },
+    "type": { "const": "erMatchRule" },
+    "statusCode": { "enum": [301, 302] },
+    "redirectURL": { "type": "string", "minLength": 1 },
+    "useIncomingQueryString": { "type": "boolean" },
+    "useRelativeUrl": { "enum": ["relative_url", "absolute_url"] },
+    "matches": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/match" }
+    },
+    "disabled": {
+      "type": "boolean",
+      "$comment": "Optional. Not present in the source runtime type — the edge does NOT yet honor it. ER-101 must skip rules where disabled=true, or this is a no-op."
+    }
+  },
+  "definitions": {
+    "match": {
+      "$comment": "Shared match condition, referenced by rewrite-rule.schema.json. Field names/enums mirror MatchCondition + MatchType/MatchOperator in redirect-rule-types.ts.",
+      "type": "object",
+      "required": ["matchType", "matchOperator", "matchValue"],
+      "additionalProperties": false,
+      "properties": {
+        "matchType": {
+          "enum": ["path", "hostname", "protocol", "regex", "header", "cookie"]
+        },
+        "matchOperator": {
+          "enum": ["equals", "contains", "regex"]
+        },
+        "matchValue": { "type": "string", "minLength": 1 },
+        "negate": { "type": "boolean" },
+        "caseSensitive": { "type": "boolean" },
+        "headerName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required when matchType is \"header\"; disallowed otherwise."
+        }
+      },
+      "if": {
+        "properties": { "matchType": { "const": "header" } }
+      },
+      "then": { "required": ["headerName"] },
+      "else": { "not": { "required": ["headerName"] } }
+    }
+  }
+}

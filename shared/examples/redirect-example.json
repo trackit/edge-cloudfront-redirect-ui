@@ -1,0 +1,19 @@
+{
+  "pk": "www.example.com",
+  "sk": "REDIRECT#00100",
+  "type": "erMatchRule",
+  "statusCode": 301,
+  "redirectURL": "https://www.example.com/new-landing",
+  "useRelativeUrl": "absolute_url",
+  "useIncomingQueryString": true,
+  "matches": [
+    {
+      "matchType": "path",
+      "matchOperator": "equals",
+      "matchValue": "/old-landing",
+      "negate": false,
+      "caseSensitive": false
+    }
+  ],
+  "disabled": false
+}

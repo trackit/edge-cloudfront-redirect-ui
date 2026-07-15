@@ -1,0 +1,22 @@
+{
+  "name": "@cloudfront-redirect-rules/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared redirect/rewrite rule JSON Schemas — the cross-stack contract (single source of truth for rule shapes)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    "./redirect-rule.schema.json": "./redirect-rule.schema.json",
+    "./rewrite-rule.schema.json": "./rewrite-rule.schema.json"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx test/validate.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "ajv": "^8.17.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

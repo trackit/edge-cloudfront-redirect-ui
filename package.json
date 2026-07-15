@@ -1,0 +1,25 @@
+{
+  "name": "cloudfront-redirect-rules-monorepo",
+  "private": true,
+  "description": "Pluggable, DynamoDB-backed redirect & rewrite rules for CloudFront",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "shared"
+  ],
+  "//": "Add 'infra/lambda', 'console/api', 'console/ui' to workspaces as those packages are created (ER-102, ER-201, ER-301).",
+  "scripts": {
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

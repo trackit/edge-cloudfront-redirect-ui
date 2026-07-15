@@ -1,0 +1,26 @@
+{
+  "pk": "assets.example.com",
+  "sk": "REWRITE#00050",
+  "type": "frMatchRule",
+  "matches": [
+    {
+      "matchType": "path",
+      "matchOperator": "contains",
+      "matchValue": "/downloads/",
+      "negate": false,
+      "caseSensitive": false
+    }
+  ],
+  "forwardSettings": {
+    "origin": {
+      "s3": {
+        "authMethod": "origin-access-identity",
+        "region": "us-east-1",
+        "domainName": "example-assets.s3.us-east-1.amazonaws.com",
+        "path": "",
+        "customHeaders": {}
+      }
+    },
+    "useIncomingQueryString": false
+  }
+}

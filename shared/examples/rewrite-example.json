@@ -1,0 +1,31 @@
+{
+  "pk": "www.example.com",
+  "sk": "REWRITE#00200",
+  "type": "frMatchRule",
+  "matches": [
+    {
+      "matchType": "path",
+      "matchOperator": "contains",
+      "matchValue": "/legacy/",
+      "negate": false,
+      "caseSensitive": false
+    }
+  ],
+  "forwardSettings": {
+    "origin": {
+      "custom": {
+        "domainName": "legacy-backend.internal.example.com",
+        "path": "",
+        "port": 443,
+        "protocol": "https-only",
+        "sslProtocols": ["TLSv1.2"],
+        "readTimeout": 30,
+        "keepaliveTimeout": 5,
+        "customHeaders": {}
+      }
+    },
+    "pathAndQS": "/api/v1/legacy",
+    "useIncomingQueryString": true
+  },
+  "disabled": false
+}
