@@ -2,7 +2,11 @@
 
 A Terraform module that gives any existing CloudFront distribution dynamic, DynamoDB-backed redirect/rewrite rules — without managing that distribution.
 
-## Planned module contract (spec for ER-101..103 — no code yet)
+## Modules
+
+- `modules/table/` — DynamoDB rules table (ER-101, done): `pk`/`sk`, PAY_PER_REQUEST, PITR, single region. See its README.
+
+## Planned module contract (spec for ER-102..103 — table done)
 
 **Inputs:** table name/prefix, table region, tags. Nothing about any CloudFront distribution.
 
