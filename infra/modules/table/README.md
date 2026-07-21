@@ -6,10 +6,10 @@ routing rules from. The table is the only interface between the control plane
 
 ## Schema
 
-| Key  | Attr | Type   | Meaning                                              |
-| ---- | ---- | ------ | ---------------------------------------------------- |
-| Hash | `pk` | String | Host, e.g. `www.example.com`                         |
-| Range| `sk` | String | `TYPE#priority`, zero-padded — e.g. `REDIRECT#00100` |
+| Key   | Attr | Type   | Meaning                                              |
+| ----- | ---- | ------ | ---------------------------------------------------- |
+| Hash  | `pk` | String | Host, e.g. `www.example.com`                         |
+| Range | `sk` | String | `TYPE#priority`, zero-padded — e.g. `REDIRECT#00100` |
 
 - Billing: `PAY_PER_REQUEST` (on-demand).
 - Point-in-time recovery: enabled.
@@ -27,8 +27,8 @@ module "table" {
 
 ## Inputs
 
-| Name                  | Type          | Default | Description                                                    |
-| --------------------- | ------------- | ------- | -------------------------------------------------------------- |
+| Name                  | Type          | Default | Description                                                   |
+| --------------------- | ------------- | ------- | ------------------------------------------------------------- |
 | `table_name`          | `string`      | —       | Table name. Any valid DynamoDB name (3–255 `[a-zA-Z0-9_.-]`). |
 | `region`              | `string`      | `null`  | Table region. `null` → provider region.                       |
 | `deletion_protection` | `bool`        | `true`  | Deletion protection on the table.                             |
@@ -36,11 +36,11 @@ module "table" {
 
 ## Outputs
 
-| Name           | Description                                    |
-| -------------- | ---------------------------------------------- |
-| `table_name`   | Table name.                                    |
+| Name           | Description                                      |
+| -------------- | ------------------------------------------------ |
+| `table_name`   | Table name.                                      |
 | `table_arn`    | Table ARN — for the Lambda@Edge IAM read policy. |
-| `table_region` | Region the table lives in.                     |
+| `table_region` | Region the table lives in.                       |
 
 ## Tests
 
