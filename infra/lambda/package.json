@@ -1,0 +1,25 @@
+{
+  "name": "@cloudfront-redirect-rules/lambda",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone Lambda@Edge: DynamoDB-backed redirects (viewer-request) and rewrites (origin-request)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1017.0",
+    "@aws-sdk/lib-dynamodb": "^3.1017.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.161",
+    "@types/node": "^20.19.43",
+    "@vitest/coverage-v8": "^2.1.9",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  }
+}

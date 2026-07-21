@@ -1,0 +1,195 @@
+import type {
+  CloudFrontHeaders,
+  CloudFrontOrigin,
+  CloudFrontRequest,
+  CloudFrontRequestEvent,
+  CloudFrontRequestResult,
+} from "aws-lambda";
+import type { EdgeConfig } from "./config.js";
+import { resolveConfig } from "./config.js";
+import { DynamoDBRuleRepository } from "./dynamodb-repository.js";
+import { RulesService } from "./rules-service.js";
+import type {
+  CloudFrontOriginWithExtendedProtocol,
+  RequestParams,
+} from "./rule-types.js";
+
+/**
+ * Terraform renders `edge-config.generated.ts` into the zip at package time, so
+ * it doesn't exist in the repo. The specifier is held in a variable to keep the
+ * missing module out of TypeScript's resolution graph; an absent file falls back
+ * to `RULES_*` env vars, which is how local runs and tests configure the Lambda.
+ */
+const GENERATED_CONFIG = "./edge-config.generated.js";
+
+const loadGeneratedConfig = async (): Promise<Partial<EdgeConfig>> => {
+  try {
+    const mod = (await import(GENERATED_CONFIG)) as {
+      generated?: Partial<EdgeConfig>;
+    };
+    return mod.generated ?? {};
+  } catch {
+    return {};
+  }
+};
+
+// One service per execution environment: the DynamoDB client and the rule cache
+// both survive across invocations on a warm container.
+let servicePromise: Promise<RulesService> | undefined;
+
+const getService = (): Promise<RulesService> => {
+  servicePromise ??= (async () => {
+    const config = resolveConfig(await loadGeneratedConfig());
+    const repo = new DynamoDBRuleRepository(
+      config.tableName,
+      config.tableRegion,
+    );
+    return new RulesService(repo, config.cacheTtlMs);
+  })();
+  return servicePromise;
+};
+
+/** Test seam: drops the memoized service so the next call rebuilds it. */
+export const resetService = (): void => {
+  servicePromise = undefined;
+};
+
+const getParams = (request: CloudFrontRequest): RequestParams | null => {
+  const hostHeader = request.headers["host"]?.[0]?.value || "";
+  if (!hostHeader) return null;
+
+  const protocol = request.headers["x-forwarded-proto"]?.[0]?.value || "https";
+  const search = request.querystring ? `?${request.querystring}` : "";
+
+  const headers: Record<string, string> = {};
+  for (const [key, entries] of Object.entries(request.headers)) {
+    if (entries?.[0]?.value) {
+      headers[key.toLowerCase()] = entries[0].value;
+    }
+  }
+
+  return {
+    hostname: hostHeader,
+    path: `${request.uri}${search}`,
+    protocol,
+    headers,
+    cookies: headers["cookie"] || "",
+  };
+};
+
+const statusDescription = (statusCode: 301 | 302): string =>
+  statusCode === 301 ? "Moved Permanently" : "Found";
+
+/**
+ * The rule schema allows Akamai-style protocol values; CloudFront only accepts
+ * http/https on `request.origin`.
+ */
+const normalizeOriginProtocol = (
+  origin: CloudFrontOriginWithExtendedProtocol,
+  request: CloudFrontRequest,
+): void => {
+  if (!origin.custom) return;
+
+  switch (origin.custom.protocol) {
+    case "http-only":
+      origin.custom.protocol = "http";
+      break;
+    case "https-only":
+      origin.custom.protocol = "https";
+      break;
+    case "match-viewer":
+      origin.custom.protocol =
+        request.headers["x-forwarded-proto"]?.[0]?.value === "http"
+          ? "http"
+          : "https";
+      break;
+  }
+};
+
+const handleViewerRequest = async (
+  request: CloudFrontRequest,
+  params: RequestParams,
+): Promise<CloudFrontRequestResult> => {
+  const service = await getService();
+  const result = await service.match(params, "REDIRECT");
+
+  if (result?.type !== "redirect") return request;
+
+  const headers: CloudFrontHeaders = {
+    location: [{ key: "Location", value: result.redirectURL }],
+    "cache-control": [
+      { key: "Cache-Control", value: "max-age=0, no-cache, no-store" },
+    ],
+  };
+
+  return {
+    status: result.statusCode.toString(),
+    statusDescription: statusDescription(result.statusCode),
+    headers,
+  };
+};
+
+const handleOriginRequest = async (
+  request: CloudFrontRequest,
+  params: RequestParams,
+): Promise<CloudFrontRequestResult> => {
+  const service = await getService();
+  const result = await service.match(params, "REWRITE");
+
+  if (result?.type !== "rewrite") return request;
+
+  const { pathAndQS, origin } = result.forwardSettings;
+
+  if (pathAndQS) {
+    const [newPath, ...qsParts] = pathAndQS.split("?");
+    request.uri = newPath || "/";
+    if (qsParts.length > 0) {
+      request.querystring = qsParts.join("?");
+    }
+  }
+
+  if (origin) {
+    normalizeOriginProtocol(origin, request);
+    request.origin = origin as CloudFrontOrigin;
+
+    // The origin's own domain must become the Host header, or the new origin
+    // rejects the request.
+    const domainName = origin.s3?.domainName ?? origin.custom?.domainName ?? "";
+    request.headers["host"] = [{ key: "host", value: domainName }];
+  }
+
+  return request;
+};
+
+export const handler = async (
+  event: CloudFrontRequestEvent,
+): Promise<CloudFrontRequestResult> => {
+  const record = event.Records[0]?.cf;
+  const request = record?.request;
+  if (!request) {
+    throw new Error("redirect-rules: event carried no CloudFront request");
+  }
+
+  const params = getParams(request);
+  if (!params) return request;
+
+  try {
+    switch (record.config.eventType) {
+      case "viewer-request":
+        return await handleViewerRequest(request, params);
+      case "origin-request":
+        return await handleOriginRequest(request, params);
+      default:
+        return request;
+    }
+  } catch (e) {
+    // Never fail the request on a rule error — pass it through untouched.
+    console.error("redirect-rules: rule evaluation failed", {
+      eventType: record.config.eventType,
+      hostname: params.hostname,
+      path: params.path,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return request;
+  }
+};
