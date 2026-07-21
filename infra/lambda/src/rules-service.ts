@@ -93,7 +93,15 @@ export class RulesService {
       match.matchType === MatchType.REGEX ||
       match.matchOperator === MatchOperator.REGEX
     ) {
-      isMatch = buildRegex(match.matchValue, caseSensitive).test(valueToTest);
+      try {
+        isMatch = buildRegex(match.matchValue, caseSensitive).test(valueToTest);
+      } catch {
+        // A malformed regex fails just this condition — it must not throw and
+        // bypass every other rule for the host. (firstRegexCapture swallows the
+        // same error.) A negated bad-regex condition still resolves to `false`
+        // here, then flips to `true` below, matching the plain-string path.
+        isMatch = false;
+      }
     } else {
       const testVal = caseSensitive ? valueToTest : valueToTest.toLowerCase();
       const matchVal = caseSensitive

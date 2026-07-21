@@ -82,28 +82,39 @@ const statusDescription = (statusCode: 301 | 302): string =>
 
 /**
  * The rule schema allows Akamai-style protocol values; CloudFront only accepts
- * http/https on `request.origin`.
+ * http/https on `request.origin`. Returns a fresh origin rather than mutating
+ * the argument: the origin comes from a cached rule, and `match-viewer`
+ * resolves per-request, so writing back would freeze the first request's
+ * protocol onto every later cache hit.
  */
 const normalizeOriginProtocol = (
   origin: CloudFrontOriginWithExtendedProtocol,
   request: CloudFrontRequest,
-): void => {
-  if (!origin.custom) return;
+): CloudFrontOrigin => {
+  if (!origin.custom) return origin as CloudFrontOrigin;
 
+  let protocol: "http" | "https";
   switch (origin.custom.protocol) {
     case "http-only":
-      origin.custom.protocol = "http";
+      protocol = "http";
       break;
     case "https-only":
-      origin.custom.protocol = "https";
+      protocol = "https";
       break;
     case "match-viewer":
-      origin.custom.protocol =
+      protocol =
         request.headers["x-forwarded-proto"]?.[0]?.value === "http"
           ? "http"
           : "https";
       break;
+    default:
+      protocol = origin.custom.protocol;
   }
+
+  return {
+    ...origin,
+    custom: { ...origin.custom, protocol },
+  } as CloudFrontOrigin;
 };
 
 const handleViewerRequest = async (
@@ -149,8 +160,7 @@ const handleOriginRequest = async (
   }
 
   if (origin) {
-    normalizeOriginProtocol(origin, request);
-    request.origin = origin as CloudFrontOrigin;
+    request.origin = normalizeOriginProtocol(origin, request);
 
     // The origin's own domain must become the Host header, or the new origin
     // rejects the request.

@@ -196,6 +196,45 @@ describe("match conditions", () => {
     });
   });
 
+  it("skips a rule with a malformed regex instead of failing the whole match", async () => {
+    const service = new RulesService(
+      new FakeRepository([
+        rule({
+          sk: "REDIRECT#00001",
+          redirectURL: "https://www.example.com/bad",
+          matches: [
+            // Unbalanced group — RegExp construction throws.
+            {
+              matchType: "regex",
+              matchOperator: "regex",
+              matchValue: "^/items/(",
+            },
+          ],
+        }),
+        rule({
+          sk: "REDIRECT#00002",
+          redirectURL: "https://www.example.com/good",
+          matches: [
+            {
+              matchType: "path",
+              matchOperator: "equals",
+              matchValue: "/old-landing",
+            },
+          ],
+        }),
+      ]),
+      60_000,
+    );
+
+    const result = await service.match(params(), "REDIRECT");
+
+    // The bad rule is skipped; the next valid rule still applies.
+    expect(result).toMatchObject({
+      type: "redirect",
+      redirectURL: "https://www.example.com/good",
+    });
+  });
+
   it("matches a header by name", async () => {
     const service = new RulesService(
       new FakeRepository([

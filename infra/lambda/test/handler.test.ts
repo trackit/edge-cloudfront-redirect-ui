@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CloudFrontRequest, CloudFrontResultResponse } from "aws-lambda";
+import type {
+  CloudFrontRequest,
+  CloudFrontRequestEvent,
+  CloudFrontResultResponse,
+} from "aws-lambda";
 import type { RedirectRule } from "../src/rule-types.js";
 import { CloudfrontRequestEventMother } from "./cloudfront-request-event.mother.js";
 import { FakeRepository } from "./fake-repository.js";
@@ -216,6 +220,46 @@ describe("origin-request (rewrites)", () => {
     expect(result.uri).toBe("/api/v1/legacy");
     expect(result.querystring).toBe("flag=1");
     expect(result.origin).toBe(originalOrigin);
+  });
+
+  it("resolves match-viewer per request, not once for the whole cache", async () => {
+    withRules(
+      rewriteRule({
+        forwardSettings: {
+          origin: {
+            custom: {
+              domainName: "backend.example.com",
+              path: "",
+              port: 443,
+              protocol: "match-viewer",
+              sslProtocols: ["TLSv1.2"],
+              readTimeout: 30,
+              keepaliveTimeout: 5,
+              customHeaders: {},
+            },
+          },
+          pathAndQS: "/api",
+        },
+      } as Partial<RedirectRule>),
+    );
+
+    const forProto = (proto: string): CloudFrontRequestEvent => {
+      const event = CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .build();
+      event.Records[0]!.cf.request.headers["x-forwarded-proto"] = [
+        { key: "X-Forwarded-Proto", value: proto },
+      ];
+      return event;
+    };
+
+    // First request (http) primes the cache; a later https request served from
+    // that cache must still resolve to https, not inherit the first protocol.
+    const http = (await handler(forProto("http"))) as CloudFrontRequest;
+    expect(http.origin?.custom?.protocol).toBe("http");
+
+    const https = (await handler(forProto("https"))) as CloudFrontRequest;
+    expect(https.origin?.custom?.protocol).toBe("https");
   });
 
   it("passes the request through when no rule matches", async () => {
