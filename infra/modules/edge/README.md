@@ -52,27 +52,57 @@ module "edge" {
 }
 ```
 
-## Consumer integration
+## Wiring it into an existing distribution
 
-Attach the published version to your distribution's default cache behavior —
-nothing else changes in the module:
+The module never manages a distribution — you attach its published version to
+one you already own. Three steps:
+
+**1. Give the module a us-east-1 provider** (Lambda@Edge is us-east-1-only):
 
 ```hcl
-default_cache_behavior {
-  # ...
-  lambda_function_association {
-    event_type   = "viewer-request"
-    lambda_arn   = module.edge.viewer_request_lambda_arn
-    include_body = false
-  }
+provider "aws" {
+  alias  = "use1"
+  region = "us-east-1"
+}
+```
 
-  lambda_function_association {
-    event_type   = "origin-request"
-    lambda_arn   = module.edge.origin_request_lambda_arn
-    include_body = false
+**2. Call the module** (see [Usage](#usage) above) so it packages, publishes,
+and exposes the qualified ARN.
+
+**3. Add the two associations to your distribution's cache behavior.** Both point
+at the same qualified ARN — the handler dispatches on event type:
+
+```hcl
+resource "aws_cloudfront_distribution" "existing" {
+  # ...your existing origins, behaviors, and certs — unchanged...
+
+  default_cache_behavior {
+    # ...your existing settings...
+
+    lambda_function_association {
+      event_type   = "viewer-request" # redirects (301/302)
+      lambda_arn   = module.edge.viewer_request_lambda_arn
+      include_body = false
+    }
+
+    lambda_function_association {
+      event_type   = "origin-request" # rewrites (path / origin)
+      lambda_arn   = module.edge.origin_request_lambda_arn
+      include_body = false
+    }
   }
 }
 ```
+
+`terraform apply` attaches them and CloudFront redeploys the distribution
+(~5–15 min). Notes:
+
+- Put the associations only on the **cache behaviors you want rules to run on** —
+  add the same block to any `ordered_cache_behavior` that needs them.
+- The ARNs are **qualified version ARNs** (required by CloudFront) — always take
+  them from the module outputs; never hand-build them.
+- Rules key on the request's `Host` header, so they apply to whatever hostname
+  the viewer used (your distribution's domain or its alternate CNAMEs).
 
 ## Inputs
 
@@ -97,8 +127,12 @@ default_cache_behavior {
 | `function_name`             | Published function name.                                |
 | `role_arn`                  | Execution role ARN.                                     |
 
-## Teardown note
+## Updating & teardown
 
-CloudFront holds replicas of an edge function for ~15 min–1 hr after a
-distribution stops referencing it, so a `destroy` that removes the function may
-first fail with a replica error. Retry once replicas have cleared.
+The function has `create_before_destroy = true`, so a change that replaces it
+(e.g. a rename) won't fail mid-apply on the replica lock.
+
+Teardown is the one case no lifecycle rule can smooth: CloudFront holds replicas
+of an edge function for ~15 min–1 hr after a distribution stops referencing it,
+so a `destroy` that removes the function may first fail with a replica error.
+Retry once replicas have cleared.

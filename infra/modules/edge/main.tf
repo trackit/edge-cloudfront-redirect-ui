@@ -123,5 +123,14 @@ resource "aws_lambda_function" "this" {
   # Qualified version ARN is required for the CloudFront association.
   publish = true
 
+  # If a change ever forces this function to be replaced (e.g. a rename), the old
+  # one can't be deleted while it's still replicated to CloudFront edges. Create
+  # the replacement first so an update against a live distribution doesn't error
+  # on the replica lock. (Full teardown still waits for replicas to age out —
+  # that's an AWS-side delay no lifecycle rule can skip.)
+  lifecycle {
+    create_before_destroy = true
+  }
+
   tags = var.tags
 }
