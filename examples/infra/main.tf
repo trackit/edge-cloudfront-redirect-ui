@@ -1,0 +1,171 @@
+locals {
+  # No origin_domain_name given → stand up a throwaway S3 bucket to serve as the
+  # distribution's origin.
+  use_placeholder_origin = var.origin_domain_name == null
+  origin_id              = "edge-origin"
+  origin_domain = local.use_placeholder_origin ? (
+    aws_s3_bucket.origin[0].bucket_regional_domain_name
+  ) : var.origin_domain_name
+}
+
+# --- Data plane -------------------------------------------------------------
+
+module "table" {
+  source = "../../infra/modules/table"
+
+  table_name = var.table_name
+  region     = var.region
+  # An example must be destroyable in one command.
+  deletion_protection = false
+  tags                = var.tags
+}
+
+module "edge" {
+  source    = "../../infra/modules/edge"
+  providers = { aws.use1 = aws.use1 }
+
+  function_name = var.function_name
+  table_name    = module.table.table_name
+  table_arn     = module.table.table_arn
+  table_region  = module.table.table_region
+  tags          = var.tags
+}
+
+# --- Placeholder S3 origin (default) ---------------------------------------
+
+# trivy:ignore:AVD-AWS-0089 access logging is unnecessary for a throwaway demo origin
+# trivy:ignore:AVD-AWS-0090 versioning is unnecessary for a throwaway demo origin
+resource "aws_s3_bucket" "origin" {
+  count = local.use_placeholder_origin ? 1 : 0
+
+  bucket_prefix = "edgeroute-example-origin-"
+  # Let `terraform destroy` remove the bucket even with the sample object in it.
+  force_destroy = true
+  tags          = var.tags
+}
+
+resource "aws_s3_bucket_public_access_block" "origin" {
+  count = local.use_placeholder_origin ? 1 : 0
+
+  bucket                  = aws_s3_bucket.origin[0].id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_object" "index" {
+  count = local.use_placeholder_origin ? 1 : 0
+
+  bucket       = aws_s3_bucket.origin[0].id
+  key          = "index.html"
+  content      = "<!doctype html><title>edgeroute example origin</title><h1>Origin reached</h1><p>No redirect/rewrite rule matched this request.</p>"
+  content_type = "text/html"
+}
+
+resource "aws_cloudfront_origin_access_control" "origin" {
+  count = local.use_placeholder_origin ? 1 : 0
+
+  name                              = "${var.function_name}-oac"
+  description                       = "OAC for the edgeroute example origin"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# Grants the distribution (and only it) read access to the bucket. Depends on
+# the distribution ARN — the distribution does not depend on this policy, so
+# there is no cycle.
+data "aws_iam_policy_document" "origin" {
+  count = local.use_placeholder_origin ? 1 : 0
+
+  statement {
+    sid       = "AllowCloudFrontServicePrincipalReadOnly"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.origin[0].arn}/*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [aws_cloudfront_distribution.this.arn]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "origin" {
+  count = local.use_placeholder_origin ? 1 : 0
+
+  bucket = aws_s3_bucket.origin[0].id
+  policy = data.aws_iam_policy_document.origin[0].json
+}
+
+# --- Distribution -----------------------------------------------------------
+
+# Redirects/rewrites must evaluate on every request, so caching is disabled.
+data "aws_cloudfront_cache_policy" "caching_disabled" {
+  name = "Managed-CachingDisabled"
+}
+
+# trivy:ignore:AVD-AWS-0010 access logging is unnecessary for a throwaway demo distribution
+# trivy:ignore:AVD-AWS-0011 WAF is out of scope for the example
+resource "aws_cloudfront_distribution" "this" {
+  enabled             = true
+  comment             = "edgeroute example (ER-104)"
+  price_class         = var.price_class
+  default_root_object = local.use_placeholder_origin ? "index.html" : null
+
+  origin {
+    origin_id                = local.origin_id
+    domain_name              = local.origin_domain
+    origin_access_control_id = local.use_placeholder_origin ? aws_cloudfront_origin_access_control.origin[0].id : null
+
+    # Only for an existing (non-S3) origin; the S3 placeholder uses OAC instead.
+    dynamic "custom_origin_config" {
+      for_each = local.use_placeholder_origin ? [] : [1]
+      content {
+        http_port              = 80
+        https_port             = 443
+        origin_protocol_policy = "https-only"
+        origin_ssl_protocols   = ["TLSv1.2"]
+      }
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id       = local.origin_id
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_disabled.id
+
+    # One published function, associated twice — it dispatches on eventType.
+    lambda_function_association {
+      event_type   = "viewer-request"
+      lambda_arn   = module.edge.viewer_request_lambda_arn
+      include_body = false
+    }
+
+    lambda_function_association {
+      event_type   = "origin-request"
+      lambda_arn   = module.edge.origin_request_lambda_arn
+      include_body = false
+    }
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+
+  tags = var.tags
+}
