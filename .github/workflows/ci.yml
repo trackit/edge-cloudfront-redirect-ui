@@ -42,13 +42,15 @@ jobs:
       - run: npm ci
       - run: npm test
 
-  # Enable at ER-101, once infra/ has Terraform.
-  # terraform:
-  #   name: Terraform (fmt + validate)
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: hashicorp/setup-terraform@v3
-  #     - run: terraform fmt -check -recursive infra
-  #     - run: terraform -chdir=infra/modules/redirect-rules init -backend=false
-  #     - run: terraform -chdir=infra/modules/redirect-rules validate
+  terraform:
+    name: Terraform (fmt + validate + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.6
+      - run: terraform fmt -check -recursive infra
+      - run: terraform -chdir=infra/modules/table init -backend=false
+      - run: terraform -chdir=infra/modules/table validate
+      - run: terraform -chdir=infra/modules/table test
