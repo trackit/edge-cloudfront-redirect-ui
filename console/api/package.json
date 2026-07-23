@@ -1,0 +1,19 @@
+{
+  "name": "@cloudfront-redirect-rules/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Control-plane console API — HTTP API Gateway + Lambda that manages redirect/rewrite rules",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "src/handler.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx src/local.ts"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.161",
+    "@types/node": "^20.19.43",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
