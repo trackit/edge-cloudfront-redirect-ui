@@ -53,6 +53,7 @@ jobs:
           terraform_version: 1.15.6
       - run: terraform fmt -check -recursive infra
       - run: terraform fmt -check -recursive examples
+      - run: terraform fmt -check -recursive console
       - run: terraform -chdir=infra/modules/table init -backend=false
       - run: terraform -chdir=infra/modules/table validate
       - run: terraform -chdir=infra/modules/table test
@@ -63,3 +64,6 @@ jobs:
       - run: terraform -chdir=examples/infra init -backend=false
       - run: terraform -chdir=examples/infra validate
       - run: terraform -chdir=examples/infra test
+      - run: terraform -chdir=console/api/infra init -backend=false
+      - run: terraform -chdir=console/api/infra validate
+      - run: terraform -chdir=console/api/infra test
