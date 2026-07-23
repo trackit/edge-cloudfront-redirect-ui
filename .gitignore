@@ -7,6 +7,9 @@ coverage/
 npm-debug.log*
 .npm/
 
+# --- Lambda@Edge baked config (rendered by Terraform at package time) ---
+infra/lambda/src/edge-config.generated.ts
+
 # --- Terraform ---
 .terraform/
 .terraform.lock.hcl

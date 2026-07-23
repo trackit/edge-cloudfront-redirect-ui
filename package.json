@@ -4,9 +4,10 @@
   "description": "Pluggable, DynamoDB-backed redirect & rewrite rules for CloudFront",
   "license": "Apache-2.0",
   "workspaces": [
-    "shared"
+    "shared",
+    "infra/lambda"
   ],
-  "//": "Add 'infra/lambda', 'console/api', 'console/ui' to workspaces as those packages are created (ER-102, ER-201, ER-301).",
+  "//": "Add 'console/api', 'console/ui' to workspaces as those packages are created (ER-201, ER-301).",
   "scripts": {
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
