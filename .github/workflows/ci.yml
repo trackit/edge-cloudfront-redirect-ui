@@ -31,7 +31,7 @@ jobs:
       - run: npm run typecheck
 
   schemas:
-    name: Validate shared schemas
+    name: Validate shared schemas + OpenAPI
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +41,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npm run openapi:lint -w console/api
 
   terraform:
     name: Terraform (fmt + validate + test)

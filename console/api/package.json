@@ -10,9 +10,11 @@
     "typecheck": "tsc --noEmit",
     "dev": "tsx src/local.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "openapi:lint": "redocly lint openapi.yaml"
   },
   "devDependencies": {
+    "@redocly/cli": "^1.25.0",
     "@types/aws-lambda": "^8.10.161",
     "@types/node": "^20.19.43",
     "@vitest/coverage-v8": "^2.1.9",
