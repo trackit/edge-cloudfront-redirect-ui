@@ -49,4 +49,45 @@ describe("handler", () => {
     expect(res.statusCode).toBe(400);
     expect(parse(res.body)).toMatchObject({ error: { code: "INVALID_JSON" } });
   });
+
+  const RULES = "/targets/prod/hosts/www.example.com/rules";
+
+  it("validates the body on create and 400s an invalid rule", async () => {
+    const res = await handler(
+      event("POST", RULES, JSON.stringify({ type: "erMatchRule" })),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(parse(res.body)).toMatchObject({
+      error: { code: "VALIDATION_ERROR" },
+    });
+  });
+
+  it("passes a valid rule and 501s at persistence (ER-203)", async () => {
+    const rule = {
+      pk: "www.example.com",
+      sk: "REDIRECT#00100",
+      type: "erMatchRule",
+      statusCode: 301,
+      redirectURL: "https://www.example.com/new",
+      matches: [
+        { matchType: "path", matchOperator: "equals", matchValue: "/old" },
+      ],
+    };
+    const res = await handler(event("POST", RULES, JSON.stringify(rule)));
+
+    expect(res.statusCode).toBe(501);
+    expect(parse(res.body)).toMatchObject({
+      error: { code: "NOT_IMPLEMENTED" },
+    });
+  });
+
+  it("501s a not-yet-implemented read route", async () => {
+    const res = await handler(event("GET", RULES));
+
+    expect(res.statusCode).toBe(501);
+    expect(parse(res.body)).toMatchObject({
+      error: { code: "NOT_IMPLEMENTED" },
+    });
+  });
 });

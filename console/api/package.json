@@ -13,6 +13,10 @@
     "test:watch": "vitest",
     "openapi:lint": "redocly lint openapi.yaml"
   },
+  "dependencies": {
+    "@cloudfront-redirect-rules/shared": "*",
+    "ajv": "^8.17.0"
+  },
   "devDependencies": {
     "@redocly/cli": "^1.25.0",
     "@types/aws-lambda": "^8.10.161",

@@ -1,0 +1,8 @@
+extends:
+  - recommended
+rules:
+  # Auth (Cognito) is ER-205. Until then the API is intentionally open, so no
+  # operation declares security. Re-enable this rule when ER-205 lands.
+  security-defined: off
+  # /health is a liveness probe with no error path; a missing 4xx is expected.
+  operation-4xx-response: off
