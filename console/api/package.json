@@ -8,12 +8,16 @@
   "main": "src/handler.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "dev": "tsx src/local.ts"
+    "dev": "tsx src/local.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.161",
     "@types/node": "^20.19.43",
+    "@vitest/coverage-v8": "^2.1.9",
     "tsx": "^4.19.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
   }
 }

@@ -1,23 +1,50 @@
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { handler } from "./handler.js";
 
 /**
  * Local dev server — `npm run dev -w console/api`.
  *
- * Scaffold only: it maps just the method and path so the handler can boot over
- * HTTP without SAM. The full event adapter (headers, query string, body) lands
- * with the router in the next step of ER-201.
+ * Adapts a node HTTP request into the API Gateway v2 event and runs the same
+ * `handler`, so local and deployed share one code path (no SAM).
  */
+const readBody = (req: IncomingMessage): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+
+const toEvent = (
+  req: IncomingMessage,
+  body: string,
+): APIGatewayProxyEventV2 => {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const query: Record<string, string> = {};
+  url.searchParams.forEach((value, key) => (query[key] = value));
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (typeof value === "string") headers[key] = value;
+  }
+
+  // Only the fields the handler reads; the rest of the event is not needed locally.
+  return {
+    rawPath: url.pathname,
+    rawQueryString: url.search.slice(1),
+    headers,
+    queryStringParameters: query,
+    body: body || undefined,
+    isBase64Encoded: false,
+    requestContext: { http: { method: req.method ?? "GET" } },
+  } as APIGatewayProxyEventV2;
+};
+
 const port = Number(process.env.PORT ?? 3000);
 
 const server = createServer((req, res) => {
-  const event = {
-    rawPath: req.url ?? "/",
-    requestContext: { http: { method: req.method ?? "GET" } },
-  } as APIGatewayProxyEventV2;
-
-  handler(event)
+  readBody(req)
+    .then((body) => handler(toEvent(req, body)))
     .then((result) => {
       res.writeHead(result.statusCode ?? 200, {
         "content-type": "application/json",
