@@ -20,6 +20,15 @@ const normalize = (path: string): string => {
   return trimmed === "" ? "/" : trimmed;
 };
 
+const decodeParam = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    // A lone `%` or other bad escape — a client error, not a 500.
+    throw new ApiError(400, "BAD_REQUEST", "Malformed path parameter");
+  }
+};
+
 // Patterns are our own literals plus `:name` params; params become a single
 // path segment. No user input reaches the pattern, so segment literals are not
 // regex-escaped here.
@@ -61,7 +70,7 @@ export const createRouter = (routes: Route[]): Router => {
         const params: Record<string, string> = {};
         route.keys.forEach((key, i) => {
           const value = match[i + 1];
-          if (value !== undefined) params[key] = decodeURIComponent(value);
+          if (value !== undefined) params[key] = decodeParam(value);
         });
 
         return route.handler({ ...req, params });

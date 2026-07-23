@@ -7,14 +7,23 @@ locals {
     for f in fileset(local.api_source_dir, "src/**/*.ts") :
     filesha256("${local.api_source_dir}/${f}")
   ]))
+
+  # esbuild inlines the shared rule schemas into the bundle, so a schema-only
+  # edit must repackage even though nothing under src/ changed.
+  shared_schema_hash = sha256(join("", [
+    for f in fileset("${local.monorepo_root}/shared", "*.schema.json") :
+    filesha256("${local.monorepo_root}/shared/${f}")
+  ]))
 }
 
 # esbuild -> dist/. Runs at apply so a bare `terraform apply` produces the zip.
 resource "null_resource" "build" {
   triggers = {
     handler      = local.handler_hash
+    schemas      = local.shared_schema_hash
     build_script = filesha256("${local.api_source_dir}/build.mjs")
     package      = filesha256("${local.api_source_dir}/package.json")
+    lockfile     = filesha256("${local.monorepo_root}/package-lock.json")
   }
 
   provisioner "local-exec" {

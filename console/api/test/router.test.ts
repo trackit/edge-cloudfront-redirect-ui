@@ -70,6 +70,20 @@ describe("router", () => {
     expect((await router.handle(req({ path: "/health/" }))).status).toBe(200);
   });
 
+  it("throws a 400 for malformed percent-encoding in a param", async () => {
+    const router = createRouter([
+      {
+        method: "GET",
+        pattern: "/hosts/:host",
+        handler: (r) => ({ status: 200, body: r.params }),
+      },
+    ]);
+
+    await expect(
+      router.handle(req({ path: "/hosts/%" })),
+    ).rejects.toMatchObject({ status: 400, code: "BAD_REQUEST" });
+  });
+
   it("throws a 404 for an unknown path", async () => {
     const router = createRouter([]);
 
