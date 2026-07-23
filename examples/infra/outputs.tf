@@ -30,7 +30,6 @@ output "sample_put_item_command" {
       "type": {"S": "erMatchRule"},
       "statusCode": {"N": "301"},
       "redirectURL": {"S": "https://example.com/new-landing"},
-      "useRelativeUrl": {"S": "absolute_url"},
       "useIncomingQueryString": {"BOOL": true},
       "matches": {"L": [{"M": {
         "matchType": {"S": "path"},
