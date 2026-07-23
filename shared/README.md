@@ -10,7 +10,6 @@ These schemas model the exact DynamoDB **item** shape the edge reads, derived fr
 **Rule shape notes**
 
 - **Match conditions** use `matchType` / `matchOperator` / `matchValue` (+ optional `negate`, `caseSensitive`, `headerName`). `matchType ∈ {path, hostname, protocol, regex, header, cookie}`, `matchOperator ∈ {equals, contains, regex}`. `headerName` is required iff `matchType` is `header`.
-- **`useRelativeUrl`** (redirect) is the enum `"relative_url" | "absolute_url"`, **not** a boolean.
 - **`forwardSettings.origin`** (rewrite) is a discriminated union — exactly one of `s3` / `custom` — mirroring the CloudFront `request.origin` structure from `@types/aws-lambda` (the edge assigns it straight through). See both example items.
 - **`disabled`** is optional and reserved for a future "toggle off" feature; the source runtime does **not** honor it yet, so ER-101 must skip `disabled: true` rules or it's a no-op.
 

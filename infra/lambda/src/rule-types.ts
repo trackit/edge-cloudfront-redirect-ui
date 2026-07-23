@@ -63,7 +63,6 @@ export interface EdgeRedirectRule extends BaseRule {
   statusCode: 301 | 302;
   redirectURL: string;
   useIncomingQueryString?: boolean;
-  useRelativeUrl?: "relative_url" | "absolute_url";
 }
 
 export interface ForwardRewriteRule extends BaseRule {

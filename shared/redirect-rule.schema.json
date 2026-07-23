@@ -21,7 +21,6 @@
     "statusCode": { "enum": [301, 302] },
     "redirectURL": { "type": "string", "minLength": 1 },
     "useIncomingQueryString": { "type": "boolean" },
-    "useRelativeUrl": { "enum": ["relative_url", "absolute_url"] },
     "matches": {
       "type": "array",
       "items": { "$ref": "#/definitions/match" }
