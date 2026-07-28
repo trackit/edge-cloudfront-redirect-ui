@@ -9,8 +9,12 @@ Node 20 Lambda that runs the request router in `console/api/src`.
   esbuild (`console/api/build.mjs`) at apply and zipped from `dist/`.
 - **`aws_apigatewayv2_api` + integration + `$default` route + stage** — an HTTP
   API with a catch-all route; the Lambda's own router dispatches every path.
-- **`aws_iam_role`** — execution role with CloudWatch Logs only.
+- **`aws_iam_role`** — execution role: CloudWatch Logs + read/write on the
+  targets registry table.
 - **`aws_cloudwatch_log_group`** — `/aws/lambda/<function_name>`.
+- **`aws_dynamodb_table` (targets registry)** — the control-plane's own state
+  (`pk=id`, `PAY_PER_REQUEST`, PITR on). Passed to the Lambda as
+  `TARGETS_TABLE_NAME`. Separate from every rules table.
 
 ## Build coupling
 
@@ -39,8 +43,9 @@ module "console_api" {
 
 ## Not here yet
 
-- **DynamoDB access / targets registry** — ER-203. No table IAM or env vars
-  until rule persistence exists.
+- **Per-target rules-table access** — ER-203. IAM for reading/writing the
+  tables that targets point at (the registry stores the pointers; rule CRUD
+  will need access to the tables themselves).
 - **Cognito authorizer** — ER-205. The API is deployed open for now.
 
 ## Usage
@@ -65,4 +70,5 @@ output "api_endpoint" {
 
 `terraform test` runs a mocked, plan-only suite (`tests/api.tftest.hcl`) — no
 npm, no AWS. It asserts the Lambda runtime/handler/sizing, the HTTP API shape,
-the invoke permission, and the log group name.
+the invoke permission, the log group name, and the registry table + its
+`TARGETS_TABLE_NAME` wiring.

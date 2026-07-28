@@ -97,6 +97,30 @@ run "apigw_invoke_permission" {
   }
 }
 
+run "registry_table_and_env" {
+  command = plan
+
+  assert {
+    condition     = aws_dynamodb_table.targets.hash_key == "id"
+    error_message = "registry table must be keyed by id"
+  }
+
+  assert {
+    condition     = aws_dynamodb_table.targets.billing_mode == "PAY_PER_REQUEST"
+    error_message = "registry table should be PAY_PER_REQUEST"
+  }
+
+  assert {
+    condition     = aws_dynamodb_table.targets.name == "edgeroute-console-api-targets"
+    error_message = "registry table should default to <function_name>-targets"
+  }
+
+  assert {
+    condition     = aws_lambda_function.this.environment[0].variables["TARGETS_TABLE_NAME"] == aws_dynamodb_table.targets.name
+    error_message = "Lambda must receive the registry table name via TARGETS_TABLE_NAME"
+  }
+}
+
 run "log_group_named_for_function" {
   command = plan
 

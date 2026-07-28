@@ -9,6 +9,12 @@ variable "function_name" {
   }
 }
 
+variable "targets_table_name" {
+  type        = string
+  default     = null
+  description = "Name of the targets registry DynamoDB table. Defaults to <function_name>-targets."
+}
+
 variable "timeout" {
   type        = number
   default     = 10

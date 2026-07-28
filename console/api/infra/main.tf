@@ -6,6 +6,10 @@ locals {
   install_command = trimspace(var.npm_install_command)
   build_command   = "npm run build --workspace @cloudfront-redirect-rules/api"
 
+  targets_table_name = coalesce(
+    var.targets_table_name, "${var.function_name}-targets"
+  )
+
   handler_hash = sha256(join("", [
     for f in fileset(local.api_source_dir, "src/**/*.ts") :
     filesha256("${local.api_source_dir}/${f}")
@@ -52,6 +56,25 @@ data "archive_file" "lambda_zip" {
   depends_on = [null_resource.build]
 }
 
+# The targets registry — the control-plane's own state. Separate from every
+# rules table (those are keyed pk=host/sk=TYPE#priority); this is keyed by id.
+resource "aws_dynamodb_table" "targets" {
+  name         = local.targets_table_name
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "id"
+
+  attribute {
+    name = "id"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  tags = var.tags
+}
+
 data "aws_iam_policy_document" "assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -61,6 +84,25 @@ data "aws_iam_policy_document" "assume" {
       identifiers = ["lambda.amazonaws.com"]
     }
   }
+}
+
+data "aws_iam_policy_document" "registry" {
+  statement {
+    sid = "TargetsRegistry"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:Scan",
+    ]
+    resources = [aws_dynamodb_table.targets.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "registry" {
+  name   = "${var.function_name}-registry"
+  role   = aws_iam_role.this.id
+  policy = data.aws_iam_policy_document.registry.json
 }
 
 resource "aws_iam_role" "this" {
@@ -104,10 +146,18 @@ resource "aws_lambda_function" "this" {
   timeout     = var.timeout
   memory_size = var.memory_size
 
-  # No env vars needed yet; the targets registry + DynamoDB access arrive in
-  # ER-203, Cognito auth in ER-205.
+  environment {
+    variables = {
+      # AWS_REGION is injected by the runtime; only the table name is ours.
+      TARGETS_TABLE_NAME = aws_dynamodb_table.targets.name
+    }
+  }
 
-  depends_on = [aws_iam_role_policy.logs, aws_cloudwatch_log_group.this]
+  depends_on = [
+    aws_iam_role_policy.logs,
+    aws_iam_role_policy.registry,
+    aws_cloudwatch_log_group.this,
+  ]
 
   tags = var.tags
 }
