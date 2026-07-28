@@ -9,8 +9,8 @@ info:
     redefined here.
 
 
-    Rule routes are defined ahead of their handlers (ER-203). Only `/health` is
-    implemented today; the rest return `501` until then.
+    The targets registry (ER-202) is implemented. Rule routes are defined ahead
+    of their handlers (ER-203) and return `501` until then.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -20,6 +20,8 @@ servers:
 tags:
   - name: system
     description: Operational endpoints.
+  - name: targets
+    description: Registry of DynamoDB tables (targets) the console manages.
   - name: rules
     description: Redirect and rewrite rule management, scoped to a target and host.
 paths:
@@ -38,6 +40,88 @@ paths:
                 $ref: "#/components/schemas/Health"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+  /targets:
+    get:
+      operationId: listTargets
+      summary: List all targets.
+      tags: [targets]
+      responses:
+        "200":
+          description: All registered targets, sorted by name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Target"
+    post:
+      operationId: createTarget
+      summary: Register a new target.
+      tags: [targets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TargetInput"
+      responses:
+        "201":
+          description: The created target.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /targets/{id}:
+    parameters:
+      - $ref: "#/components/parameters/TargetPathId"
+    get:
+      operationId: getTarget
+      summary: Fetch a single target.
+      tags: [targets]
+      responses:
+        "200":
+          description: The target.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateTarget
+      summary: Update a target.
+      tags: [targets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TargetInput"
+      responses:
+        "200":
+          description: The updated target.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteTarget
+      summary: Remove a target from the registry.
+      description: >-
+        Removes the target from the registry only — its actual DynamoDB rules
+        table is never deleted.
+      tags: [targets]
+      responses:
+        "204":
+          description: The target was removed from the registry.
+        "404":
+          $ref: "#/components/responses/NotFound"
   /targets/{targetId}/hosts/{host}/rules:
     parameters:
       - $ref: "#/components/parameters/TargetId"
@@ -151,6 +235,14 @@ paths:
           $ref: "#/components/responses/NotImplemented"
 components:
   parameters:
+    TargetPathId:
+      name: id
+      in: path
+      required: true
+      description: Target id.
+      schema:
+        type: string
+        minLength: 1
     TargetId:
       name: targetId
       in: path
@@ -183,6 +275,42 @@ components:
       properties:
         status:
           const: ok
+    TargetInput:
+      description: Fields a client supplies to create or update a target.
+      type: object
+      additionalProperties: false
+      required: [name, region, tableName]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Human-readable target name.
+        region:
+          type: string
+          pattern: "^[a-z]{2}(-[a-z]+)+-\\d+$"
+          description: >-
+            AWS region of the target's DynamoDB table. Validated server-side
+            against a curated list of real regions — the format pattern here is
+            necessary but not sufficient (e.g. us-east-11 matches but is rejected).
+        tableName:
+          type: string
+          pattern: "^[a-zA-Z0-9_.-]{3,255}$"
+          description: DynamoDB rules table the Lambda@Edge reads for this target.
+    Target:
+      description: A registered target. `id` is server-generated and immutable.
+      type: object
+      additionalProperties: false
+      required: [id, name, region, tableName]
+      properties:
+        id:
+          type: string
+          description: Server-generated id; used as the targetId in rule routes.
+        name:
+          type: string
+        region:
+          type: string
+        tableName:
+          type: string
     Rule:
       description: A redirect or rewrite rule item, per the shared schemas.
       oneOf:
