@@ -199,6 +199,60 @@ describe("targets API", () => {
     expect(again.statusCode).toBe(409);
   });
 
+  it("POST /targets 409s two different roles in the SAME account", async () => {
+    // What identifies a table is (account, region, tableName). Two roles in one
+    // account granting access to one table are two views of one table, not two
+    // targets — keying on the whole ARN would let both through.
+    await handler(
+      event("POST", "/targets", {
+        ...input,
+        roleArn: "arn:aws:iam::111111111111:role/role-one",
+      }),
+    );
+
+    const second = await handler(
+      event("POST", "/targets", {
+        ...input,
+        name: "Same table, other role",
+        roleArn: "arn:aws:iam::111111111111:role/role-two",
+      }),
+    );
+    expect(second.statusCode).toBe(409);
+  });
+
+  it("POST /targets 409s the same table registered with and without a role", async () => {
+    // "No role" means the API's own account, which can't be named without an STS
+    // call, so it is treated as clashing with any account — failing closed.
+    await handler(event("POST", "/targets", input));
+
+    const second = await handler(
+      event("POST", "/targets", {
+        ...input,
+        name: "Now with a role",
+        roleArn: "arn:aws:iam::111111111111:role/edgeroute-target-prod",
+      }),
+    );
+    expect(second.statusCode).toBe(409);
+  });
+
+  it("PUT /targets/:id cannot repoint onto another target's table by adding a role", async () => {
+    const first = await create();
+    const second = await create({
+      name: "Staging",
+      tableName: "rules-staging",
+    });
+
+    const res = await handler(
+      event("PUT", `/targets/${second.id}`, {
+        ...input,
+        name: "Staging",
+        roleArn: "arn:aws:iam::111111111111:role/edgeroute-target-prod",
+      }),
+    );
+    expect(res.statusCode).toBe(409);
+    expect(first.id).not.toBe(second.id);
+  });
+
   it("POST /targets round-trips an optional roleArn and rejects a bad one", async () => {
     const roleArn = "arn:aws:iam::123456789012:role/edgeroute-target-prod";
     const ok = await handler(event("POST", "/targets", { ...input, roleArn }));

@@ -65,20 +65,36 @@ variable "deletion_protection" {
 variable "assumable_role_arns" {
   type        = list(string)
   default     = []
-  description = "Role ARNs the API may assume to reach a target's rules table, matching the `roleArn` on registered targets. Empty means no sts:AssumeRole grant. Keep these as narrow as your role-naming convention allows."
+  description = "Role ARNs the API may assume to reach a target's rules table, matching the `roleArn` on registered targets. Empty means no sts:AssumeRole grant. A wildcard is allowed in the role name but the account must be literal. Keep these as narrow as your role-naming convention allows."
 
-  # `*` would let the API assume anything it can reach, which — with no
-  # authentication until ER-205 — means any caller could point it anywhere.
+  # The account must be spelled out. With no authentication until ER-205, a grant
+  # that spans accounts (`*` alone, or `arn:aws:iam::*:role/*`) would let any
+  # caller register a target pointing anywhere the API can reach. A wildcard in
+  # the role *name* is fine — that is how a naming convention is expressed.
   validation {
-    condition     = !contains(var.assumable_role_arns, "*")
-    error_message = "assumable_role_arns must not be \"*\"; scope it to a role path or name prefix."
+    condition = alltrue([
+      for arn in var.assumable_role_arns :
+      can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/[^*]+\\*?$", arn))
+    ])
+    error_message = "each assumable_role_arns entry must be a role ARN with a literal 12-digit account and a role name that does not start with a wildcard, e.g. arn:aws:iam::123456789012:role/edgeroute-target-*."
   }
 }
 
 variable "target_table_arns" {
   type        = list(string)
   default     = []
-  description = "Rules-table ARNs the API's own execution role may read and write. This is the alternative to a per-target `roleArn`: a target with no roleArn is only reachable if its table is listed here. Empty means every target must carry a roleArn. Wildcards are allowed but scope the console to whatever matches."
+  description = "Rules-table ARNs the API's own execution role may read and write. The alternative to a per-target `roleArn`: a target with no roleArn is only reachable if its table is listed here. Empty means every target must carry a roleArn. Wildcards are allowed in the region and table name, but the account must be literal."
+
+  # Same reasoning as assumable_role_arns, and it matters more here: this grant is
+  # direct rather than via AssumeRole, so a bare wildcard would hand the API
+  # PutItem/DeleteItem on every table in the account, not just the rules tables.
+  validation {
+    condition = alltrue([
+      for arn in var.target_table_arns :
+      can(regex("^arn:aws[a-z-]*:dynamodb:[a-z0-9-]*\\*?[a-z0-9-]*:[0-9]{12}:table/[^*]+\\*?$", arn))
+    ])
+    error_message = "each target_table_arns entry must be a DynamoDB table ARN with a literal 12-digit account and a table name that does not start with a wildcard, e.g. arn:aws:dynamodb:us-east-1:123456789012:table/edgeroute-rules-*."
+  }
 }
 
 variable "allowed_regions" {

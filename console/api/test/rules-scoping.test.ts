@@ -86,3 +86,77 @@ describe("rule routes are scoped to a target", () => {
     });
   });
 });
+
+/**
+ * The body carries its own keys, so it can address a different rule than the URL.
+ * ER-203 will write `Item: body`, so a mismatch would land the write in a
+ * partition the caller never addressed — and a mismatched `sk` on PUT would
+ * create a second item rather than replacing the addressed one.
+ */
+const rule = {
+  pk: "www.example.com",
+  sk: "REDIRECT#00100",
+  type: "erMatchRule",
+  statusCode: 301,
+  redirectURL: "https://www.example.com/new",
+  matches: [{ matchType: "path", matchOperator: "equals", matchValue: "/old" }],
+};
+
+describe("rule bodies must address the path they are sent to", () => {
+  it("rejects a pk that is not the host in the path", async () => {
+    const res = await handler(
+      event("POST", KNOWN, { ...rule, pk: "attacker.example.net" }),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(parse(res.body)).toMatchObject({
+      error: {
+        code: "VALIDATION_ERROR",
+        details: [{ path: "/pk" }],
+      },
+    });
+  });
+
+  it("rejects an sk that is not the sort key in the path", async () => {
+    const res = await handler(
+      event("PUT", `${KNOWN}/REDIRECT%2300100`, {
+        ...rule,
+        sk: "REDIRECT#00999",
+      }),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(parse(res.body)).toMatchObject({
+      error: { details: [{ path: "/sk" }] },
+    });
+  });
+
+  it("reports both keys when both disagree", async () => {
+    const res = await handler(
+      event("PUT", `${KNOWN}/REDIRECT%2300100`, {
+        ...rule,
+        pk: "other.example.net",
+        sk: "REDIRECT#00999",
+      }),
+    );
+
+    const details = (parse(res.body) as { error: { details: unknown[] } }).error
+      .details;
+    expect(details).toHaveLength(2);
+  });
+
+  it("accepts a body that matches the path, reaching the stub", async () => {
+    // The path param arrives URL-decoded, so REDIRECT%2300100 must compare equal
+    // to the body's REDIRECT#00100.
+    const res = await handler(event("PUT", `${KNOWN}/REDIRECT%2300100`, rule));
+
+    expect(res.statusCode).toBe(501);
+  });
+
+  it("does not compare sk on the collection route", async () => {
+    // POST addresses no specific sort key, so only pk is checked.
+    const res = await handler(event("POST", KNOWN, rule));
+
+    expect(res.statusCode).toBe(501);
+  });
+});

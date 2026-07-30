@@ -222,7 +222,7 @@ run "assume_role_grant_adds_nothing_else" {
   }
 }
 
-run "rejects_a_wildcard_assumable_role" {
+run "rejects_a_bare_wildcard_assumable_role" {
   command = plan
 
   # With no auth until ER-205, "*" would let any caller point the API anywhere.
@@ -231,6 +231,116 @@ run "rejects_a_wildcard_assumable_role" {
   }
 
   expect_failures = [var.assumable_role_arns]
+}
+
+run "rejects_a_cross_account_assumable_role" {
+  command = plan
+
+  # The dangerous form an exact-match guard would miss: shaped like an ARN but
+  # spanning every account.
+  variables {
+    assumable_role_arns = ["arn:aws:iam::*:role/*"]
+  }
+
+  expect_failures = [var.assumable_role_arns]
+}
+
+run "rejects_assuming_any_role_in_the_account" {
+  command = plan
+
+  # Shaped like a scoped ARN with a literal account, but the role name is a bare
+  # wildcard — i.e. assume anything in the account. The account check alone
+  # does not catch this.
+  variables {
+    assumable_role_arns = ["arn:aws:iam::123456789012:role/*"]
+  }
+
+  expect_failures = [var.assumable_role_arns]
+}
+
+run "rejects_every_table_in_the_account" {
+  command = plan
+
+  # The same hole on the more dangerous variable: this grant is direct, so
+  # `table/*` means PutItem/DeleteItem on every table in the account.
+  variables {
+    target_table_arns = ["arn:aws:dynamodb:*:123456789012:table/*"]
+  }
+
+  expect_failures = [var.target_table_arns]
+}
+
+run "allows_a_role_path" {
+  command = plan
+
+  # Roles can carry a path; that must not be mistaken for a wildcard.
+  variables {
+    assumable_role_arns = ["arn:aws:iam::123456789012:role/service-roles/edgeroute-target-prod"]
+  }
+
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "AssumeTargetRoles"
+    ]) == 1
+    error_message = "a role ARN with a path must be accepted"
+  }
+}
+
+run "allows_a_role_name_wildcard" {
+  command = plan
+
+  # A wildcard in the role *name* is how a naming convention is expressed.
+  variables {
+    assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
+  }
+
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "AssumeTargetRoles"
+    ]) == 1
+    error_message = "a role-name wildcard with a literal account must be accepted"
+  }
+}
+
+run "rejects_a_bare_wildcard_target_table" {
+  command = plan
+
+  # Worse than the AssumeRole case: this grant is direct, so "*" would mean
+  # PutItem/DeleteItem on every table in the account.
+  variables {
+    target_table_arns = ["*"]
+  }
+
+  expect_failures = [var.target_table_arns]
+}
+
+run "rejects_a_cross_account_target_table" {
+  command = plan
+
+  variables {
+    target_table_arns = ["arn:aws:dynamodb:*:*:table/*"]
+  }
+
+  expect_failures = [var.target_table_arns]
+}
+
+run "allows_a_region_and_table_name_wildcard" {
+  command = plan
+
+  # Multi-region targets are a real case; only the account must be literal.
+  variables {
+    target_table_arns = ["arn:aws:dynamodb:*:123456789012:table/edgeroute-rules-*"]
+  }
+
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "TargetRulesTables"
+    ]) == 1
+    error_message = "a region/table wildcard with a literal account must be accepted"
+  }
 }
 
 run "no_rules_table_grant_by_default" {

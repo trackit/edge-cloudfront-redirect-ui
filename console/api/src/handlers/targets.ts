@@ -11,45 +11,94 @@ import {
 const notFound = (id: string): ApiError =>
   ApiError.notFound(`No target with id "${id}"`);
 
+interface TableIdentity {
+  region: string;
+  tableName: string;
+  roleArn?: string;
+}
+
 /**
- * Registering the same table twice produces entries the UI cannot tell apart
- * while both write to the same data.
+ * Sentinel for "the account cannot be determined" — either because the target
+ * carries no `roleArn` (the table is then in the API's own account, which we
+ * cannot name without an STS call) or because a `roleArn` written to the table
+ * out of band does not parse. Both cases clash with every account, so an
+ * unknown account fails closed rather than sneaking past as its own namespace.
+ */
+const UNKNOWN_ACCOUNT = "unknown";
+
+/**
+ * Account portion of a role ARN — `arn:aws:iam::<account>:role/<name>`, so the
+ * fifth colon-separated field. `validateTarget` has already enforced that shape
+ * for anything arriving over the API, so the fallback only guards items written
+ * to the table out of band.
+ */
+const accountOf = (roleArn?: string): string => {
+  if (roleArn === undefined) return UNKNOWN_ACCOUNT;
+  return roleArn.split(":")[4] || UNKNOWN_ACCOUNT;
+};
+
+/**
+ * Two registry entries for one table are entries the UI cannot tell apart while
+ * both write to the same data. What identifies a table is
+ * (account, region, tableName) — **not** the role ARN.
  *
- * `roleArn` is part of the identity, not just the region and table name: a table
- * name is only unique *within an account*, so two accounts following the same
- * naming convention legitimately both have `edgeroute-rules` in `us-east-1`.
- * Keying on (region, tableName) alone would reject the second one — the very
- * case the per-target role exists to support.
+ * The account matters because a table name is only unique within an account, so
+ * two accounts following the same naming convention legitimately both have
+ * `edgeroute-rules` in `us-east-1`. The role *name* must not matter: two
+ * different roles in the same account granting access to the same table are two
+ * views of one table, not two targets.
  *
- * Read-then-write, so two simultaneous creates can still both succeed. Note the
- * read is a Scan and therefore eventually consistent, so a genuine double-submit
+ * An unknown account on either side clashes with everything — see
+ * UNKNOWN_ACCOUNT. That fails closed: registering the same table once with and
+ * once without a role is caught, at the cost of rejecting the rare "local table
+ * plus a same-named table in another account". Setting `roleArn` on both
+ * disambiguates them.
+ *
+ * Caveat: this compares the account of the *role*, as a proxy for the account of
+ * the *table*. DynamoDB resource-based policies mean a role in one account can
+ * reach a table in another, so two roles in different accounts pointing at one
+ * table are not detected. Cross-account is out of scope for now, but this is the
+ * limit of what the check can see without describing the table.
+ */
+const identifiesSameTable = (a: TableIdentity, b: TableIdentity): boolean => {
+  if (a.region !== b.region || a.tableName !== b.tableName) return false;
+
+  const accountA = accountOf(a.roleArn);
+  const accountB = accountOf(b.roleArn);
+  if (accountA === UNKNOWN_ACCOUNT || accountB === UNKNOWN_ACCOUNT) return true;
+  return accountA === accountB;
+};
+
+/**
+ * Read-then-write, so two simultaneous creates can still both succeed. The read
+ * is a Scan and therefore eventually consistent, so a genuine double-submit
  * arriving within milliseconds may slip through; this catches the retried submit,
  * not a race. A conditional write on a second uniqueness item would be needed to
  * make it atomic.
  */
-const identityOf = (target: {
-  region: string;
-  tableName: string;
-  roleArn?: string;
-}): string => `${target.roleArn ?? ""} ${target.region} ${target.tableName}`;
-
 const assertTableNotRegistered = async (
-  input: { region: string; tableName: string; roleArn?: string },
+  input: TableIdentity,
   exceptId?: string,
 ): Promise<void> => {
-  const wanted = identityOf(input);
   const existing = await getTargetsRepository().list();
   const clash = existing.find(
-    (t) => t.id !== exceptId && identityOf(t) === wanted,
+    (t) => t.id !== exceptId && identifiesSameTable(t, input),
   );
 
   if (clash) {
-    const where = input.roleArn ? ` via ${input.roleArn}` : "";
-    throw new ApiError(
-      409,
-      "TARGET_EXISTS",
-      `Table "${input.tableName}" in ${input.region}${where} is already registered as target "${clash.id}"`,
-    );
+    // Describe the *clashing* entry, not the input — the two can disagree about
+    // the account, and naming the input's account here would send an operator
+    // looking in an account where nothing is registered. When either side's
+    // account is unknown, say so and how to resolve it instead of guessing.
+    const clashAccount = accountOf(clash.roleArn);
+    const inputAccount = accountOf(input.roleArn);
+
+    const detail =
+      clashAccount === UNKNOWN_ACCOUNT || inputAccount === UNKNOWN_ACCOUNT
+        ? `target "${clash.id}" already registers table "${clash.tableName}" in ${clash.region}. One of them has no roleArn, so its account cannot be determined and they are assumed to be the same table — set roleArn on both if they are different tables.`
+        : `target "${clash.id}" already registers table "${clash.tableName}" in ${clash.region} in account ${clashAccount}.`;
+
+    throw new ApiError(409, "TARGET_EXISTS", detail);
   }
 };
 

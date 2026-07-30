@@ -38,6 +38,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -56,6 +58,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Target"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -99,6 +103,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Target"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "405":
@@ -142,6 +148,8 @@ paths:
       responses:
         "204":
           description: The target was removed from the registry.
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "405":
@@ -370,6 +378,29 @@ components:
       oneOf:
         - $ref: "../../shared/redirect-rule.schema.json"
         - $ref: "../../shared/rewrite-rule.schema.json"
+    ValidationDetail:
+      description: >-
+        One validation failure. Mirrors ValidationDetail in
+        console/api/src/lib/ajv-errors.ts.
+      type: object
+      additionalProperties: false
+      required: [path, message]
+      properties:
+        path:
+          type: string
+          description: >-
+            JSON Pointer to the offending value, or "(root)" for the body itself.
+        message:
+          type: string
+          description: Human-readable reason, straight from the schema validator.
+        params:
+          type: object
+          additionalProperties: true
+          description: >-
+            Validator metadata identifying the field — e.g.
+            `{"additionalProperty":"typo"}` or `{"allowedValues":[301,302]}`. The
+            message alone often does not name the field, which is why this is
+            passed through. Never contains request values.
     Error:
       type: object
       additionalProperties: false
@@ -388,9 +419,12 @@ components:
               description: Human-readable summary.
             details:
               type: array
-              description: Optional structured detail, e.g. validation errors.
+              description: >-
+                Optional structured detail. Present on validation failures, where
+                each entry locates one bad field. Capped — a final entry with no
+                `params` reports how many were omitted.
               items:
-                type: object
+                $ref: "#/components/schemas/ValidationDetail"
   responses:
     BadRequest:
       description: The request was malformed or failed schema validation.
@@ -400,7 +434,10 @@ components:
             $ref: "#/components/schemas/Error"
     Conflict:
       description: >-
-        That (region, tableName) pair is already registered as another target.
+        That table is already registered as another target. A table is identified
+        by (account, region, tableName) — the account coming from `roleArn`, so
+        two accounts may register the same table name, but two roles in one
+        account may not.
       content:
         application/json:
           schema:
@@ -430,7 +467,8 @@ components:
     NotImplemented:
       description: >-
         Route is defined but its persistence is not implemented yet (ER-203).
-        This is the only response the rule routes return today.
+        Returned once the target resolves, so a rule route can still answer 404
+        for an unknown target or 400 for a malformed body.
       content:
         application/json:
           schema:
