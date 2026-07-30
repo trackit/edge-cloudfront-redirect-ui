@@ -65,4 +65,41 @@ describe("validateRule", () => {
     const mixed = { ...redirectRule, forwardSettings: { pathAndQS: "/x" } };
     expect(() => validateRule(mixed)).toThrowError(ApiError);
   });
+
+  it("names the offending property in details, not just the message", () => {
+    // Ajv's additionalProperties message says only "must NOT have additional
+    // properties" — the key lives in params, which the SPA needs to highlight
+    // the field. Guards the params passthrough in toDetails.
+    const extra = { ...redirectRule, notAField: 1 };
+    try {
+      validateRule(extra);
+      expect.unreachable();
+    } catch (err) {
+      const details = (err as ApiError).details as {
+        message: string;
+        params?: { additionalProperty?: string };
+      }[];
+      const offending = details.find(
+        (d) => d.params?.additionalProperty === "notAField",
+      );
+      expect(offending).toBeDefined();
+    }
+  });
+
+  it("caps details so a large body cannot amplify past the response limit", () => {
+    // One junk key yields one detail. Uncapped, a big body produces a response
+    // over Lambda's 6 MB limit, and API Gateway replaces the error envelope
+    // with its own 502.
+    const junk = Object.fromEntries(
+      Array.from({ length: 500 }, (_, i) => [`junk${i}`, 1]),
+    );
+    try {
+      validateRule({ ...redirectRule, ...junk });
+      expect.unreachable();
+    } catch (err) {
+      const details = (err as ApiError).details as { message: string }[];
+      expect(details.length).toBeLessThanOrEqual(51);
+      expect(details.at(-1)?.message).toMatch(/further errors omitted/);
+    }
+  });
 });

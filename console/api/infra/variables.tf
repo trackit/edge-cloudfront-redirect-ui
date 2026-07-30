@@ -40,7 +40,12 @@ variable "monorepo_root" {
 }
 
 variable "npm_install_command" {
-  type        = string
+  type = string
+  # nullable = false so an explicit `null` falls back to the default. The path
+  # variables above are deliberately `default = null` + coalesce, so passing
+  # null here to mean "use the default" is the convention this file sets — and
+  # without this it would reach trimspace() as null and fail the plan.
+  nullable    = false
   default     = "npm ci"
   description = "Dependency install run at monorepo_root before the build. `npm ci` deletes and reinstalls node_modules, so an apply from a working repo wipes the operator's install — set this to \"npm install\" to keep it, or to \"\" to skip installing and build with whatever is already there."
 }

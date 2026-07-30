@@ -36,6 +36,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
   /targets/{targetId}/hosts/{host}/rules:
     parameters:
       - $ref: "#/components/parameters/TargetId"
@@ -56,6 +58,8 @@ paths:
                   $ref: "#/components/schemas/Rule"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "501":
           $ref: "#/components/responses/NotImplemented"
     post:
@@ -77,6 +81,8 @@ paths:
                 $ref: "#/components/schemas/Rule"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "501":
           $ref: "#/components/responses/NotImplemented"
   /targets/{targetId}/hosts/{host}/rules/{sk}:
@@ -99,6 +105,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "501":
           $ref: "#/components/responses/NotImplemented"
     put:
@@ -122,6 +130,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "501":
           $ref: "#/components/responses/NotImplemented"
     delete:
@@ -135,6 +145,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "501":
           $ref: "#/components/responses/NotImplemented"
 components:
@@ -206,6 +218,14 @@ components:
             $ref: "#/components/schemas/Error"
     NotFound:
       description: No such resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    MethodNotAllowed:
+      description: >-
+        The path exists but not for this method. The Lambda router owns method
+        dispatch — API Gateway forwards every method on a `$default` route.
       content:
         application/json:
           schema:

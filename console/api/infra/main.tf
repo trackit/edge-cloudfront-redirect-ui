@@ -26,7 +26,8 @@ resource "null_resource" "build" {
     schemas      = local.shared_schema_hash
     build_script = filesha256("${local.api_source_dir}/build.mjs")
     package      = filesha256("${local.api_source_dir}/package.json")
-    # try(): only the default `npm ci` guarantees a lockfile is present.
+    # try(): a consumer who skips the install (or uses another package manager)
+    # may have no npm lockfile, and a missing file would fail the whole plan.
     lockfile = try(filesha256("${local.monorepo_root}/package-lock.json"), "")
     # esbuild reads tsconfig, so a compiler-option change must repackage too.
     tsconfig = filesha256("${local.api_source_dir}/tsconfig.json")

@@ -31,10 +31,13 @@ const toEvent = (
   const rawPath = queryStart === -1 ? target : target.slice(0, queryStart);
   const rawQueryString = queryStart === -1 ? "" : target.slice(queryStart + 1);
 
+  // API Gateway v2 comma-joins a repeated query param into one value rather
+  // than keeping the last, so `?a=1&a=2` arrives as `a: "1,2"`.
   const query: Record<string, string> = {};
-  new URLSearchParams(rawQueryString).forEach(
-    (value, key) => (query[key] = value),
-  );
+  for (const [key, value] of new URLSearchParams(rawQueryString)) {
+    const seen = query[key];
+    query[key] = seen === undefined ? value : `${seen},${value}`;
+  }
   const headers: Record<string, string> = {};
   for (const [key, value] of Object.entries(req.headers)) {
     if (typeof value === "string") headers[key] = value;
