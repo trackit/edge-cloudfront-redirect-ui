@@ -270,6 +270,28 @@ run "rejects_every_table_in_the_account" {
   expect_failures = [var.target_table_arns]
 }
 
+run "rejects_a_single_character_wildcard_role" {
+  command = plan
+
+  # IAM treats `?` as a single-character wildcard, so this matches every
+  # 14-character role in the account. A guard that only blocks `*` misses it.
+  variables {
+    assumable_role_arns = ["arn:aws:iam::123456789012:role/??????????????"]
+  }
+
+  expect_failures = [var.assumable_role_arns]
+}
+
+run "rejects_a_single_character_wildcard_table" {
+  command = plan
+
+  variables {
+    target_table_arns = ["arn:aws:dynamodb:us-east-1:123456789012:table/????????????????"]
+  }
+
+  expect_failures = [var.target_table_arns]
+}
+
 run "allows_a_role_path" {
   command = plan
 
@@ -363,6 +385,17 @@ run "target_table_arns_grants_the_listed_tables" {
   # reachable if its table is named here at apply time.
   variables {
     target_table_arns = ["arn:aws:dynamodb:us-east-1:123456789012:table/rules-prod"]
+  }
+
+  # The count guard is load-bearing: `alltrue([])` is true, so without it every
+  # assertion below would pass if the statement were deleted or its sid renamed —
+  # including the DeleteTable guard, which is criterion 6's safety net.
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "TargetRulesTables"
+    ]) == 1
+    error_message = "target_table_arns must add exactly one TargetRulesTables statement"
   }
 
   assert {

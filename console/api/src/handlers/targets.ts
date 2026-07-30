@@ -124,9 +124,33 @@ export const getTarget = async (req: ApiRequest): Promise<ApiResponse> => {
   return json(200, target);
 };
 
+/**
+ * `TargetInput` forbids `id`, which is right for create — the server assigns it.
+ * On update it would force every caller to strip `id` before PUT-ing back what
+ * GET just returned, so an `id` matching the path is accepted and dropped, and
+ * only a *mismatched* one is an error. The path is the authority either way.
+ */
+const withoutMatchingId = (body: unknown, id: string): unknown => {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return body;
+  }
+  if (!("id" in body)) return body;
+
+  const { id: bodyId, ...rest } = body as { id: unknown };
+  if (bodyId !== id) {
+    throw new ApiError(
+      400,
+      "VALIDATION_ERROR",
+      "Target body does not match the path it was sent to",
+      [{ path: "/id", message: `must equal the id in the path ("${id}")` }],
+    );
+  }
+  return rest;
+};
+
 export const updateTarget = async (req: ApiRequest): Promise<ApiResponse> => {
   const { id } = req.params;
-  const input = validateTarget(req.body);
+  const input = validateTarget(withoutMatchingId(req.body, id));
   const repo = getTargetsRepository();
   if (!(await repo.get(id))) throw notFound(id);
   await assertTableNotRegistered(input, id);

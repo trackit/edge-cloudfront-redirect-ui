@@ -114,13 +114,17 @@ paths:
     put:
       operationId: updateTarget
       summary: Update a target.
+      description: >-
+        Full replace: a field omitted from the body is cleared, so send the whole
+        target. Accepts the `id` returned by GET as long as it matches the path,
+        so a fetched target can be edited and PUT back unchanged.
       tags: [targets]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/TargetInput"
+              $ref: "#/components/schemas/TargetUpdate"
       responses:
         "200":
           description: The updated target.
@@ -356,6 +360,31 @@ components:
             rules table. Omit to use the API's own execution role, which only
             reaches tables its policy already covers. Required in practice for a
             target registered after deploy, or one in another account.
+    TargetUpdate:
+      description: >-
+        Update body. Same fields as TargetInput plus an optional `id`, which must
+        equal the id in the path if present; a mismatch is a 400. Spelled out
+        rather than composed with TargetInput because `allOf` cannot add a
+        property to a schema that sets `additionalProperties: false`.
+      type: object
+      additionalProperties: false
+      required: [name, region, tableName]
+      properties:
+        id:
+          type: string
+          description: Must equal the id in the path. Ignored otherwise.
+        name:
+          type: string
+          pattern: "\\S"
+        region:
+          type: string
+          pattern: "^[a-z]{2}(-[a-z]+)+-\\d+$"
+        tableName:
+          type: string
+          pattern: "^[a-zA-Z0-9_.-]{3,255}$"
+        roleArn:
+          type: string
+          pattern: "^arn:aws[a-z-]*:iam::\\d{12}:role/.+$"
     Target:
       description: A registered target. `id` is server-generated and immutable.
       type: object
@@ -413,7 +442,22 @@ components:
           properties:
             code:
               type: string
-              description: Stable, machine-readable error code the SPA switches on.
+              description: >-
+                Stable, machine-readable error code. Closed set — see ERROR_CODES
+                in console/api/src/lib/errors.ts, which a test keeps in sync with
+                this enum. UNKNOWN_TARGET and NOT_FOUND are both 404s: the first
+                means the target id in the path is not registered, the second that
+                the addressed resource does not exist within a known target.
+              enum:
+                - BAD_REQUEST
+                - INTERNAL
+                - INVALID_JSON
+                - METHOD_NOT_ALLOWED
+                - NOT_FOUND
+                - NOT_IMPLEMENTED
+                - TARGET_EXISTS
+                - UNKNOWN_TARGET
+                - VALIDATION_ERROR
             message:
               type: string
               description: Human-readable summary.

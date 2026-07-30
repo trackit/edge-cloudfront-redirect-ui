@@ -93,6 +93,42 @@ describe("targets API", () => {
     expect(body.name).toBe("Renamed");
   });
 
+  it("PUT /targets/:id accepts the target GET returned, unchanged", async () => {
+    // The GET → edit → PUT round-trip must work without the caller stripping
+    // `id` by hand; ER-302's editor does exactly this.
+    const created = await create();
+    const fetched = parse(
+      (await handler(event("GET", `/targets/${created.id}`))).body,
+    );
+
+    const res = await handler(event("PUT", `/targets/${created.id}`, fetched));
+
+    expect(res.statusCode).toBe(200);
+    expect(parse(res.body)).toEqual(fetched);
+  });
+
+  it("PUT /targets/:id 400s an id that disagrees with the path", async () => {
+    const created = await create();
+
+    const res = await handler(
+      event("PUT", `/targets/${created.id}`, { ...input, id: "some-other-id" }),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(parse(res.body)).toMatchObject({
+      error: { code: "VALIDATION_ERROR", details: [{ path: "/id" }] },
+    });
+  });
+
+  it("POST /targets still refuses a client-supplied id", async () => {
+    // Only update accepts `id`; on create the server assigns it.
+    const res = await handler(
+      event("POST", "/targets", { ...input, id: "client-chosen" }),
+    );
+
+    expect(res.statusCode).toBe(400);
+  });
+
   it("PUT /targets/:id 404s an unknown id", async () => {
     const res = await handler(event("PUT", "/targets/nope", input));
     expect(res.statusCode).toBe(404);

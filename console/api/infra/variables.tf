@@ -69,12 +69,15 @@ variable "assumable_role_arns" {
 
   # The account must be spelled out. With no authentication until ER-205, a grant
   # that spans accounts (`*` alone, or `arn:aws:iam::*:role/*`) would let any
-  # caller register a target pointing anywhere the API can reach. A wildcard in
-  # the role *name* is fine — that is how a naming convention is expressed.
+  # caller register a target pointing anywhere the API can reach. A trailing `*`
+  # in the role *name* is fine — that is how a naming convention is expressed.
+  # `?` is rejected outright: IAM treats it as a single-character wildcard, so
+  # `role/??????????????` matches every 14-character role, and no legal role or
+  # table name contains one anyway.
   validation {
     condition = alltrue([
       for arn in var.assumable_role_arns :
-      can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/[^*]+\\*?$", arn))
+      can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/[^*?]+\\*?$", arn))
     ])
     error_message = "each assumable_role_arns entry must be a role ARN with a literal 12-digit account and a role name that does not start with a wildcard, e.g. arn:aws:iam::123456789012:role/edgeroute-target-*."
   }
@@ -91,7 +94,7 @@ variable "target_table_arns" {
   validation {
     condition = alltrue([
       for arn in var.target_table_arns :
-      can(regex("^arn:aws[a-z-]*:dynamodb:[a-z0-9-]*\\*?[a-z0-9-]*:[0-9]{12}:table/[^*]+\\*?$", arn))
+      can(regex("^arn:aws[a-z-]*:dynamodb:[a-z0-9-]*\\*?[a-z0-9-]*:[0-9]{12}:table/[^*?]+\\*?$", arn))
     ])
     error_message = "each target_table_arns entry must be a DynamoDB table ARN with a literal 12-digit account and a table name that does not start with a wildcard, e.g. arn:aws:dynamodb:us-east-1:123456789012:table/edgeroute-rules-*."
   }
