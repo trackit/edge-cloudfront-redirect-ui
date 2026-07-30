@@ -19,7 +19,7 @@ jobs:
       - run: npm run lint
 
   typecheck:
-    name: Typecheck (tsc --noEmit)
+    name: Typecheck (tsc --noEmit) + API bundle
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,9 +29,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # Exercise the esbuild bundle so ESM output / JSON imports / externals
+      # can't break unnoticed until a real deploy.
+      - run: npm run build -w console/api
 
   schemas:
-    name: Validate shared schemas
+    name: Validate shared schemas + OpenAPI
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +44,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npm run openapi:lint -w console/api
 
   terraform:
     name: Terraform (fmt + validate + test)
@@ -52,6 +56,7 @@ jobs:
           terraform_version: 1.15.6
       - run: terraform fmt -check -recursive infra
       - run: terraform fmt -check -recursive examples
+      - run: terraform fmt -check -recursive console
       - run: terraform -chdir=infra/modules/table init -backend=false
       - run: terraform -chdir=infra/modules/table validate
       - run: terraform -chdir=infra/modules/table test
@@ -62,3 +67,6 @@ jobs:
       - run: terraform -chdir=examples/infra init -backend=false
       - run: terraform -chdir=examples/infra validate
       - run: terraform -chdir=examples/infra test
+      - run: terraform -chdir=console/api/infra init -backend=false
+      - run: terraform -chdir=console/api/infra validate
+      - run: terraform -chdir=console/api/infra test
