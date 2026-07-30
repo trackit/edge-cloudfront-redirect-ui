@@ -16,8 +16,8 @@ run "lambda_runtime_and_handler" {
   command = plan
 
   assert {
-    condition     = aws_lambda_function.this.runtime == "nodejs20.x"
-    error_message = "runtime must be nodejs20.x"
+    condition     = aws_lambda_function.this.runtime == "nodejs22.x"
+    error_message = "runtime must be a supported Node runtime; nodejs20.x reached end of support"
   }
 
   assert {
@@ -219,6 +219,61 @@ run "assume_role_grant_adds_nothing_else" {
       s if s.sid == "TargetsRegistry"
     ]) == 1
     error_message = "the registry statement must survive unchanged alongside the grant"
+  }
+}
+
+run "rejects_a_wildcard_assumable_role" {
+  command = plan
+
+  # With no auth until ER-205, "*" would let any caller point the API anywhere.
+  variables {
+    assumable_role_arns = ["*"]
+  }
+
+  expect_failures = [var.assumable_role_arns]
+}
+
+run "no_rules_table_grant_by_default" {
+  command = plan
+
+  # Default grants access to no rules table, so every target needs a roleArn.
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "TargetRulesTables"
+    ]) == 0
+    error_message = "rules-table access must be opt-in via target_table_arns"
+  }
+}
+
+run "target_table_arns_grants_the_listed_tables" {
+  command = plan
+
+  # The alternative to a per-target role: a target with no roleArn is only
+  # reachable if its table is named here at apply time.
+  variables {
+    target_table_arns = ["arn:aws:dynamodb:us-east-1:123456789012:table/rules-prod"]
+  }
+
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s.resources == toset([
+        "arn:aws:dynamodb:us-east-1:123456789012:table/rules-prod"
+      ])
+      if s.sid == "TargetRulesTables"
+    ])
+    error_message = "rules-table access must be scoped to exactly target_table_arns"
+  }
+
+  # Item-level actions only — never DeleteTable, which criterion 6 forbids.
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      !contains(s.actions, "dynamodb:DeleteTable")
+      if s.sid == "TargetRulesTables"
+    ])
+    error_message = "the rules-table grant must never include DeleteTable"
   }
 }
 

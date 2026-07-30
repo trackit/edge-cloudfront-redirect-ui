@@ -1,17 +1,18 @@
 # console API — infrastructure
 
 Terraform for the control-plane API: an HTTP API Gateway (v2) fronting a single
-Node 20 Lambda that runs the request router in `console/api/src`.
+Node 22 Lambda that runs the request router in `console/api/src`.
 
 ## What it creates
 
-- **`aws_lambda_function`** — `nodejs20.x`, handler `index.handler`. Bundled by
+- **`aws_lambda_function`** — `nodejs22.x`, handler `index.handler`. Bundled by
   esbuild (`console/api/build.mjs`) at apply and zipped from `dist/`.
 - **`aws_apigatewayv2_api` + integration + `$default` route + stage** — an HTTP
   API with a catch-all route; the Lambda's own router dispatches every path.
-- **`aws_iam_role`** — execution role: CloudWatch Logs, read/write on the
-  targets registry table, and `sts:AssumeRole` on `assumable_role_arns` (see
-  [Reaching a target's table](#reaching-a-targets-table)).
+- **`aws_iam_role`** — execution role: CloudWatch Logs, read/write on the targets
+  registry table, and — both off by default — `sts:AssumeRole` on
+  `assumable_role_arns` plus item-level DynamoDB access on `target_table_arns`
+  (see [Reaching a target's table](#reaching-a-targets-table)).
 - **`aws_cloudwatch_log_group`** — `/aws/lambda/<function_name>`.
 - **`aws_dynamodb_table` (targets registry)** — the control-plane's own state
   (`pk=id`, `PAY_PER_REQUEST`, PITR on, deletion protection on). Passed to the
@@ -24,37 +25,43 @@ two facts do not meet on their own: a DynamoDB ARN is
 `arn:aws:dynamodb:<region>:<account>:table/<name>`, so a static policy has to
 enumerate every table before it exists.
 
-Three ways to bridge that, and this module takes the third:
+Two variables bridge that, and both are empty by default — so out of the box no
+target is reachable:
 
-|                                       | Self-service                      | Least-privilege                        | Cross-account  |
-| ------------------------------------- | --------------------------------- | -------------------------------------- | -------------- |
-| Enumerate table ARNs in a variable    | no — a Terraform apply per target | yes                                    | no             |
-| Wildcard on a table-name prefix       | yes                               | no — any matching table in the account | no             |
-| **Per-target `roleArn` + AssumeRole** | **yes**                           | **yes**                                | **yes, later** |
+| Approach                                                   | Self-service                      | Least-privilege                        |
+| ---------------------------------------------------------- | --------------------------------- | -------------------------------------- |
+| Enumerate table ARNs — **`target_table_arns`**             | no — a Terraform apply per target | yes                                    |
+| Wildcard on a table-name prefix — also `target_table_arns` | yes                               | no — any matching table in the account |
+| Per-target `roleArn` — **`assumable_role_arns`**           | yes                               | yes                                    |
 
-So a target carries an optional **`roleArn`**. The API assumes it to read and
-write that target's rules table, and `assumable_role_arns` is what the execution
-role is allowed to assume:
+**`target_table_arns`** grants the API's own execution role access to the tables
+you name. A target with no `roleArn` uses those credentials, so it is reachable
+only if its table is listed:
 
 ```hcl
-module "console_api" {
-  source        = "../console/api/infra"
-  function_name = "edgeroute-console-api"
-
-  # Narrow to your role-naming convention — wildcards are allowed.
-  assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
-}
+target_table_arns = ["arn:aws:dynamodb:us-east-1:123456789012:table/edgeroute-rules-*"]
 ```
 
-Each target's role needs a trust policy admitting this Lambda's execution role,
-and a permissions policy covering its own rules table. A target with no `roleArn`
-falls back to the API's own credentials, which today reach no rules table — so
-`assumable_role_arns` must be set before rule operations (ER-203) work at all.
+**`assumable_role_arns`** is the self-service route. A target carries a `roleArn`
+and the API assumes it to reach that target's table, so registering a new target
+needs no Terraform change:
 
-Cross-account targets are out of scope for now (the scope doc defers them), but
-this shape is what makes them possible without changing the `Target` record
-later — which is why the field exists now rather than after ER-301 generates a
-typed client from these schemas.
+```hcl
+# Narrow to your role-naming convention. "*" is rejected.
+assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
+```
+
+Each target's role needs a trust policy admitting this Lambda's execution role and
+a permissions policy covering its own rules table.
+
+Leave both empty and no target is reachable, so rule operations (ER-203) will
+fail. That is the default deliberately — neither grant should be implicit.
+
+The reason `roleArn` exists now rather than later is the runtime-vs-apply-time gap
+above, not cross-account support: the scope doc puts cross-account under "not in
+the 30 days", and nothing here has been exercised against a second account. What
+the field does buy is that adding it later, after ER-301 generates a typed client
+from these `additionalProperties: false` schemas, would be a breaking change.
 
 ## Region validation
 
@@ -129,5 +136,9 @@ output "api_endpoint" {
 
 `terraform test` runs a mocked, plan-only suite (`tests/api.tftest.hcl`) — no
 npm, no AWS. It asserts the Lambda runtime/handler/sizing, the HTTP API shape,
-the invoke permission, the log group name, and the registry table + its
-`TARGETS_TABLE_NAME` wiring.
+the invoke permission, the log group name, the registry table (including deletion
+protection) and its `TARGETS_TABLE_NAME` wiring, that both access grants are
+off by default and scoped to exactly the ARNs given when set, that a `"*"`
+`assumable_role_arns` is rejected, that the rules-table grant never includes
+`DeleteTable`, and that `ALLOWED_REGIONS` is passed through when set and omitted
+entirely when not.

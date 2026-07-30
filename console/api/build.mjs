@@ -21,7 +21,7 @@ await build({
   outfile: "dist/index.mjs",
   bundle: true,
   platform: "node",
-  target: "node20",
+  target: "node22",
   format: "esm",
   external: ["@aws-sdk/*"],
   logLevel: "info",

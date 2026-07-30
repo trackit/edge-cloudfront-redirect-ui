@@ -118,6 +118,25 @@ data "aws_iam_policy_document" "registry" {
       resources = var.assumable_role_arns
     }
   }
+
+  # The other half of the same problem: a target with no `roleArn` uses the API's
+  # own credentials, so its table has to be named here at apply time. Listing
+  # nothing means every target must carry a roleArn.
+  dynamic "statement" {
+    for_each = length(var.target_table_arns) > 0 ? [1] : []
+
+    content {
+      sid = "TargetRulesTables"
+      actions = [
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Scan",
+      ]
+      resources = var.target_table_arns
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "registry" {
@@ -159,7 +178,7 @@ resource "aws_lambda_function" "this" {
   function_name = var.function_name
   role          = aws_iam_role.this.arn
   handler       = "index.handler"
-  runtime       = "nodejs20.x"
+  runtime       = "nodejs22.x"
 
   filename         = data.archive_file.lambda_zip.output_path
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256

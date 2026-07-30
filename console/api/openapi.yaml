@@ -40,6 +40,8 @@ paths:
                 $ref: "#/components/schemas/Health"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /targets:
     get:
       operationId: listTargets
@@ -56,6 +58,8 @@ paths:
                   $ref: "#/components/schemas/Target"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
     post:
       operationId: createTarget
       summary: Register a new target.
@@ -79,6 +83,8 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /targets/{id}:
     parameters:
       - $ref: "#/components/parameters/TargetPathId"
@@ -93,10 +99,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Target"
-        "405":
-          $ref: "#/components/responses/MethodNotAllowed"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
     put:
       operationId: updateTarget
       summary: Update a target.
@@ -116,12 +124,14 @@ paths:
                 $ref: "#/components/schemas/Target"
         "400":
           $ref: "#/components/responses/BadRequest"
-        "405":
-          $ref: "#/components/responses/MethodNotAllowed"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       operationId: deleteTarget
       summary: Remove a target from the registry.
@@ -132,10 +142,12 @@ paths:
       responses:
         "204":
           description: The target was removed from the registry.
-        "405":
-          $ref: "#/components/responses/MethodNotAllowed"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /targets/{targetId}/hosts/{host}/rules:
     parameters:
       - $ref: "#/components/parameters/TargetId"
@@ -156,8 +168,12 @@ paths:
                   $ref: "#/components/schemas/Rule"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
     post:
@@ -179,8 +195,12 @@ paths:
                 $ref: "#/components/schemas/Rule"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
   /targets/{targetId}/hosts/{host}/rules/{sk}:
@@ -205,6 +225,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
     put:
@@ -230,6 +252,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
     delete:
@@ -245,6 +269,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
 components:
@@ -375,6 +401,14 @@ components:
     Conflict:
       description: >-
         That (region, tableName) pair is already registered as another target.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: >-
+        Unexpected failure. The response carries only a generic message; the cause
+        is in the function's CloudWatch logs.
       content:
         application/json:
           schema:

@@ -166,6 +166,39 @@ describe("targets API", () => {
     expect((parse(padded.body) as { name: string }).name).toBe("Prod");
   });
 
+  it("POST /targets allows the same table name in two different accounts", async () => {
+    // A table name is only unique within an account, so two accounts following
+    // the same naming convention both have rules-prod in us-east-1. Keying the
+    // uniqueness check on (region, tableName) alone would 409 the second one —
+    // the exact case the per-target role exists to support.
+    const first = await handler(
+      event("POST", "/targets", {
+        ...input,
+        roleArn: "arn:aws:iam::111111111111:role/edgeroute-target-prod",
+      }),
+    );
+    expect(first.statusCode).toBe(201);
+
+    const second = await handler(
+      event("POST", "/targets", {
+        ...input,
+        name: "Prod (other account)",
+        roleArn: "arn:aws:iam::222222222222:role/edgeroute-target-prod",
+      }),
+    );
+    expect(second.statusCode).toBe(201);
+  });
+
+  it("POST /targets still 409s the same table via the same role", async () => {
+    const roleArn = "arn:aws:iam::111111111111:role/edgeroute-target-prod";
+    await handler(event("POST", "/targets", { ...input, roleArn }));
+
+    const again = await handler(
+      event("POST", "/targets", { ...input, name: "Copy", roleArn }),
+    );
+    expect(again.statusCode).toBe(409);
+  });
+
   it("POST /targets round-trips an optional roleArn and rejects a bad one", async () => {
     const roleArn = "arn:aws:iam::123456789012:role/edgeroute-target-prod";
     const ok = await handler(event("POST", "/targets", { ...input, roleArn }));

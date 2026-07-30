@@ -65,7 +65,20 @@ variable "deletion_protection" {
 variable "assumable_role_arns" {
   type        = list(string)
   default     = []
-  description = "Role ARNs (wildcards allowed) the API may assume to reach a target's rules table, matching the `roleArn` on registered targets. Empty means no sts:AssumeRole grant, so the API can only reach tables its own policy covers. Keep these as narrow as your role-naming convention allows."
+  description = "Role ARNs the API may assume to reach a target's rules table, matching the `roleArn` on registered targets. Empty means no sts:AssumeRole grant. Keep these as narrow as your role-naming convention allows."
+
+  # `*` would let the API assume anything it can reach, which — with no
+  # authentication until ER-205 — means any caller could point it anywhere.
+  validation {
+    condition     = !contains(var.assumable_role_arns, "*")
+    error_message = "assumable_role_arns must not be \"*\"; scope it to a role path or name prefix."
+  }
+}
+
+variable "target_table_arns" {
+  type        = list(string)
+  default     = []
+  description = "Rules-table ARNs the API's own execution role may read and write. This is the alternative to a per-target `roleArn`: a target with no roleArn is only reachable if its table is listed here. Empty means every target must carry a roleArn. Wildcards are allowed but scope the console to whatever matches."
 }
 
 variable "allowed_regions" {

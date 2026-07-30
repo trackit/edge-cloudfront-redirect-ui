@@ -12,28 +12,43 @@ const notFound = (id: string): ApiError =>
   ApiError.notFound(`No target with id "${id}"`);
 
 /**
- * A (region, tableName) pair identifies one rules table, so registering it twice
- * produces entries the UI cannot tell apart while both write to the same data.
- * Read-then-write, so two simultaneous creates can still both succeed — this
- * catches the realistic case (a retried or double-clicked submit), not a race.
+ * Registering the same table twice produces entries the UI cannot tell apart
+ * while both write to the same data.
+ *
+ * `roleArn` is part of the identity, not just the region and table name: a table
+ * name is only unique *within an account*, so two accounts following the same
+ * naming convention legitimately both have `edgeroute-rules` in `us-east-1`.
+ * Keying on (region, tableName) alone would reject the second one — the very
+ * case the per-target role exists to support.
+ *
+ * Read-then-write, so two simultaneous creates can still both succeed. Note the
+ * read is a Scan and therefore eventually consistent, so a genuine double-submit
+ * arriving within milliseconds may slip through; this catches the retried submit,
+ * not a race. A conditional write on a second uniqueness item would be needed to
+ * make it atomic.
  */
+const identityOf = (target: {
+  region: string;
+  tableName: string;
+  roleArn?: string;
+}): string => `${target.roleArn ?? ""} ${target.region} ${target.tableName}`;
+
 const assertTableNotRegistered = async (
-  input: { region: string; tableName: string },
+  input: { region: string; tableName: string; roleArn?: string },
   exceptId?: string,
 ): Promise<void> => {
+  const wanted = identityOf(input);
   const existing = await getTargetsRepository().list();
   const clash = existing.find(
-    (t) =>
-      t.id !== exceptId &&
-      t.region === input.region &&
-      t.tableName === input.tableName,
+    (t) => t.id !== exceptId && identityOf(t) === wanted,
   );
 
   if (clash) {
+    const where = input.roleArn ? ` via ${input.roleArn}` : "";
     throw new ApiError(
       409,
       "TARGET_EXISTS",
-      `Table "${input.tableName}" in ${input.region} is already registered as target "${clash.id}"`,
+      `Table "${input.tableName}" in ${input.region}${where} is already registered as target "${clash.id}"`,
     );
   }
 };
