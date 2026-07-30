@@ -44,7 +44,19 @@ variable "lambda_source_dir" {
 variable "monorepo_root" {
   type        = string
   default     = null
-  description = "Repo root where `npm ci` runs (infra/lambda is an npm workspace). Defaults to ../../.. relative to this module."
+  description = "Repo root where the dependency install runs (infra/lambda is an npm workspace). Defaults to ../../.. relative to this module."
+}
+
+variable "build_dir" {
+  type        = string
+  default     = null
+  description = "Directory this instance builds in (generated config, bundle, zip). Must be unique per module instance — two instances sharing one build directory race and can ship each other's baked config. Defaults to .build/<function_name> inside the module, which is already unique. Set it explicitly when consuming this module from a remote source, since `terraform init -upgrade` wipes the module cache."
+}
+
+variable "npm_install_command" {
+  type        = string
+  default     = "npm ci"
+  description = "Dependency install run at monorepo_root before the build. Set to \"\" to skip: `npm ci` rewrites the shared node_modules, so configs with more than one instance of this module must install once out of band instead of racing an install per instance."
 }
 
 variable "tags" {

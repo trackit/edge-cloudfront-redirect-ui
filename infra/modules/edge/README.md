@@ -9,7 +9,9 @@ create a CloudFront distribution — you attach the function to your own (see
 ## What it creates
 
 - **`edge-config.generated.ts`** rendered into the handler bundle — the table
-  name/region/TTL, since Lambda@Edge has no env vars.
+  name/region/TTL, since Lambda@Edge has no env vars. It is written to this
+  instance's [build directory](#using-the-module-more-than-once), not into the
+  handler workspace.
 - **A packaged, published Lambda@Edge function** (`nodejs20.x`, `publish = true`)
   built with esbuild at apply time. The AWS SDK is left external (runtime-provided)
   so the viewer-request bundle stays under its 1 MB limit.
@@ -27,6 +29,8 @@ are the **same** qualified ARN.
 - Lambda@Edge must live in **us-east-1** — pass a us-east-1 provider as `aws.use1`.
 - Node.js + npm on the machine running `terraform apply` — the build runs
   `npm ci && npm run build` at the repo root (the handler is an npm workspace).
+  See [Using the module more than once](#using-the-module-more-than-once) if you
+  instantiate the module twice in one config.
 
 ## Usage
 
@@ -104,18 +108,55 @@ resource "aws_cloudfront_distribution" "existing" {
 - Rules key on the request's `Host` header, so they apply to whatever hostname
   the viewer used (your distribution's domain or its alternate CNAMEs).
 
+## Using the module more than once
+
+Each instance builds in its own directory — `.build/<function_name>/` inside the
+module by default, overridable with `build_dir` — so two instances in the same
+config render their baked config and their bundle to separate paths. The handler
+workspace (`infra/lambda`) is only ever read from. If you override `build_dir`,
+give every instance a different one.
+
+One shared resource is left: `npm ci` deletes and repopulates `node_modules` at
+the repo root. Two instances applying in parallel will collide there, and the
+usual symptom is the losing instance failing its **build** with
+`Cannot find module 'esbuild'` — the install having been wiped under it. With
+more than one instance, install once yourself and skip it in the module:
+
+```hcl
+module "edge_eu" {
+  source    = "../../infra/modules/edge"
+  providers = { aws.use1 = aws.use1 }
+
+  function_name       = "edgeroute-eu"
+  table_name          = module.table_eu.table_name
+  table_arn           = module.table_eu.table_arn
+  table_region        = module.table_eu.table_region
+  npm_install_command = "" # run `npm ci` once before `terraform apply`
+}
+```
+
+`terraform apply -parallelism=1` also works, at the cost of serialising the whole
+apply.
+
+If you applied an earlier version of this module, the next apply moves the
+generated config out of `infra/lambda/src/` for you — no cleanup needed. Any copy
+you keep there is yours alone, for [local runs](../../lambda/README.md#config);
+the module neither reads it nor packages it.
+
 ## Inputs
 
-| Name                | Type        | Default                    | Description                                        |
-| ------------------- | ----------- | -------------------------- | -------------------------------------------------- |
-| `table_name`        | string      | —                          | DynamoDB rules table name (baked into the bundle). |
-| `table_arn`         | string      | —                          | Table ARN; scopes the read-only IAM policy.        |
-| `table_region`      | string      | —                          | Table region (baked into the bundle).              |
-| `function_name`     | string      | `edgeroute-redirect-rules` | Published function name.                           |
-| `cache_ttl_ms`      | number      | `60000`                    | In-memory rule cache TTL, baked in.                |
-| `lambda_source_dir` | string      | `../../lambda`             | Path to the handler workspace.                     |
-| `monorepo_root`     | string      | `../../..`                 | Repo root where `npm ci` runs.                     |
-| `tags`              | map(string) | `{}`                       | Tags for the function and role.                    |
+| Name                  | Type        | Default                    | Description                                        |
+| --------------------- | ----------- | -------------------------- | -------------------------------------------------- |
+| `table_name`          | string      | —                          | DynamoDB rules table name (baked into the bundle). |
+| `table_arn`           | string      | —                          | Table ARN; scopes the read-only IAM policy.        |
+| `table_region`        | string      | —                          | Table region (baked into the bundle).              |
+| `function_name`       | string      | `edgeroute-redirect-rules` | Published function name.                           |
+| `cache_ttl_ms`        | number      | `60000`                    | In-memory rule cache TTL, baked in.                |
+| `lambda_source_dir`   | string      | `../../lambda`             | Path to the handler workspace.                     |
+| `monorepo_root`       | string      | `../../..`                 | Repo root where the install runs.                  |
+| `build_dir`           | string      | `.build/<function_name>`   | This instance's build directory.                   |
+| `npm_install_command` | string      | `npm ci`                   | Install run before the build; `""` skips it.       |
+| `tags`                | map(string) | `{}`                       | Tags for the function and role.                    |
 
 ## Outputs
 

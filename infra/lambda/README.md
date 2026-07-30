@@ -25,8 +25,11 @@ A DynamoDB error is logged and the request passes through — rules never fail a
 
 Lambda@Edge does not support environment variables, so config is **baked into the bundle**
 at package time (the ER-102 decision in [`../README.md`](../README.md)): Terraform renders
-`src/edge-config.generated.ts` into the zip. That file is gitignored;
-[`src/edge-config.generated.example.ts`](src/edge-config.generated.example.ts) records its shape.
+`edge-config.generated.ts` into its own build directory and packages it into the zip —
+see [modules/edge](../modules/edge/README.md#using-the-module-more-than-once). It is not
+written into this workspace. [`src/edge-config.generated.example.ts`](src/edge-config.generated.example.ts)
+records its shape; a local `src/edge-config.generated.ts` is gitignored and read only by
+local runs.
 
 Env vars override the baked values when set, which is how tests and local runs configure it.
 **They do not resolve at the edge** — don't rely on them in production.

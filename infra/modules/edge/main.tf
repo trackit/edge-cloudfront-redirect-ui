@@ -3,6 +3,18 @@ locals {
   # infra/lambda is an npm workspace, so `npm ci` runs at the repo root.
   monorepo_root = coalesce(var.monorepo_root, "${path.module}/../../..")
 
+  # Everything this instance writes lives under a directory keyed on the
+  # function name. The handler workspace itself stays read-only: two instances
+  # applying in parallel would otherwise render their config over the same
+  # src/ file and build into the same dist/, and each would zip whichever
+  # bundle landed last.
+  build_dir  = coalesce(var.build_dir, "${path.module}/.build/${var.function_name}")
+  config_src = "${local.build_dir}/config/edge-config.generated.ts"
+  dist_dir   = "${local.build_dir}/dist"
+
+  install_command = trimspace(var.npm_install_command)
+  build_command   = "npm run build --workspace @cloudfront-redirect-rules/lambda"
+
   # Baked config — Lambda@Edge has no env vars, so table coordinates ship in the
   # bundle. Matches src/edge-config.generated.example.ts.
   generated_config = <<-EOT
@@ -13,8 +25,12 @@ locals {
     };
   EOT
 
-  # Handler sources, minus the generated file (tracked separately below) so a
-  # config-only change and a code change each rebuild.
+  # Handler sources, minus the generated config (tracked separately below) so a
+  # config-only change and a code change each rebuild. This module no longer
+  # writes into src/, but the exclusion still matters: a developer may keep a
+  # local src/edge-config.generated.ts for local runs (see ../../lambda/README.md),
+  # and without it that gitignored file would make the hash machine-specific and
+  # republish a version on every local edit.
   handler_hash = sha256(join("", [
     for f in fileset(local.lambda_source_dir, "src/**/*.ts") :
     filesha256("${local.lambda_source_dir}/${f}")
@@ -23,8 +39,10 @@ locals {
 }
 
 # Terraform owns the table, so it renders the baked config the handler imports.
+# It sits outside the workspace because it's per-instance; esbuild packages it
+# standalone (bundle = false) and it imports nothing, so location is irrelevant.
 resource "local_file" "generated_config" {
-  filename = "${local.lambda_source_dir}/src/edge-config.generated.ts"
+  filename = local.config_src
   content  = local.generated_config
 }
 
@@ -35,11 +53,26 @@ resource "null_resource" "build" {
     handler      = local.handler_hash
     build_script = filesha256("${local.lambda_source_dir}/build.mjs")
     package      = filesha256("${local.lambda_source_dir}/package.json")
+    # try(): the lockfile is only guaranteed to exist for the default `npm ci`.
+    # A consumer who skips the install (or uses another package manager) may not
+    # have one, and a missing file would otherwise fail the whole plan.
+    lockfile = try(filesha256("${local.monorepo_root}/package-lock.json"), "")
   }
 
   provisioner "local-exec" {
     working_dir = local.monorepo_root
-    command     = "npm ci && npm run build --workspace @cloudfront-redirect-rules/lambda"
+    command = (
+      local.install_command == ""
+      ? local.build_command
+      : "${local.install_command} && ${local.build_command}"
+    )
+
+    # npm runs a workspace script with its cwd set to the workspace, not to
+    # working_dir, so the build script needs absolute paths.
+    environment = {
+      EDGE_OUT_DIR          = abspath(local.dist_dir)
+      EDGE_GENERATED_CONFIG = abspath(local.config_src)
+    }
   }
 
   depends_on = [local_file.generated_config]
@@ -48,8 +81,8 @@ resource "null_resource" "build" {
 # depends_on defers this data read to apply, after the build has populated dist/.
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_dir  = "${local.lambda_source_dir}/dist"
-  output_path = "${path.module}/.build/${var.function_name}.zip"
+  source_dir  = local.dist_dir
+  output_path = "${local.build_dir}/lambda.zip"
 
   depends_on = [null_resource.build]
 }
