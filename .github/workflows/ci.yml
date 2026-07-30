@@ -51,6 +51,14 @@ jobs:
         with:
           terraform_version: 1.15.6
       - run: terraform fmt -check -recursive infra
+      - run: terraform fmt -check -recursive examples
       - run: terraform -chdir=infra/modules/table init -backend=false
       - run: terraform -chdir=infra/modules/table validate
       - run: terraform -chdir=infra/modules/table test
+      # The edge module uses a configuration_aliases provider, so it can't
+      # `validate` as a standalone root; the mocked test covers it instead.
+      - run: terraform -chdir=infra/modules/edge init -backend=false
+      - run: terraform -chdir=infra/modules/edge test
+      - run: terraform -chdir=examples/infra init -backend=false
+      - run: terraform -chdir=examples/infra validate
+      - run: terraform -chdir=examples/infra test
