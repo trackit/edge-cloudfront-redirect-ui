@@ -56,6 +56,8 @@ paths:
                   $ref: "#/components/schemas/Rule"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     post:
       operationId: createRule
       summary: Create a rule for a host.
@@ -75,6 +77,8 @@ paths:
                 $ref: "#/components/schemas/Rule"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
   /targets/{targetId}/hosts/{host}/rules/{sk}:
     parameters:
       - $ref: "#/components/parameters/TargetId"
@@ -93,6 +97,8 @@ paths:
                 $ref: "#/components/schemas/Rule"
         "404":
           $ref: "#/components/responses/NotFound"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     put:
       operationId: putRule
       summary: Replace a rule.
@@ -114,6 +120,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     delete:
       operationId: deleteRule
       summary: Delete a rule.
@@ -123,6 +131,8 @@ paths:
           description: The rule was deleted.
         "404":
           $ref: "#/components/responses/NotFound"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 components:
   parameters:
     TargetId:
@@ -192,6 +202,14 @@ components:
             $ref: "#/components/schemas/Error"
     NotFound:
       description: No such resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotImplemented:
+      description: >-
+        Route is defined but its persistence is not implemented yet (ER-203).
+        This is the only response the rule routes return today.
       content:
         application/json:
           schema:

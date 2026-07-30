@@ -16,10 +16,20 @@ const SCHEMA_BY_TYPE = {
 
 type RuleType = keyof typeof SCHEMA_BY_TYPE;
 
+/**
+ * Ajv puts the offending field in `params`, not in `message` — an
+ * `additionalProperties` error says only "must NOT have additional properties"
+ * and carries the key in `params.additionalProperty`. Without it the SPA can't
+ * highlight the field that failed, so `params` is passed through. It holds
+ * schema metadata (the bad key, allowed enum values), never request values.
+ */
 const toDetails = (errors: ErrorObject[] | null | undefined) =>
   (errors ?? []).map((e) => ({
     path: e.instancePath || "(root)",
     message: e.message ?? "invalid",
+    ...(e.params && Object.keys(e.params).length > 0
+      ? { params: e.params }
+      : {}),
   }));
 
 /**

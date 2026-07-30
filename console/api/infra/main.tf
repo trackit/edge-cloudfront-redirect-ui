@@ -1,7 +1,10 @@
 locals {
   api_source_dir = coalesce(var.api_source_dir, "${path.module}/..")
-  # console/api is an npm workspace, so `npm ci` runs at the repo root.
+  # console/api is an npm workspace, so the install runs at the repo root.
   monorepo_root = coalesce(var.monorepo_root, "${path.module}/../../..")
+
+  install_command = trimspace(var.npm_install_command)
+  build_command   = "npm run build --workspace @cloudfront-redirect-rules/api"
 
   handler_hash = sha256(join("", [
     for f in fileset(local.api_source_dir, "src/**/*.ts") :
@@ -23,12 +26,19 @@ resource "null_resource" "build" {
     schemas      = local.shared_schema_hash
     build_script = filesha256("${local.api_source_dir}/build.mjs")
     package      = filesha256("${local.api_source_dir}/package.json")
-    lockfile     = filesha256("${local.monorepo_root}/package-lock.json")
+    # try(): only the default `npm ci` guarantees a lockfile is present.
+    lockfile = try(filesha256("${local.monorepo_root}/package-lock.json"), "")
+    # esbuild reads tsconfig, so a compiler-option change must repackage too.
+    tsconfig = filesha256("${local.api_source_dir}/tsconfig.json")
   }
 
   provisioner "local-exec" {
     working_dir = local.monorepo_root
-    command     = "npm ci && npm run build --workspace @cloudfront-redirect-rules/api"
+    command = (
+      local.install_command == ""
+      ? local.build_command
+      : "${local.install_command} && ${local.build_command}"
+    )
   }
 }
 

@@ -36,7 +36,13 @@ variable "api_source_dir" {
 variable "monorepo_root" {
   type        = string
   default     = null
-  description = "Repo root where `npm ci` runs (console/api is an npm workspace). Defaults to ../../.. relative to this module."
+  description = "Repo root where the dependency install runs (console/api is an npm workspace). Defaults to ../../.. relative to this module."
+}
+
+variable "npm_install_command" {
+  type        = string
+  default     = "npm ci"
+  description = "Dependency install run at monorepo_root before the build. `npm ci` deletes and reinstalls node_modules, so an apply from a working repo wipes the operator's install — set this to \"npm install\" to keep it, or to \"\" to skip installing and build with whatever is already there."
 }
 
 variable "tags" {
