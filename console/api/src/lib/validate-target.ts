@@ -24,7 +24,9 @@ const validate = ajv.compile<TargetInput>({
   properties: {
     // \S, not minLength — "   " is a blank row in the target switcher, and the
     // value is trimmed below so trailing whitespace can't create near-duplicates.
-    name: { type: "string", pattern: "\\S" },
+    // maxLength keeps a runaway name from pushing the item past DynamoDB's 400 KB
+    // limit, which would surface as an opaque 500 instead of a 400.
+    name: { type: "string", pattern: "\\S", maxLength: 128 },
     // Format only. Membership is checked separately so the ALLOWED_REGIONS
     // override applies at call time rather than being frozen into this schema
     // when the module is first imported.

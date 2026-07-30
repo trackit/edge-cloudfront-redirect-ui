@@ -336,6 +336,7 @@ components:
         name:
           type: string
           pattern: "\\S"
+          maxLength: 128
           description: >-
             Human-readable target name. Must contain a non-whitespace character;
             stored trimmed.
@@ -376,6 +377,7 @@ components:
         name:
           type: string
           pattern: "\\S"
+          maxLength: 128
         region:
           type: string
           pattern: "^[a-z]{2}(-[a-z]+)+-\\d+$"

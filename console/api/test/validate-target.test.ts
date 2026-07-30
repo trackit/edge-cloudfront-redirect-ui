@@ -46,6 +46,17 @@ describe("validateTarget", () => {
     );
   });
 
+  it("rejects a name long enough to threaten the item size limit", () => {
+    // Unbounded, a ~500 KB name pushes the item past DynamoDB's 400 KB limit and
+    // the PutItem failure surfaces as an opaque 500 instead of a 400.
+    expect(() =>
+      validateTarget({ ...valid, name: "x".repeat(129) }),
+    ).toThrowError(ApiError);
+    expect(() =>
+      validateTarget({ ...valid, name: "x".repeat(128) }),
+    ).not.toThrow();
+  });
+
   it("accepts a region added since the built-in list was written", () => {
     // The static list ages, and a stale list rejects a table the user owns.
     expect(() =>

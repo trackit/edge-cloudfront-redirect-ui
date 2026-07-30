@@ -15,8 +15,12 @@ Node 22 Lambda that runs the request router in `console/api/src`.
   (see [Reaching a target's table](#reaching-a-targets-table)).
 - **`aws_cloudwatch_log_group`** — `/aws/lambda/<function_name>`.
 - **`aws_dynamodb_table` (targets registry)** — the control-plane's own state
-  (`pk=id`, `PAY_PER_REQUEST`, PITR on, deletion protection on). Passed to the
-  Lambda as `TARGETS_TABLE_NAME`. Separate from every rules table.
+  (`pk=id`, `PAY_PER_REQUEST`, PITR on). Named `<function_name>-targets` unless
+  `targets_table_name` overrides it, and passed to the Lambda as
+  `TARGETS_TABLE_NAME`. Separate from every rules table. Deletion protection is on
+  via `deletion_protection` (default `true`) — the table is the only record of
+  which rules table each target points at, so turn it off deliberately or not
+  at all.
 
 ## Reaching a target's table
 
@@ -47,12 +51,28 @@ and the API assumes it to reach that target's table, so registering a new target
 needs no Terraform change:
 
 ```hcl
-# Narrow to your role-naming convention. "*" is rejected.
 assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
 ```
 
 Each target's role needs a trust policy admitting this Lambda's execution role and
 a permissions policy covering its own rules table.
+
+Both variables are validated, and the rules are the same for each: the **account
+must be literal**, and the role or table name must be literal apart from an
+optional **trailing `*`**. `?` is rejected anywhere, because IAM treats it as a
+single-character wildcard. `target_table_arns` additionally requires a non-empty
+region, though the region may itself be `*`. So:
+
+| ARN                                         |                                                       |
+| ------------------------------------------- | ----------------------------------------------------- |
+| `…:role/edgeroute-target-*`                 | accepted                                              |
+| `…dynamodb:*:1234…:table/edgeroute-rules-*` | accepted — region wildcards are fine                  |
+| `*`                                         | rejected                                              |
+| `…iam::*:role/*`                            | rejected — account is not literal                     |
+| `…:role/*`, `…:table/*`                     | rejected — that is every role or table in the account |
+| `…:role/??????????`                         | rejected — `?` is a wildcard too                      |
+| `…:role/edge-*-prod`                        | rejected — the `*` must be last                       |
+| `…dynamodb::1234…:table/x`                  | rejected — empty region matches nothing               |
 
 Leave both empty and no target is reachable, so rule operations (ER-203) will
 fail. That is the default deliberately — neither grant should be implicit.
