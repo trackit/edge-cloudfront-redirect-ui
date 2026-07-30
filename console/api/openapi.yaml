@@ -95,6 +95,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Rule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "501":
@@ -129,6 +131,8 @@ paths:
       responses:
         "204":
           description: The rule was deleted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "501":

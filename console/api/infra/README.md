@@ -14,11 +14,28 @@ Node 20 Lambda that runs the request router in `console/api/src`.
 
 ## Build coupling
 
-`null_resource.build` runs `npm ci && npm run build --workspace
-@cloudfront-redirect-rules/api` from the repo root at apply; the
+`null_resource.build` runs the dependency install followed by `npm run build
+--workspace @cloudfront-redirect-rules/api` from the repo root at apply; the
 `archive_file` data source is deferred (`depends_on`) so it zips `dist/` only
-after that build. Change any `src/**/*.ts`, `build.mjs`, or `package.json` and
-the function repackages.
+after that build.
+
+It repackages when any of these change: `src/**/*.ts`, `build.mjs`,
+`package.json`, `tsconfig.json` (esbuild reads it), the root
+`package-lock.json`, or the shared rule schemas (esbuild inlines them, so a
+schema-only edit still changes the bundle).
+
+**`npm_install_command`** (default `npm ci`) is the install step. `npm ci`
+deletes and reinstalls `node_modules`, so applying from a repo you also work in
+wipes your install. Set it to `npm install` to keep your working tree, or to
+`""` to skip installing and build against whatever is already there:
+
+```hcl
+module "console_api" {
+  source              = "../console/api/infra"
+  function_name       = "edgeroute-console-api"
+  npm_install_command = "npm install"
+}
+```
 
 ## Not here yet
 

@@ -20,14 +20,21 @@ const toEvent = (
   req: IncomingMessage,
   body: string,
 ): APIGatewayProxyEventV2 => {
-  // Concatenated, not resolved against a base: a request target starting with
-  // `//` is protocol-relative to the URL parser, so `new URL(target, base)`
-  // would read the first segment as a hostname and drop it from the path. API
-  // Gateway passes the raw target through as `rawPath`, and local has to match
-  // it or the dev server serves routes the deployed API would 404.
-  const url = new URL(`http://localhost${req.url ?? "/"}`);
+  // Split the raw request target rather than parsing it as a URL. API Gateway
+  // hands the target through verbatim as `rawPath`, while the WHATWG URL parser
+  // rewrites it: `//host/health` is read as protocol-relative (first segment
+  // eaten as a hostname), `/a/../health` collapses to `/health`, and `\` becomes
+  // `/`. Each of those makes the dev server match a route the deployed API
+  // would 404, which is exactly the divergence this server exists to avoid.
+  const target = req.url ?? "/";
+  const queryStart = target.indexOf("?");
+  const rawPath = queryStart === -1 ? target : target.slice(0, queryStart);
+  const rawQueryString = queryStart === -1 ? "" : target.slice(queryStart + 1);
+
   const query: Record<string, string> = {};
-  url.searchParams.forEach((value, key) => (query[key] = value));
+  new URLSearchParams(rawQueryString).forEach(
+    (value, key) => (query[key] = value),
+  );
   const headers: Record<string, string> = {};
   for (const [key, value] of Object.entries(req.headers)) {
     if (typeof value === "string") headers[key] = value;
@@ -35,8 +42,8 @@ const toEvent = (
 
   // Only the fields the handler reads; the rest of the event is not needed locally.
   return {
-    rawPath: url.pathname,
-    rawQueryString: url.search.slice(1),
+    rawPath,
+    rawQueryString,
     headers,
     queryStringParameters: query,
     body: body || undefined,
