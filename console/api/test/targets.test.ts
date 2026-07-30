@@ -58,8 +58,9 @@ describe("targets API", () => {
   });
 
   it("GET /targets lists sorted by name", async () => {
-    await create({ name: "Zebra" });
-    await create({ name: "Alpha" });
+    // Distinct tables — the same (region, tableName) twice is a 409.
+    await create({ name: "Zebra", tableName: "rules-zebra" });
+    await create({ name: "Alpha", tableName: "rules-alpha" });
 
     const res = await handler(event("GET", "/targets"));
     expect(res.statusCode).toBe(200);
@@ -110,5 +111,74 @@ describe("targets API", () => {
   it("DELETE /targets/:id 404s an unknown id", async () => {
     const res = await handler(event("DELETE", "/targets/nope"));
     expect(res.statusCode).toBe(404);
+  });
+
+  it("POST /targets 409s the same table registered twice", async () => {
+    await create();
+
+    // Different name, same (region, tableName) — two entries the UI can't tell
+    // apart, both writing to the same data.
+    const res = await handler(
+      event("POST", "/targets", { ...input, name: "Prod copy" }),
+    );
+    expect(res.statusCode).toBe(409);
+    expect(parse(res.body)).toMatchObject({
+      error: { code: "TARGET_EXISTS" },
+    });
+  });
+
+  it("PUT /targets/:id 409s when repointed at another target's table", async () => {
+    const first = await create();
+    await create({ name: "Staging", tableName: "rules-staging" });
+
+    const res = await handler(
+      event("PUT", `/targets/${first.id}`, {
+        ...input,
+        tableName: "rules-staging",
+      }),
+    );
+    expect(res.statusCode).toBe(409);
+  });
+
+  it("PUT /targets/:id allows keeping its own table", async () => {
+    const created = await create();
+
+    // The uniqueness check must exclude the target being updated.
+    const res = await handler(
+      event("PUT", `/targets/${created.id}`, { ...input, name: "Renamed" }),
+    );
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("POST /targets 400s a whitespace-only name and trims the rest", async () => {
+    const blank = await handler(
+      event("POST", "/targets", { ...input, name: "   " }),
+    );
+    expect(blank.statusCode).toBe(400);
+
+    const padded = await handler(
+      event("POST", "/targets", {
+        ...input,
+        name: "  Prod  ",
+        tableName: "rules-padded",
+      }),
+    );
+    expect((parse(padded.body) as { name: string }).name).toBe("Prod");
+  });
+
+  it("POST /targets round-trips an optional roleArn and rejects a bad one", async () => {
+    const roleArn = "arn:aws:iam::123456789012:role/edgeroute-target-prod";
+    const ok = await handler(event("POST", "/targets", { ...input, roleArn }));
+    expect(ok.statusCode).toBe(201);
+    expect(parse(ok.body)).toMatchObject({ roleArn });
+
+    const bad = await handler(
+      event("POST", "/targets", {
+        ...input,
+        tableName: "rules-bad-role",
+        roleArn: "not-an-arn",
+      }),
+    );
+    expect(bad.statusCode).toBe(400);
   });
 });

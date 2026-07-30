@@ -143,3 +143,105 @@ run "function_name_rejects_bad_chars" {
 
   expect_failures = [var.function_name]
 }
+
+# =============================================================================
+# Reaching a target's table (ER-202)
+# =============================================================================
+
+run "registry_table_is_protected_by_default" {
+  command = plan
+
+  # The registry is the only record of which table each target points at.
+  assert {
+    condition     = aws_dynamodb_table.targets.deletion_protection_enabled == true
+    error_message = "the targets registry must have deletion protection on by default"
+  }
+}
+
+run "no_assume_role_grant_by_default" {
+  command = plan
+
+  # Default must not hand out sts:AssumeRole — the grant is opt-in and scoped.
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "AssumeTargetRoles"
+    ]) == 0
+    error_message = "sts:AssumeRole must not be granted unless assumable_role_arns is set"
+  }
+}
+
+run "assume_role_scoped_to_the_given_arns" {
+  command = plan
+
+  variables {
+    assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
+  }
+
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "AssumeTargetRoles"
+    ]) == 1
+    error_message = "assumable_role_arns must add an AssumeTargetRoles statement"
+  }
+
+  # Never a wildcard on resources — the whole point of the per-target role.
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s.resources == toset(["arn:aws:iam::123456789012:role/edgeroute-target-*"])
+      if s.sid == "AssumeTargetRoles"
+    ])
+    error_message = "AssumeRole must be scoped to exactly the configured role ARNs"
+  }
+}
+
+run "assume_role_grant_adds_nothing_else" {
+  command = plan
+
+  variables {
+    assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
+  }
+
+  # The registry statement's own resources can't be asserted here — they hold the
+  # provider-computed table ARN, which is unknown under a mocked plan. What is
+  # knowable is the statement count: enabling the grant must add exactly one
+  # statement and not a third, broader one.
+  assert {
+    condition     = length(data.aws_iam_policy_document.registry.statement) == 2
+    error_message = "enabling assumable_role_arns must add exactly one statement"
+  }
+
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "TargetsRegistry"
+    ]) == 1
+    error_message = "the registry statement must survive unchanged alongside the grant"
+  }
+}
+
+run "allowed_regions_passed_through_when_set" {
+  command = plan
+
+  variables {
+    allowed_regions = ["us-east-1", "eu-west-1"]
+  }
+
+  assert {
+    condition     = aws_lambda_function.this.environment[0].variables["ALLOWED_REGIONS"] == "us-east-1,eu-west-1"
+    error_message = "allowed_regions must reach the Lambda as a comma-separated ALLOWED_REGIONS"
+  }
+}
+
+run "allowed_regions_omitted_when_empty" {
+  command = plan
+
+  # Absent, not empty — the API falls back to its built-in list, and an empty
+  # string would be indistinguishable from "allow nothing" if that ever changed.
+  assert {
+    condition     = !contains(keys(aws_lambda_function.this.environment[0].variables), "ALLOWED_REGIONS")
+    error_message = "ALLOWED_REGIONS must be omitted entirely when allowed_regions is empty"
+  }
+}

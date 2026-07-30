@@ -56,6 +56,24 @@ variable "npm_install_command" {
   description = "Dependency install run at monorepo_root before the build. `npm ci` deletes and reinstalls node_modules, so an apply from a working repo wipes the operator's install — set this to \"npm install\" to keep it, or to \"\" to skip installing and build with whatever is already there."
 }
 
+variable "deletion_protection" {
+  type        = bool
+  default     = true
+  description = "Deletion protection on the targets registry table. On by default — the table is the only record of which rules table each target points at."
+}
+
+variable "assumable_role_arns" {
+  type        = list(string)
+  default     = []
+  description = "Role ARNs (wildcards allowed) the API may assume to reach a target's rules table, matching the `roleArn` on registered targets. Empty means no sts:AssumeRole grant, so the API can only reach tables its own policy covers. Keep these as narrow as your role-naming convention allows."
+}
+
+variable "allowed_regions" {
+  type        = list(string)
+  default     = []
+  description = "Regions a target may name, passed to the Lambda as ALLOWED_REGIONS. Empty uses the API's built-in list of commercial regions, which both ages and includes opt-in regions your account may not have enabled. Set this to the regions this deployment can actually reach."
+}
+
 variable "tags" {
   type        = map(string)
   default     = {}

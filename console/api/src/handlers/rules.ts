@@ -1,10 +1,13 @@
 import type { ApiRequest, ApiResponse } from "../context.js";
 import { ApiError } from "../lib/errors.js";
 import { validateRule } from "../lib/validate.js";
+import { resolveTarget } from "../lib/targets-repository.js";
 
-// Persistence (the DynamoDB targets registry + rule CRUD) is ER-203. These
-// stubs wire routing and request validation now; each 501s where a real read or
-// write would happen.
+// Rule persistence is ER-203. These stubs enforce the two things that are the
+// scaffold's job — the target scope and the request shape — and 501 where a real
+// read or write would happen. Resolving the target first makes an unknown
+// targetId a 404 rather than indistinguishable from a valid one, and keeps the
+// scoping boundary in one place for ER-205 to attach authorization to.
 const notImplemented = (operation: string): never => {
   throw new ApiError(
     501,
@@ -13,18 +16,29 @@ const notImplemented = (operation: string): never => {
   );
 };
 
-export const listRules = (): ApiResponse => notImplemented("listRules");
+export const listRules = async (req: ApiRequest): Promise<ApiResponse> => {
+  await resolveTarget(req.params.targetId);
+  return notImplemented("listRules");
+};
 
-export const getRule = (): ApiResponse => notImplemented("getRule");
+export const getRule = async (req: ApiRequest): Promise<ApiResponse> => {
+  await resolveTarget(req.params.targetId);
+  return notImplemented("getRule");
+};
 
-export const deleteRule = (): ApiResponse => notImplemented("deleteRule");
+export const deleteRule = async (req: ApiRequest): Promise<ApiResponse> => {
+  await resolveTarget(req.params.targetId);
+  return notImplemented("deleteRule");
+};
 
-export const createRule = (req: ApiRequest): ApiResponse => {
+export const createRule = async (req: ApiRequest): Promise<ApiResponse> => {
+  await resolveTarget(req.params.targetId);
   validateRule(req.body);
   return notImplemented("createRule");
 };
 
-export const putRule = (req: ApiRequest): ApiResponse => {
+export const putRule = async (req: ApiRequest): Promise<ApiResponse> => {
+  await resolveTarget(req.params.targetId);
   validateRule(req.body);
   return notImplemented("putRule");
 };

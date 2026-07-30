@@ -9,12 +9,68 @@ Node 20 Lambda that runs the request router in `console/api/src`.
   esbuild (`console/api/build.mjs`) at apply and zipped from `dist/`.
 - **`aws_apigatewayv2_api` + integration + `$default` route + stage** — an HTTP
   API with a catch-all route; the Lambda's own router dispatches every path.
-- **`aws_iam_role`** — execution role: CloudWatch Logs + read/write on the
-  targets registry table.
+- **`aws_iam_role`** — execution role: CloudWatch Logs, read/write on the
+  targets registry table, and `sts:AssumeRole` on `assumable_role_arns` (see
+  [Reaching a target's table](#reaching-a-targets-table)).
 - **`aws_cloudwatch_log_group`** — `/aws/lambda/<function_name>`.
 - **`aws_dynamodb_table` (targets registry)** — the control-plane's own state
-  (`pk=id`, `PAY_PER_REQUEST`, PITR on). Passed to the Lambda as
-  `TARGETS_TABLE_NAME`. Separate from every rules table.
+  (`pk=id`, `PAY_PER_REQUEST`, PITR on, deletion protection on). Passed to the
+  Lambda as `TARGETS_TABLE_NAME`. Separate from every rules table.
+
+## Reaching a target's table
+
+Targets are registered **at runtime**; IAM is granted **at apply time**. Those
+two facts do not meet on their own: a DynamoDB ARN is
+`arn:aws:dynamodb:<region>:<account>:table/<name>`, so a static policy has to
+enumerate every table before it exists.
+
+Three ways to bridge that, and this module takes the third:
+
+|                                       | Self-service                      | Least-privilege                        | Cross-account  |
+| ------------------------------------- | --------------------------------- | -------------------------------------- | -------------- |
+| Enumerate table ARNs in a variable    | no — a Terraform apply per target | yes                                    | no             |
+| Wildcard on a table-name prefix       | yes                               | no — any matching table in the account | no             |
+| **Per-target `roleArn` + AssumeRole** | **yes**                           | **yes**                                | **yes, later** |
+
+So a target carries an optional **`roleArn`**. The API assumes it to read and
+write that target's rules table, and `assumable_role_arns` is what the execution
+role is allowed to assume:
+
+```hcl
+module "console_api" {
+  source        = "../console/api/infra"
+  function_name = "edgeroute-console-api"
+
+  # Narrow to your role-naming convention — wildcards are allowed.
+  assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
+}
+```
+
+Each target's role needs a trust policy admitting this Lambda's execution role,
+and a permissions policy covering its own rules table. A target with no `roleArn`
+falls back to the API's own credentials, which today reach no rules table — so
+`assumable_role_arns` must be set before rule operations (ER-203) work at all.
+
+Cross-account targets are out of scope for now (the scope doc defers them), but
+this shape is what makes them possible without changing the `Target` record
+later — which is why the field exists now rather than after ER-301 generates a
+typed client from these schemas.
+
+## Region validation
+
+A target's `region` is checked against a list. By default that is the API's
+built-in list of commercial regions, which has two problems: it ages, so a
+newly-launched region is rejected even though the user owns a table there; and it
+includes opt-in regions the account may never have enabled, which are accepted
+and then fail later.
+
+Set **`allowed_regions`** to the regions this deployment can actually reach and
+both go away — it is passed through as `ALLOWED_REGIONS` and replaces the
+built-in list:
+
+```hcl
+allowed_regions = ["us-east-1", "eu-west-1"]
+```
 
 ## Build coupling
 
@@ -43,9 +99,12 @@ module "console_api" {
 
 ## Not here yet
 
-- **Per-target rules-table access** — ER-203. IAM for reading/writing the
-  tables that targets point at (the registry stores the pointers; rule CRUD
-  will need access to the tables themselves).
+- **Rule CRUD against a target's table** — ER-203. The access _mechanism_ is in
+  place (see [Reaching a target's table](#reaching-a-targets-table)); what is
+  missing is the persistence code that uses it. Rule routes resolve their target
+  and then 501.
+- **Cross-account targets** — the `roleArn` shape supports it; nothing has been
+  exercised against a second account.
 - **Cognito authorizer** — ER-205. The API is deployed open for now.
 
 ## Usage

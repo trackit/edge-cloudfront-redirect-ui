@@ -54,6 +54,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Target"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
     post:
       operationId: createTarget
       summary: Register a new target.
@@ -73,6 +75,10 @@ paths:
                 $ref: "#/components/schemas/Target"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /targets/{id}:
     parameters:
       - $ref: "#/components/parameters/TargetPathId"
@@ -87,6 +93,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Target"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "404":
           $ref: "#/components/responses/NotFound"
     put:
@@ -108,8 +116,12 @@ paths:
                 $ref: "#/components/schemas/Target"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
     delete:
       operationId: deleteTarget
       summary: Remove a target from the registry.
@@ -120,6 +132,8 @@ paths:
       responses:
         "204":
           description: The target was removed from the registry.
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "404":
           $ref: "#/components/responses/NotFound"
   /targets/{targetId}/hosts/{host}/rules:
@@ -283,19 +297,31 @@ components:
       properties:
         name:
           type: string
-          minLength: 1
-          description: Human-readable target name.
+          pattern: "\\S"
+          description: >-
+            Human-readable target name. Must contain a non-whitespace character;
+            stored trimmed.
         region:
           type: string
           pattern: "^[a-z]{2}(-[a-z]+)+-\\d+$"
           description: >-
-            AWS region of the target's DynamoDB table. Validated server-side
-            against a curated list of real regions — the format pattern here is
-            necessary but not sufficient (e.g. us-east-11 matches but is rejected).
+            AWS region of the target's DynamoDB table. This pattern checks format
+            only — the server also checks the region is one it allows, so a
+            well-formed value can still be rejected (e.g. us-east-11). The allowed
+            set is deployment-specific (ALLOWED_REGIONS), so it is not published
+            here as an enum.
         tableName:
           type: string
           pattern: "^[a-zA-Z0-9_.-]{3,255}$"
           description: DynamoDB rules table the Lambda@Edge reads for this target.
+        roleArn:
+          type: string
+          pattern: "^arn:aws[a-z-]*:iam::\\d{12}:role/.+$"
+          description: >-
+            Optional IAM role the API assumes to read and write this target's
+            rules table. Omit to use the API's own execution role, which only
+            reaches tables its policy already covers. Required in practice for a
+            target registered after deploy, or one in another account.
     Target:
       description: A registered target. `id` is server-generated and immutable.
       type: object
@@ -310,6 +336,8 @@ components:
         region:
           type: string
         tableName:
+          type: string
+        roleArn:
           type: string
     Rule:
       description: A redirect or rewrite rule item, per the shared schemas.
@@ -344,8 +372,9 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
-    NotFound:
-      description: No such resource.
+    Conflict:
+      description: >-
+        That (region, tableName) pair is already registered as another target.
       content:
         application/json:
           schema:
@@ -354,6 +383,12 @@ components:
       description: >-
         The path exists but not for this method. The Lambda router owns method
         dispatch — API Gateway forwards every method on a `$default` route.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such resource.
       content:
         application/json:
           schema:

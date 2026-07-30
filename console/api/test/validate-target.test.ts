@@ -46,6 +46,16 @@ describe("validateTarget", () => {
     );
   });
 
+  it("accepts a region added since the built-in list was written", () => {
+    // The static list ages, and a stale list rejects a table the user owns.
+    expect(() =>
+      validateTarget({ ...valid, region: "mx-central-1" }),
+    ).not.toThrow();
+    expect(() =>
+      validateTarget({ ...valid, region: "ap-southeast-5" }),
+    ).not.toThrow();
+  });
+
   it("reports field-level details", () => {
     try {
       validateTarget({ name: "", region: "nope", tableName: "" });

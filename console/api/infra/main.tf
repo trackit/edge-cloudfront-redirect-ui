@@ -63,6 +63,11 @@ resource "aws_dynamodb_table" "targets" {
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "id"
 
+  # This table is the only record of which table each target points at — losing
+  # it loses the mapping, not just a cache. Protected by default, matching
+  # infra/modules/table. PITR covers accidental item-level damage.
+  deletion_protection_enabled = var.deletion_protection
+
   attribute {
     name = "id"
     type = "S"
@@ -96,6 +101,22 @@ data "aws_iam_policy_document" "registry" {
       "dynamodb:Scan",
     ]
     resources = [aws_dynamodb_table.targets.arn]
+  }
+
+  # Targets are registered at runtime; IAM is granted at apply. A target's
+  # `roleArn` bridges that gap — the API assumes the role to reach that target's
+  # rules table, so no Terraform change is needed per target. Empty by default:
+  # with no patterns the API can only reach tables its own policy covers, which
+  # today is none, so rule operations (ER-203) need this set. Keep the patterns
+  # as narrow as the naming convention allows.
+  dynamic "statement" {
+    for_each = length(var.assumable_role_arns) > 0 ? [1] : []
+
+    content {
+      sid       = "AssumeTargetRoles"
+      actions   = ["sts:AssumeRole"]
+      resources = var.assumable_role_arns
+    }
   }
 }
 
@@ -147,10 +168,16 @@ resource "aws_lambda_function" "this" {
   memory_size = var.memory_size
 
   environment {
-    variables = {
-      # AWS_REGION is injected by the runtime; only the table name is ours.
-      TARGETS_TABLE_NAME = aws_dynamodb_table.targets.name
-    }
+    variables = merge(
+      {
+        # AWS_REGION is injected by the runtime; only the table name is ours.
+        TARGETS_TABLE_NAME = aws_dynamodb_table.targets.name
+      },
+      # Omitted when empty so the API falls back to its built-in region list.
+      length(var.allowed_regions) > 0
+      ? { ALLOWED_REGIONS = join(",", var.allowed_regions) }
+      : {},
+    )
   }
 
   depends_on = [

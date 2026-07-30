@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { handler } from "../src/handler.js";
+import {
+  resetTargetsRepository,
+  setTargetsRepository,
+} from "../src/lib/targets-repository.js";
+import { FakeTargetsRepository } from "./fake-targets-repository.js";
 
 const event = (
   method: string,
@@ -17,6 +22,23 @@ const event = (
 
 const parse = (body: string | undefined): unknown =>
   JSON.parse(body ?? "{}") as unknown;
+
+// Rule routes resolve their target first, so they need a registry even while
+// persistence is stubbed. Scoping behaviour itself is covered in
+// rules-scoping.test.ts; here "prod" just has to exist.
+beforeEach(() =>
+  setTargetsRepository(
+    new FakeTargetsRepository([
+      {
+        id: "prod",
+        name: "Prod",
+        region: "us-east-1",
+        tableName: "rules-prod",
+      },
+    ]),
+  ),
+);
+afterEach(() => resetTargetsRepository());
 
 describe("handler", () => {
   it("GET /health returns 200 with status ok", async () => {

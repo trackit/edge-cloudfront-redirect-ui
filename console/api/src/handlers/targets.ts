@@ -11,8 +11,37 @@ import {
 const notFound = (id: string): ApiError =>
   ApiError.notFound(`No target with id "${id}"`);
 
+/**
+ * A (region, tableName) pair identifies one rules table, so registering it twice
+ * produces entries the UI cannot tell apart while both write to the same data.
+ * Read-then-write, so two simultaneous creates can still both succeed — this
+ * catches the realistic case (a retried or double-clicked submit), not a race.
+ */
+const assertTableNotRegistered = async (
+  input: { region: string; tableName: string },
+  exceptId?: string,
+): Promise<void> => {
+  const existing = await getTargetsRepository().list();
+  const clash = existing.find(
+    (t) =>
+      t.id !== exceptId &&
+      t.region === input.region &&
+      t.tableName === input.tableName,
+  );
+
+  if (clash) {
+    throw new ApiError(
+      409,
+      "TARGET_EXISTS",
+      `Table "${input.tableName}" in ${input.region} is already registered as target "${clash.id}"`,
+    );
+  }
+};
+
 export const createTarget = async (req: ApiRequest): Promise<ApiResponse> => {
   const input = validateTarget(req.body);
+  await assertTableNotRegistered(input);
+
   const target: Target = { id: randomUUID(), ...input };
   await getTargetsRepository().create(target);
   return json(201, target);
@@ -36,6 +65,7 @@ export const updateTarget = async (req: ApiRequest): Promise<ApiResponse> => {
   const input = validateTarget(req.body);
   const repo = getTargetsRepository();
   if (!(await repo.get(id))) throw notFound(id);
+  await assertTableNotRegistered(input, id);
 
   const target: Target = { id, ...input };
   await repo.put(target);
