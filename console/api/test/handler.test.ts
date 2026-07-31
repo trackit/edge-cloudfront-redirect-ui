@@ -5,7 +5,12 @@ import {
   resetTargetsRepository,
   setTargetsRepository,
 } from "../src/lib/targets-repository.js";
+import {
+  resetRulesRepositoryFactory,
+  setRulesRepositoryFactory,
+} from "../src/lib/rules-repository.js";
 import { FakeTargetsRepository } from "./fake-targets-repository.js";
+import { FakeRulesRepository } from "./fake-rules-repository.js";
 
 const event = (
   method: string,
@@ -23,10 +28,11 @@ const event = (
 const parse = (body: string | undefined): unknown =>
   JSON.parse(body ?? "{}") as unknown;
 
-// Rule routes resolve their target first, so they need a registry even while
-// persistence is stubbed. Scoping behaviour itself is covered in
-// rules-scoping.test.ts; here "prod" just has to exist.
-beforeEach(() =>
+// Rule routes resolve their target first and then read its table, so they need
+// both a registry and a rules table — without the second, a read route here
+// would try to reach DynamoDB for real. Scoping and rule behaviour are covered in
+// rules-scoping.test.ts and rules.test.ts; here "prod" just has to exist.
+beforeEach(() => {
   setTargetsRepository(
     new FakeTargetsRepository([
       {
@@ -36,9 +42,14 @@ beforeEach(() =>
         tableName: "rules-prod",
       },
     ]),
-  ),
-);
-afterEach(() => resetTargetsRepository());
+  );
+  setRulesRepositoryFactory(() => new FakeRulesRepository());
+});
+
+afterEach(() => {
+  resetTargetsRepository();
+  resetRulesRepositoryFactory();
+});
 
 describe("handler", () => {
   it("GET /health returns 200 with status ok", async () => {
@@ -104,12 +115,11 @@ describe("handler", () => {
     });
   });
 
-  it("501s a not-yet-implemented read route", async () => {
+  it("serializes a read route's JSON body", async () => {
     const res = await handler(event("GET", RULES));
 
-    expect(res.statusCode).toBe(501);
-    expect(parse(res.body)).toMatchObject({
-      error: { code: "NOT_IMPLEMENTED" },
-    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers).toMatchObject({ "content-type": "application/json" });
+    expect(parse(res.body)).toEqual([]);
   });
 });

@@ -9,8 +9,9 @@ info:
     redefined here.
 
 
-    The targets registry (ER-202) is implemented. Rule routes are defined ahead
-    of their handlers (ER-203) and return `501` until then.
+    The targets registry (ER-202) is implemented. Of the rule routes (ER-203),
+    list, fetch and delete are live; create and update are defined ahead of their
+    handlers and return `501` until then.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -167,7 +168,12 @@ paths:
     get:
       operationId: listRules
       summary: List a host's rules by priority.
-      description: Redirect and rewrite rules for the host, in sort-key order.
+      description: >-
+        Redirect and rewrite rules for the host, in sort-key order — redirects
+        before rewrites, ascending priority within each. That is the order the
+        Lambda@Edge evaluates them in; the two kinds are separate lists at the
+        edge, since redirects run at viewer-request and rewrites at
+        origin-request. A host with no rules is an empty array, not a 404.
       tags: [rules]
       responses:
         "200":
@@ -186,8 +192,8 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
     post:
       operationId: createRule
       summary: Create a rule for a host.
@@ -239,8 +245,8 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
     put:
       operationId: putRule
       summary: Replace a rule.
@@ -271,6 +277,9 @@ paths:
     delete:
       operationId: deleteRule
       summary: Delete a rule.
+      description: >-
+        Deleting a rule that does not exist is a 404, not a silent 204 — the
+        write is conditional on the item existing.
       tags: [rules]
       responses:
         "204":
@@ -283,8 +292,8 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
 components:
   parameters:
     TargetPathId:
@@ -458,6 +467,7 @@ components:
                 - NOT_FOUND
                 - NOT_IMPLEMENTED
                 - TARGET_EXISTS
+                - TARGET_UNREACHABLE
                 - UNKNOWN_TARGET
                 - VALIDATION_ERROR
             message:
@@ -506,6 +516,18 @@ components:
             $ref: "#/components/schemas/Error"
     NotFound:
       description: No such resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TargetUnreachable:
+      description: >-
+        The target is registered but its DynamoDB table cannot be reached — the
+        assumed role was refused, the API's execution role does not cover the
+        table, or the table does not exist in that region. A configuration
+        problem, not a bad request: targets are registered at runtime while IAM
+        is granted at apply time, and both grants are empty by default. See
+        console/api/infra/README.md.
       content:
         application/json:
           schema:

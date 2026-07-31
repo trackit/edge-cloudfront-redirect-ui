@@ -5,13 +5,18 @@ import {
   resetTargetsRepository,
   setTargetsRepository,
 } from "../src/lib/targets-repository.js";
+import {
+  resetRulesRepositoryFactory,
+  setRulesRepositoryFactory,
+} from "../src/lib/rules-repository.js";
 import { FakeTargetsRepository } from "./fake-targets-repository.js";
+import { FakeRulesRepository } from "./fake-rules-repository.js";
 
 /**
- * Rule operations are scoped to a target (ER-202 criterion 4). Persistence is
- * ER-203, so a known target still 501s — but an *unknown* target must 404 rather
- * than being indistinguishable from a valid one, and that check must run before
- * the body is looked at.
+ * Rule operations are scoped to a target (ER-202 criterion 4): an *unknown*
+ * target must 404 rather than being indistinguishable from a valid one, and that
+ * check must run before the body — or the table — is looked at. Create and update
+ * are the half of ER-203 still to come, so they 501 once those checks pass.
  */
 
 const target = {
@@ -40,8 +45,15 @@ const parse = (body: string | undefined): unknown =>
 const KNOWN = "/targets/t1/hosts/www.example.com/rules";
 const UNKNOWN = "/targets/nope/hosts/www.example.com/rules";
 
-beforeEach(() => setTargetsRepository(new FakeTargetsRepository([target])));
-afterEach(() => resetTargetsRepository());
+beforeEach(() => {
+  setTargetsRepository(new FakeTargetsRepository([target]));
+  setRulesRepositoryFactory(() => new FakeRulesRepository());
+});
+
+afterEach(() => {
+  resetTargetsRepository();
+  resetRulesRepositoryFactory();
+});
 
 describe("rule routes are scoped to a target", () => {
   const cases: [string, string][] = [
@@ -70,8 +82,14 @@ describe("rule routes are scoped to a target", () => {
     });
   });
 
-  it("reaches the not-implemented stub for a registered target", async () => {
+  it("reaches the target's table for a registered target", async () => {
     const res = await handler(event("GET", KNOWN));
+    expect(res.statusCode).toBe(200);
+    expect(parse(res.body)).toEqual([]);
+  });
+
+  it("still 501s on the routes ER-203 has not finished", async () => {
+    const res = await handler(event("POST", KNOWN, rule));
     expect(res.statusCode).toBe(501);
     expect(parse(res.body)).toMatchObject({
       error: { code: "NOT_IMPLEMENTED" },
