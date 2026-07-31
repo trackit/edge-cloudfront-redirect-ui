@@ -40,6 +40,31 @@ const NOT_COMPARABLE = new Set([
   "forwardSettings",
 ]);
 
+const at = (node: unknown, key: string): unknown =>
+  typeof node === "object" && node !== null
+    ? (node as Record<string, unknown>)[key]
+    : undefined;
+
+/** The `$ref` a property carries, directly or through its array `items`. */
+const refIn = (definition: unknown): unknown =>
+  at(definition, "$ref") ?? at(at(definition, "items"), "$ref");
+
+/**
+ * Follows a `$ref` into the shared schema it names. `redocly lint` rejects a
+ * *broken* pointer but is perfectly happy with a valid one aimed at the wrong
+ * subschema, which is the failure this makes visible.
+ */
+const resolveRef = (ref: unknown): unknown => {
+  if (typeof ref !== "string") return undefined;
+
+  const [file = "", pointer = ""] = ref.split("#");
+  const schema: unknown = file.includes("rewrite-rule")
+    ? rewriteSchema
+    : redirectSchema;
+
+  return pointer.split("/").filter(Boolean).reduce<unknown>(at, schema);
+};
+
 /** Prose differs freely between a request schema and an item schema. */
 const withoutProse = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(withoutProse);
@@ -110,6 +135,38 @@ describe.each(cases)("%s matches the shared schema", (name, shared) => {
       ).toEqual(withoutProse(shared.properties?.[field]));
     }
   });
+});
+
+/**
+ * The fields excluded from the comparison above are excluded because they `$ref`
+ * into `shared/` instead of restating it — so that is worth checking too. Each
+ * pointer must land on the subschema it is meant to reuse, not merely on
+ * something that exists.
+ */
+describe("nested structures reuse the shared schemas", () => {
+  const cases: [string, string, unknown][] = [
+    ["RedirectRuleInput", "matches", redirectSchema.definitions.match],
+    // The rewrite schema has no `match` definition of its own; both inputs share
+    // the redirect schema's, exactly as the item schemas do.
+    ["RewriteRuleInput", "matches", redirectSchema.definitions.match],
+    [
+      "RewriteRuleInput",
+      "forwardSettings",
+      rewriteSchema.properties.forwardSettings,
+    ],
+  ];
+
+  it.each(cases)(
+    "%s.%s resolves to the shared subschema",
+    (name, field, expected) => {
+      const ref = refIn(spec.components.schemas[name]?.properties?.[field]);
+
+      expect(ref, `${name}.${field} does not $ref shared/`).toEqual(
+        expect.any(String),
+      );
+      expect(resolveRef(ref)).toEqual(expected);
+    },
+  );
 });
 
 describe("RulePriority", () => {

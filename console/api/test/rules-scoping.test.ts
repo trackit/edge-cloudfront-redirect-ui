@@ -166,6 +166,22 @@ describe("rule bodies must address the path they are sent to", () => {
     expect(parse(res.body)).toMatchObject({ error: { code: "NOT_FOUND" } });
   });
 
+  it("rejects an sk that is not the key the priority implies", async () => {
+    // The collection route addresses no existing rule, so a supplied `sk` is
+    // checked against the key `priority` derives — here 50, so the fixture's
+    // REDIRECT#00100 disagrees. The message has to name that key and not the
+    // path, which has none.
+    const res = await handler(event("POST", KNOWN, { ...rule, priority: 50 }));
+
+    expect(res.statusCode).toBe(400);
+    expect(parse(res.body)).toMatchObject({
+      error: {
+        code: "VALIDATION_ERROR",
+        details: [{ path: "/sk", message: expect.stringContaining("00050") }],
+      },
+    });
+  });
+
   it("compares sk against the derived key on the collection route", async () => {
     // POST addresses no specific sort key, so the body's `sk` is checked against
     // the one `priority` implies rather than against the path.
