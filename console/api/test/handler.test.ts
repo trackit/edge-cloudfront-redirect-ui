@@ -96,10 +96,9 @@ describe("handler", () => {
     });
   });
 
-  it("passes a valid rule and 501s at persistence (ER-203)", async () => {
+  it("passes a valid rule through to persistence", async () => {
     const rule = {
-      pk: "www.example.com",
-      sk: "REDIRECT#00100",
+      priority: 100,
       type: "erMatchRule",
       statusCode: 301,
       redirectURL: "https://www.example.com/new",
@@ -109,9 +108,10 @@ describe("handler", () => {
     };
     const res = await handler(event("POST", RULES, JSON.stringify(rule)));
 
-    expect(res.statusCode).toBe(501);
+    expect(res.statusCode).toBe(201);
     expect(parse(res.body)).toMatchObject({
-      error: { code: "NOT_IMPLEMENTED" },
+      pk: "www.example.com",
+      sk: "REDIRECT#00100",
     });
   });
 

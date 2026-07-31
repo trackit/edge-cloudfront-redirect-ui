@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedTarget } from "../src/lib/targets-repository.js";
+import type { RuleItem } from "../src/lib/rules-repository.js";
 
 /**
  * `DynamoRulesRepository` itself. The handler tests run over the in-memory fake,
@@ -27,7 +28,11 @@ const target: ResolvedTarget = {
 
 const HOST = "www.example.com";
 
-const rule = (sk: string) => ({ pk: HOST, sk, type: "erMatchRule" });
+const rule = (sk: string): RuleItem => ({
+  pk: HOST,
+  sk,
+  type: "erMatchRule",
+});
 
 const repository = async (coordinates = target) => {
   const { DynamoRulesRepository } =
@@ -183,6 +188,160 @@ describe("delete", () => {
   });
 });
 
+describe("create", () => {
+  it("writes only if the key is free", async () => {
+    send.mockResolvedValue({});
+
+    expect(await (await repository()).create(rule("REDIRECT#00100"))).toBe(
+      true,
+    );
+    expect(call()).toMatchObject({
+      name: "PutCommand",
+      input: {
+        TableName: "rules-prod",
+        Item: rule("REDIRECT#00100"),
+        ConditionExpression: "attribute_not_exists(pk)",
+      },
+    });
+  });
+
+  it("reports false instead of overwriting", async () => {
+    send.mockRejectedValue(awsError("ConditionalCheckFailedException"));
+
+    expect(await (await repository()).create(rule("REDIRECT#00100"))).toBe(
+      false,
+    );
+  });
+});
+
+describe("replace", () => {
+  it("writes only if the rule is already there", async () => {
+    send.mockResolvedValue({});
+
+    expect(await (await repository()).replace(rule("REDIRECT#00100"))).toBe(
+      true,
+    );
+    expect(call()).toMatchObject({
+      name: "PutCommand",
+      input: { ConditionExpression: "attribute_exists(pk)" },
+    });
+  });
+
+  it("reports false instead of inserting", async () => {
+    send.mockRejectedValue(awsError("ConditionalCheckFailedException"));
+
+    expect(await (await repository()).replace(rule("REDIRECT#00100"))).toBe(
+      false,
+    );
+  });
+});
+
+describe("move", () => {
+  const moved = rule("REDIRECT#00050");
+
+  /** TransactionCanceledException, with a reason per TransactItem. */
+  const cancelled = (...codes: (string | undefined)[]): Error =>
+    Object.assign(awsError("TransactionCanceledException"), {
+      CancellationReasons: codes.map((Code) => (Code ? { Code } : {})),
+    });
+
+  it("writes the new key and removes the old one in one transaction", async () => {
+    send.mockResolvedValue({});
+
+    expect(await (await repository()).move("REDIRECT#00100", moved)).toBe(
+      "moved",
+    );
+
+    const { name, input } = call();
+    expect(name).toBe("TransactWriteCommand");
+    expect(input["TransactItems"]).toEqual([
+      {
+        Put: {
+          TableName: "rules-prod",
+          Item: moved,
+          ConditionExpression: "attribute_not_exists(pk)",
+        },
+      },
+      {
+        Delete: {
+          TableName: "rules-prod",
+          Key: { pk: HOST, sk: "REDIRECT#00100" },
+          ConditionExpression: "attribute_exists(pk)",
+        },
+      },
+    ]);
+  });
+
+  it("carries a request token so a retried transaction is a no-op", async () => {
+    // Without one, a committed transaction whose response was lost is retried,
+    // both conditions then fail, and the caller is told 404 for a move that
+    // succeeded — after which re-creating the rule leaves it live at two
+    // priorities.
+    send.mockResolvedValue({});
+
+    await (await repository()).move("REDIRECT#00100", moved);
+
+    expect(call().input["ClientRequestToken"]).toEqual(expect.any(String));
+  });
+
+  it("replaces in place rather than putting one item in a transaction twice", async () => {
+    // DynamoDB rejects a transaction touching one item twice, and that
+    // ValidationException would surface as a 500.
+    send.mockResolvedValue({});
+
+    expect(await (await repository()).move("REDIRECT#00050", moved)).toBe(
+      "moved",
+    );
+    expect(call().name).toBe("PutCommand");
+  });
+
+  it("reads the Put's refusal as the destination being taken", async () => {
+    send.mockRejectedValue(cancelled("ConditionalCheckFailed", "None"));
+
+    expect(await (await repository()).move("REDIRECT#00100", moved)).toBe(
+      "occupied",
+    );
+  });
+
+  it("reads the Delete's refusal as the source being gone", async () => {
+    send.mockRejectedValue(cancelled("None", "ConditionalCheckFailed"));
+
+    expect(await (await repository()).move("REDIRECT#00100", moved)).toBe(
+      "missing",
+    );
+  });
+
+  it("prefers the missing source when both legs refuse", async () => {
+    // The caller addressed a rule that no longer exists — the more specific
+    // answer, and a 404 rather than a 409 about a rule they never mentioned.
+    send.mockRejectedValue(
+      cancelled("ConditionalCheckFailed", "ConditionalCheckFailed"),
+    );
+
+    expect(await (await repository()).move("REDIRECT#00100", moved)).toBe(
+      "missing",
+    );
+  });
+
+  it("rethrows a cancellation neither condition explains", async () => {
+    // A throughput or size failure is not a 404, and must not be reported as
+    // one: the move genuinely did not happen for a reason the caller cannot fix.
+    send.mockRejectedValue(cancelled("TransactionConflict", "None"));
+
+    await expect(
+      (await repository()).move("REDIRECT#00100", moved),
+    ).rejects.toThrow("TransactionCanceledException");
+  });
+
+  it("rethrows a failure that is not a cancellation at all", async () => {
+    send.mockRejectedValue(awsError("ProvisionedThroughputExceededException"));
+
+    await expect(
+      (await repository()).move("REDIRECT#00100", moved),
+    ).rejects.toThrow("ProvisionedThroughputExceededException");
+  });
+});
+
 describe("an unreachable target", () => {
   const unreachable = [
     ["the assumed role is refused", "AccessDenied"],
@@ -217,5 +376,16 @@ describe("an unreachable target", () => {
     await expect((await repository()).listByHost(HOST)).rejects.toThrow(
       "InternalServerError",
     );
+  });
+
+  it("502s writes too, not just reads", async () => {
+    send.mockRejectedValue(awsError("AccessDeniedException"));
+
+    await expect(
+      (await repository()).create(rule("REDIRECT#00100")),
+    ).rejects.toMatchObject({ status: 502, code: "TARGET_UNREACHABLE" });
+    await expect(
+      (await repository()).move("REDIRECT#00100", rule("REDIRECT#00050")),
+    ).rejects.toMatchObject({ status: 502, code: "TARGET_UNREACHABLE" });
   });
 });

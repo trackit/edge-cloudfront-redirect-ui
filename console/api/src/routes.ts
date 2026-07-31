@@ -18,8 +18,8 @@ import {
 const RULES = "/targets/:targetId/hosts/:host/rules";
 
 /**
- * The route table. Targets registry (ER-202) is live; rule handlers validate
- * their bodies but defer persistence to ER-203 (they 501).
+ * The route table. Targets registry (ER-202) and rule list/fetch/create/update/
+ * delete (ER-203) are live; the `disabled` toggle is the remaining rule route.
  */
 export const routes: Route[] = [
   { method: "GET", pattern: "/health", handler: health },

@@ -126,10 +126,9 @@ module "console_api" {
 
 ## Not here yet
 
-- **Rule CRUD against a target's table** — ER-203. The access _mechanism_ is in
-  place (see [Reaching a target's table](#reaching-a-targets-table)); what is
-  missing is the persistence code that uses it. Rule routes resolve their target
-  and then 501.
+- **The `disabled` toggle** — the last ER-203 route. It needs `dynamodb:UpdateItem`
+  added to the `TargetRulesTables` statement in `main.tf`; the actions granted
+  today cover rule list/fetch/create/update/delete but not that one.
 - **Cross-account targets** — the `roleArn` shape supports it; nothing has been
   exercised against a second account.
 - **Cognito authorizer** — ER-205. The API is deployed open for now.

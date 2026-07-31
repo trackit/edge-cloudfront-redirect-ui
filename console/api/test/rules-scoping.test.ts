@@ -15,8 +15,7 @@ import { FakeRulesRepository } from "./fake-rules-repository.js";
 /**
  * Rule operations are scoped to a target (ER-202 criterion 4): an *unknown*
  * target must 404 rather than being indistinguishable from a valid one, and that
- * check must run before the body — or the table — is looked at. Create and update
- * are the half of ER-203 still to come, so they 501 once those checks pass.
+ * check must run before the body — or the table — is looked at.
  */
 
 const target = {
@@ -88,14 +87,6 @@ describe("rule routes are scoped to a target", () => {
     expect(parse(res.body)).toEqual([]);
   });
 
-  it("still 501s on the routes ER-203 has not finished", async () => {
-    const res = await handler(event("POST", KNOWN, rule));
-    expect(res.statusCode).toBe(501);
-    expect(parse(res.body)).toMatchObject({
-      error: { code: "NOT_IMPLEMENTED" },
-    });
-  });
-
   it("still validates the body once the target resolves", async () => {
     const res = await handler(event("POST", KNOWN, { nonsense: true }));
     expect(res.statusCode).toBe(400);
@@ -106,14 +97,16 @@ describe("rule routes are scoped to a target", () => {
 });
 
 /**
- * The body carries its own keys, so it can address a different rule than the URL.
- * ER-203 will write `Item: body`, so a mismatch would land the write in a
- * partition the caller never addressed — and a mismatched `sk` on PUT would
- * create a second item rather than replacing the addressed one.
+ * The server owns both keys, but a body may still carry them — that is what a
+ * rule fetched with GET and PUT back unchanged looks like. They are checked
+ * rather than trusted: an unchecked `pk` would land the write in a partition the
+ * caller never addressed, and an unchecked `sk` would write a second rule
+ * instead of replacing the addressed one.
  */
 const rule = {
   pk: "www.example.com",
   sk: "REDIRECT#00100",
+  priority: 100,
   type: "erMatchRule",
   statusCode: 301,
   redirectURL: "https://www.example.com/new",
@@ -163,18 +156,21 @@ describe("rule bodies must address the path they are sent to", () => {
     expect(details).toHaveLength(2);
   });
 
-  it("accepts a body that matches the path, reaching the stub", async () => {
+  it("accepts a body whose keys match the path", async () => {
     // The path param arrives URL-decoded, so REDIRECT%2300100 must compare equal
-    // to the body's REDIRECT#00100.
+    // to the body's REDIRECT#00100. Nothing is stored yet, so a replace 404s —
+    // which is already past every key check.
     const res = await handler(event("PUT", `${KNOWN}/REDIRECT%2300100`, rule));
 
-    expect(res.statusCode).toBe(501);
+    expect(res.statusCode).toBe(404);
+    expect(parse(res.body)).toMatchObject({ error: { code: "NOT_FOUND" } });
   });
 
-  it("does not compare sk on the collection route", async () => {
-    // POST addresses no specific sort key, so only pk is checked.
+  it("compares sk against the derived key on the collection route", async () => {
+    // POST addresses no specific sort key, so the body's `sk` is checked against
+    // the one `priority` implies rather than against the path.
     const res = await handler(event("POST", KNOWN, rule));
 
-    expect(res.statusCode).toBe(501);
+    expect(res.statusCode).toBe(201);
   });
 });

@@ -1,7 +1,10 @@
+import { randomUUID } from "node:crypto";
 import {
   DeleteCommand,
   GetCommand,
+  PutCommand,
   QueryCommand,
+  TransactWriteCommand,
   type DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
 import { docClient } from "./dynamo.js";
@@ -24,12 +27,34 @@ export interface RuleItem {
   [key: string]: unknown;
 }
 
+/**
+ * Why a move is its own operation: `sk` embeds the priority, so re-prioritising a
+ * rule is not an update but a delete plus an insert under a new key. Done as two
+ * calls, a failure between them leaves the rule live at both priorities.
+ */
+export type MoveOutcome =
+  /** Written at the new key, removed from the old one. */
+  | "moved"
+  /** Nothing at the old key — the rule was already deleted or never existed. */
+  | "missing"
+  /** Another rule already holds the new key. */
+  | "occupied";
+
 export interface RulesRepository {
   /** Every rule for a host, ascending `sk` (type, then priority). */
   listByHost(host: string): Promise<RuleItem[]>;
   get(host: string, sk: string): Promise<RuleItem | null>;
   /** `false` when there was no such rule — the caller turns that into a 404. */
   delete(host: string, sk: string): Promise<boolean>;
+  /** `false` when that key is already taken — never overwrites. */
+  create(item: RuleItem): Promise<boolean>;
+  /** `false` when there was no rule at that key — replace, never insert. */
+  replace(item: RuleItem): Promise<boolean>;
+  /**
+   * Moves the rule at `fromSk` to `item.sk`, atomically. `fromSk` equal to
+   * `item.sk` is allowed and is a plain replace.
+   */
+  move(fromSk: string, item: RuleItem): Promise<MoveOutcome>;
 }
 
 /**
@@ -109,6 +134,112 @@ export class DynamoRulesRepository implements RulesRepository {
             TableName: this.target.tableName,
             Key: { pk: host, sk },
             ConditionExpression: "attribute_exists(pk)",
+          }),
+        ),
+      );
+      return true;
+    } catch (err) {
+      if (isConditionalCheckFailed(err)) return false;
+      throw err;
+    }
+  }
+
+  // Conditional so a create can never overwrite the rule already sitting at that
+  // priority — a plain Put would silently replace it, and the author would see
+  // their new rule while the old one simply vanished.
+  async create(item: RuleItem): Promise<boolean> {
+    return this.putIf(item, "attribute_not_exists(pk)");
+  }
+
+  // The mirror image: PUT replaces the addressed rule and never inserts one, so
+  // a rule deleted in another tab does not quietly come back.
+  async replace(item: RuleItem): Promise<boolean> {
+    return this.putIf(item, "attribute_exists(pk)");
+  }
+
+  /**
+   * Re-prioritising, as one transaction: write the new key only if free, remove
+   * the old one only if still there. Either both happen or neither does, so the
+   * rule is never live at two priorities at once — which at the edge would mean
+   * two rules matching the same request.
+   */
+  async move(fromSk: string, item: RuleItem): Promise<MoveOutcome> {
+    // DynamoDB rejects a transaction that touches one item twice, so a "move"
+    // that does not actually move is a plain replace. Handled here rather than
+    // left to callers: the alternative is a ValidationException surfacing as a
+    // 500 the first time some future caller does not check first.
+    if (fromSk === item.sk) {
+      return (await this.replace(item)) ? "moved" : "missing";
+    }
+
+    try {
+      await this.send(() =>
+        this.client.send(
+          new TransactWriteCommand({
+            // TransactWriteItems is not idempotent without a token, and the SDK
+            // retries on its own. Should a committed transaction's response be
+            // lost, the retry finds the new key taken and the old one gone —
+            // both conditions failing, which reads exactly like "someone else
+            // already deleted this rule" and would answer 404 for a move that
+            // succeeded. An author who then re-creates the rule at its old
+            // priority ends up with it live at both. The token is generated per
+            // call and reused across the SDK's own retries, so it makes a
+            // retried transaction a no-op without ever collapsing two moves a
+            // client genuinely asked for.
+            ClientRequestToken: randomUUID(),
+            TransactItems: [
+              {
+                Put: {
+                  TableName: this.target.tableName,
+                  Item: item,
+                  ConditionExpression: "attribute_not_exists(pk)",
+                },
+              },
+              {
+                Delete: {
+                  TableName: this.target.tableName,
+                  Key: { pk: item.pk, sk: fromSk },
+                  ConditionExpression: "attribute_exists(pk)",
+                },
+              },
+            ],
+          }),
+        ),
+      );
+      return "moved";
+    } catch (err) {
+      return this.moveFailure(err);
+    }
+  }
+
+  /**
+   * Which leg of the transaction refused. `CancellationReasons` is positional —
+   * index 0 is the Put, index 1 the Delete — so the outcome says whether the
+   * destination was taken or the source had already gone. "missing" wins when
+   * both failed: the caller addressed a rule that no longer exists, which is the
+   * more specific answer.
+   */
+  private moveFailure(err: unknown): MoveOutcome {
+    const reasons = (err as { CancellationReasons?: { Code?: string }[] })
+      .CancellationReasons;
+    if (!reasons) throw err;
+
+    const refused = (index: number): boolean =>
+      reasons[index]?.Code === "ConditionalCheckFailed";
+
+    if (refused(1)) return "missing";
+    if (refused(0)) return "occupied";
+    throw err;
+  }
+
+  private async putIf(item: RuleItem, condition: string): Promise<boolean> {
+    try {
+      await this.send(() =>
+        this.client.send(
+          new PutCommand({
+            TableName: this.target.tableName,
+            Item: item,
+            ConditionExpression: condition,
           }),
         ),
       );
