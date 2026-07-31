@@ -116,6 +116,40 @@ describe("GET rules", () => {
     expect(parse(res.body)).toEqual([redirect("00100")]);
   });
 
+  it("serves each target from its own table", async () => {
+    // The console points at many tables from one deployment, so the routes must
+    // not answer target t2 out of t1's rules.
+    setTargetsRepository(
+      new FakeTargetsRepository([
+        target,
+        {
+          id: "t2",
+          name: "Staging",
+          region: "us-east-1",
+          tableName: "rules-stg",
+        },
+      ]),
+    );
+
+    const tables: Record<string, FakeRulesRepository> = {
+      "rules-prod": new FakeRulesRepository([redirect("00100")]),
+      "rules-stg": new FakeRulesRepository([rewrite("00500")]),
+    };
+    setRulesRepositoryFactory((resolved) => tables[resolved.tableName]!);
+
+    const prod = await handler(event("GET", BASE));
+    const staging = await handler(
+      event("GET", `/targets/t2/hosts/${HOST}/rules`),
+    );
+
+    expect((parse(prod.body) as RuleItem[]).map((r) => r.sk)).toEqual([
+      "REDIRECT#00100",
+    ]);
+    expect((parse(staging.body) as RuleItem[]).map((r) => r.sk)).toEqual([
+      "REWRITE#00500",
+    ]);
+  });
+
   it("reaches the table through the target's own coordinates", async () => {
     // Rules live in the target's table under the target's role — not in the
     // control plane's own region or credentials.

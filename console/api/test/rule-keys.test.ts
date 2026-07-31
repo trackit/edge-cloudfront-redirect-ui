@@ -21,18 +21,38 @@ describe("buildSk", () => {
     expect(buildSk("erMatchRule", 100)).toBe("REDIRECT#00100");
     expect(buildSk("frMatchRule", 100)).toBe("REWRITE#00100");
   });
+
+  const unrepresentable = [
+    ["over the five-digit width", 100000],
+    ["negative", -1],
+    ["fractional", 1.5],
+    ["not a number at all", Number.NaN],
+  ] as const;
+
+  it.each(unrepresentable)("refuses a priority that is %s", (_label, value) => {
+    // Padding one of these produces a key parseSk then rejects — an item that
+    // lists but that no fetch, update or delete can ever address again.
+    expect(() => buildSk("erMatchRule", value)).toThrow(
+      expect.objectContaining({
+        status: 400,
+        code: "VALIDATION_ERROR",
+      }) as Error,
+    );
+  });
 });
 
 describe("parseSk", () => {
-  it("round-trips what buildSk produces", () => {
-    expect(parseSk(buildSk("erMatchRule", 100))).toEqual({
-      kind: "REDIRECT",
-      priority: 100,
-    });
-    expect(parseSk(buildSk("frMatchRule", 0))).toEqual({
-      kind: "REWRITE",
-      priority: 0,
-    });
+  it("round-trips every priority buildSk accepts", () => {
+    for (const priority of [0, 1, 100, 9999, 99999]) {
+      expect(parseSk(buildSk("erMatchRule", priority))).toEqual({
+        kind: "REDIRECT",
+        priority,
+      });
+      expect(parseSk(buildSk("frMatchRule", priority))).toEqual({
+        kind: "REWRITE",
+        priority,
+      });
+    }
   });
 
   const malformed = [

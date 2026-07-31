@@ -20,11 +20,38 @@ export const KIND_BY_TYPE: Record<RuleType, RuleKind> = {
  */
 const PRIORITY_DIGITS = 5;
 
+export const PRIORITY_MIN = 0;
+export const PRIORITY_MAX = 10 ** PRIORITY_DIGITS - 1;
+
+/**
+ * The range `padPriority` can actually represent. Outside it, padding produces a
+ * key `parseSk` then refuses — 100000 overflows the width, -1 and 1.5 keep their
+ * own characters — which would be an item written into the table that no later
+ * request can address: it lists, but every fetch, update and delete of it 400s.
+ * Enforced in `buildSk` so no caller can construct that item by accident.
+ */
+export const assertPriority = (priority: number): void => {
+  if (
+    !Number.isInteger(priority) ||
+    priority < PRIORITY_MIN ||
+    priority > PRIORITY_MAX
+  ) {
+    throw new ApiError(400, "VALIDATION_ERROR", "Rule failed validation", [
+      {
+        path: "/priority",
+        message: `must be an integer between ${PRIORITY_MIN} and ${PRIORITY_MAX}`,
+      },
+    ]);
+  }
+};
+
 export const padPriority = (priority: number): string =>
   String(priority).padStart(PRIORITY_DIGITS, "0");
 
-export const buildSk = (type: RuleType, priority: number): string =>
-  `${KIND_BY_TYPE[type]}#${padPriority(priority)}`;
+export const buildSk = (type: RuleType, priority: number): string => {
+  assertPriority(priority);
+  return `${KIND_BY_TYPE[type]}#${padPriority(priority)}`;
+};
 
 export interface ParsedSk {
   kind: RuleKind;

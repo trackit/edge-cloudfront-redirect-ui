@@ -50,6 +50,11 @@ export class DynamoRulesRepository implements RulesRepository {
   // Follows LastEvaluatedKey: a Query returns at most 1 MB per page, and
   // stopping at the first page would silently drop a busy host's lowest-priority
   // rules with no error. Same reason DynamoTargetsRepository.list paginates.
+  //
+  // Eventually consistent, unlike `get` — a list is a whole partition rather
+  // than one item the caller was just handed, and the registry's own list reads
+  // the same way. A write can therefore lag by milliseconds here, against the
+  // ~1 min the edge takes to see it at all.
   async listByHost(host: string): Promise<RuleItem[]> {
     const items: RuleItem[] = [];
     let start: Record<string, unknown> | undefined;
