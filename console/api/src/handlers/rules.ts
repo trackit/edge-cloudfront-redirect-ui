@@ -2,7 +2,7 @@ import type { ApiRequest, ApiResponse } from "../context.js";
 import { ApiError } from "../lib/errors.js";
 import { json } from "../lib/respond.js";
 import { parseSk } from "../lib/rule-keys.js";
-import { composeRule } from "../lib/rule-input.js";
+import { composeRule, parseToggle } from "../lib/rule-input.js";
 import { getRulesRepository, type RuleItem } from "../lib/rules-repository.js";
 import { resolveTarget } from "../lib/targets-repository.js";
 
@@ -38,6 +38,24 @@ export const getRule = async (req: ApiRequest): Promise<ApiResponse> => {
   parseSk(sk);
 
   const rule = await getRulesRepository(target).get(host, sk);
+  if (!rule) throw ruleNotFound(host, sk);
+  return json(200, rule);
+};
+
+/**
+ * The enable/disable toggle — the one edit that is not a full replace, because
+ * turning a rule off is a single click in the UI and must not depend on the
+ * client holding a complete, current copy of the rule.
+ *
+ * Takes effect at the edge within its cache TTL (~1 min), not instantly.
+ */
+export const toggleRule = async (req: ApiRequest): Promise<ApiResponse> => {
+  const target = await resolveTarget(req.params.targetId);
+  const { host, sk } = req.params;
+  parseSk(sk);
+
+  const disabled = parseToggle(req.body);
+  const rule = await getRulesRepository(target).setDisabled(host, sk, disabled);
   if (!rule) throw ruleNotFound(host, sk);
   return json(200, rule);
 };

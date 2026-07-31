@@ -73,6 +73,50 @@ const resolvePriority = (priority: unknown): number => {
   return priority as number;
 };
 
+/**
+ * The toggle body: `{ disabled: true | false }`, and nothing else. Deliberately
+ * not a general PATCH — every other field belongs to the rule's shape, which PUT
+ * replaces as a whole against the shared schema. Silently ignoring an extra field
+ * here would let a client believe it had edited a rule it had only toggled.
+ */
+export const parseToggle = (body: unknown): boolean => {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new ApiError(
+      400,
+      "VALIDATION_ERROR",
+      'Request body must be { "disabled": true } or { "disabled": false }',
+    );
+  }
+
+  const { disabled, ...rest } = body as Record<string, unknown>;
+  const details: { path: string; message: string }[] = [];
+
+  if (typeof disabled !== "boolean") {
+    details.push({
+      path: "/disabled",
+      message: disabled === undefined ? "is required" : "must be true or false",
+    });
+  }
+
+  for (const field of Object.keys(rest)) {
+    details.push({
+      path: `/${field}`,
+      message: "cannot be changed here — use PUT to edit the rule itself",
+    });
+  }
+
+  if (details.length > 0) {
+    throw new ApiError(
+      400,
+      "VALIDATION_ERROR",
+      "Rule toggle failed validation",
+      details,
+    );
+  }
+
+  return disabled as boolean;
+};
+
 const assertKeysAgree = (input: {
   pk: unknown;
   sk: unknown;

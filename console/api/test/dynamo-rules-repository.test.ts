@@ -342,6 +342,48 @@ describe("move", () => {
   });
 });
 
+describe("setDisabled", () => {
+  it("updates just that attribute and returns the whole item", async () => {
+    const toggled = { ...rule("REDIRECT#00100"), disabled: true };
+    send.mockResolvedValue({ Attributes: toggled });
+
+    expect(
+      await (await repository()).setDisabled(HOST, "REDIRECT#00100", true),
+    ).toEqual(toggled);
+
+    expect(call()).toMatchObject({
+      name: "UpdateCommand",
+      input: {
+        TableName: "rules-prod",
+        Key: { pk: HOST, sk: "REDIRECT#00100" },
+        // An Update, not a Put: a Put would clear whatever a stale client had
+        // not sent. `DISABLED` is a reserved word, hence the name placeholder.
+        UpdateExpression: "SET #disabled = :disabled",
+        ExpressionAttributeNames: { "#disabled": "disabled" },
+        ExpressionAttributeValues: { ":disabled": true },
+        ConditionExpression: "attribute_exists(pk)",
+        ReturnValues: "ALL_NEW",
+      },
+    });
+  });
+
+  it("returns null when there is no such rule", async () => {
+    send.mockRejectedValue(awsError("ConditionalCheckFailedException"));
+
+    expect(
+      await (await repository()).setDisabled(HOST, "REDIRECT#00100", true),
+    ).toBeNull();
+  });
+
+  it("does not swallow other failures", async () => {
+    send.mockRejectedValue(awsError("ProvisionedThroughputExceededException"));
+
+    await expect(
+      (await repository()).setDisabled(HOST, "REDIRECT#00100", false),
+    ).rejects.toThrow("ProvisionedThroughputExceededException");
+  });
+});
+
 describe("an unreachable target", () => {
   const unreachable = [
     ["the assumed role is refused", "AccessDenied"],

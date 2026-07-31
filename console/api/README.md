@@ -11,12 +11,14 @@ shapes are never redefined here.
 
 ## Routes
 
-| Method               | Path                                          | Status                              |
-| -------------------- | --------------------------------------------- | ----------------------------------- |
-| `GET`                | `/health`                                     | ✅ implemented                      |
-| `GET` / `POST`       | `/targets/{targetId}/hosts/{host}/rules`      | ✅ implemented (ER-203)             |
-| `GET`/`PUT`/`DELETE` | `/targets/{targetId}/hosts/{host}/rules/{sk}` | ✅ implemented (ER-203)             |
-| `PATCH`              | `/targets/{targetId}/hosts/{host}/rules/{sk}` | `disabled` toggle — not written yet |
+| Method               | Path                                          | Status                        |
+| -------------------- | --------------------------------------------- | ----------------------------- |
+| `GET`                | `/health`                                     | ✅ implemented                |
+| `GET` / `POST`       | `/targets`                                    | ✅ implemented (ER-202)       |
+| `GET`/`PUT`/`DELETE` | `/targets/{id}`                               | ✅ implemented (ER-202)       |
+| `GET` / `POST`       | `/targets/{targetId}/hosts/{host}/rules`      | ✅ implemented (ER-203)       |
+| `GET`/`PUT`/`DELETE` | `/targets/{targetId}/hosts/{host}/rules/{sk}` | ✅ implemented (ER-203)       |
+| `PATCH`              | `/targets/{targetId}/hosts/{host}/rules/{sk}` | ✅ `disabled` toggle (ER-203) |
 
 Rule routes are scoped to a **target** (a DynamoDB table from the targets
 registry, ER-202) and a **host** (the partition key), and write to that target's
@@ -28,6 +30,12 @@ The server owns both keys. A request body carries the rule's fields plus a
 stored item — the exact shape the Lambda@Edge reads. Because the priority is part
 of the key, a `PUT` that changes it **moves** the rule: one transaction writes the
 new key and removes the old, so the rule is never live at two priorities.
+
+`PATCH` is the exception to full-replace semantics: it takes `{ "disabled": … }`
+and nothing else, so turning a rule off never depends on the client holding a
+complete copy of it. A disabled rule keeps its place in the table and its
+priority; the Lambda@Edge skips it. Like every rule change, it reaches the edge
+within the edge cache TTL (~1 min), not instantly.
 
 ## Design
 

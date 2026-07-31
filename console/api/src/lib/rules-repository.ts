@@ -5,6 +5,7 @@ import {
   PutCommand,
   QueryCommand,
   TransactWriteCommand,
+  UpdateCommand,
   type DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
 import { docClient } from "./dynamo.js";
@@ -55,6 +56,15 @@ export interface RulesRepository {
    * `item.sk` is allowed and is a plain replace.
    */
   move(fromSk: string, item: RuleItem): Promise<MoveOutcome>;
+  /**
+   * Flips `disabled` on one rule, leaving every other field alone. Returns the
+   * updated rule, or `null` when there was none — the caller's 404.
+   */
+  setDisabled(
+    host: string,
+    sk: string,
+    disabled: boolean,
+  ): Promise<RuleItem | null>;
 }
 
 /**
@@ -209,6 +219,41 @@ export class DynamoRulesRepository implements RulesRepository {
       return "moved";
     } catch (err) {
       return this.moveFailure(err);
+    }
+  }
+
+  /**
+   * An update rather than a Put: the toggle must not depend on the client having
+   * sent the rest of the rule, and a Put would silently clear any field a stale
+   * client had not sent. `ALL_NEW` hands back the whole item so the response is
+   * the same `Rule` every other route returns.
+   */
+  async setDisabled(
+    host: string,
+    sk: string,
+    disabled: boolean,
+  ): Promise<RuleItem | null> {
+    try {
+      const out = await this.send(() =>
+        this.client.send(
+          new UpdateCommand({
+            TableName: this.target.tableName,
+            Key: { pk: host, sk },
+            // `DISABLED` is a DynamoDB reserved word, so the attribute has to be
+            // named indirectly — inline, this is a ValidationException.
+            UpdateExpression: "SET #disabled = :disabled",
+            ExpressionAttributeNames: { "#disabled": "disabled" },
+            ExpressionAttributeValues: { ":disabled": disabled },
+            ConditionExpression: "attribute_exists(pk)",
+            ReturnValues: "ALL_NEW",
+          }),
+        ),
+      );
+
+      return (out.Attributes as RuleItem | undefined) ?? null;
+    } catch (err) {
+      if (isConditionalCheckFailed(err)) return null;
+      throw err;
     }
   }
 

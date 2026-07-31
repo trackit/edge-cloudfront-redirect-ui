@@ -13,13 +13,14 @@ import {
   getRule,
   listRules,
   putRule,
+  toggleRule,
 } from "./handlers/rules.js";
 
 const RULES = "/targets/:targetId/hosts/:host/rules";
 
 /**
- * The route table. Targets registry (ER-202) and rule list/fetch/create/update/
- * delete (ER-203) are live; the `disabled` toggle is the remaining rule route.
+ * The route table. Targets registry (ER-202) and rules CRUD plus the `disabled`
+ * toggle (ER-203) are live.
  */
 export const routes: Route[] = [
   { method: "GET", pattern: "/health", handler: health },
@@ -34,5 +35,6 @@ export const routes: Route[] = [
   { method: "POST", pattern: RULES, handler: createRule },
   { method: "GET", pattern: `${RULES}/:sk`, handler: getRule },
   { method: "PUT", pattern: `${RULES}/:sk`, handler: putRule },
+  { method: "PATCH", pattern: `${RULES}/:sk`, handler: toggleRule },
   { method: "DELETE", pattern: `${RULES}/:sk`, handler: deleteRule },
 ];

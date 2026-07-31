@@ -9,9 +9,9 @@ info:
     redefined here.
 
 
-    The targets registry (ER-202) and rule list, fetch, create, update and delete
-    (ER-203) are implemented. The `disabled` toggle is the remaining ER-203 route
-    and is not defined here yet.
+    The targets registry (ER-202) and rules CRUD with the `disabled` toggle
+    (ER-203) are implemented. Authentication is ER-205 — the API is open until
+    then.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -302,6 +302,43 @@ paths:
           $ref: "#/components/responses/InternalError"
         "502":
           $ref: "#/components/responses/TargetUnreachable"
+    patch:
+      operationId: toggleRule
+      summary: Enable or disable a rule.
+      description: >-
+        Flips `disabled` and changes nothing else. The only edit that is not a
+        full replace: turning a rule off is one click in the UI and must not
+        depend on the client holding a complete, current copy of the rule.
+
+
+        Not a general PATCH — `disabled` is the only accepted field, and any other
+        is a 400 rather than being silently ignored. A disabled rule stays in the
+        table and keeps its priority; the Lambda@Edge skips it, which takes effect
+        within the edge cache TTL (~1 min) rather than immediately.
+      tags: [rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuleToggle"
+      responses:
+        "200":
+          description: The rule, as stored after the toggle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
     delete:
       operationId: deleteRule
       summary: Delete a rule.
@@ -462,6 +499,18 @@ components:
       oneOf:
         - $ref: "#/components/schemas/RedirectRuleInput"
         - $ref: "#/components/schemas/RewriteRuleInput"
+    RuleToggle:
+      description: >-
+        The enable/disable body. `disabled` is the only field this route accepts.
+      type: object
+      additionalProperties: false
+      required: [disabled]
+      properties:
+        disabled:
+          type: boolean
+          description: >-
+            `true` takes the rule out of service at the edge while leaving it in
+            the table at its current priority; `false` puts it back.
     RulePriority:
       type: integer
       minimum: 0

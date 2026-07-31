@@ -71,4 +71,19 @@ export class FakeRulesRepository implements RulesRepository {
     this.items.set(this.key(item.pk, item.sk), item);
     return Promise.resolve("moved");
   }
+
+  // Merges, like the UpdateItem it stands in for: every other field survives.
+  setDisabled(
+    host: string,
+    sk: string,
+    disabled: boolean,
+  ): Promise<RuleItem | null> {
+    const key = this.key(host, sk);
+    const existing = this.items.get(key);
+    if (!existing) return Promise.resolve(null);
+
+    const updated = { ...existing, disabled };
+    this.items.set(key, updated);
+    return Promise.resolve(updated);
+  }
 }

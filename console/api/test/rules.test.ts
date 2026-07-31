@@ -389,6 +389,100 @@ describe("POST a rule", () => {
   });
 });
 
+describe("PATCH a rule's disabled flag", () => {
+  const AT_100 = `${BASE}/REDIRECT%2300100`;
+
+  it("disables the rule and returns it as stored", async () => {
+    seed([redirect("00100")]);
+
+    const res = await handler(event("PATCH", AT_100, { disabled: true }));
+
+    expect(res.statusCode).toBe(200);
+    expect(parse(res.body)).toEqual({ ...redirect("00100"), disabled: true });
+  });
+
+  it("re-enables it", async () => {
+    seed([{ ...redirect("00100"), disabled: true }]);
+
+    const res = await handler(event("PATCH", AT_100, { disabled: false }));
+
+    expect(res.statusCode).toBe(200);
+    expect((parse(res.body) as RuleItem).disabled).toBe(false);
+  });
+
+  it("leaves the rule where it is, and the rest of it alone", async () => {
+    // A disabled rule keeps its priority — it is out of service, not moved or
+    // rewritten, so the author can put it back exactly as it was.
+    seed([redirect("00100")]);
+
+    await handler(event("PATCH", AT_100, { disabled: true }));
+    const listed = await handler(event("GET", BASE));
+
+    expect(parse(listed.body)).toEqual([
+      { ...redirect("00100"), disabled: true },
+    ]);
+  });
+
+  it("404s a rule that does not exist", async () => {
+    seed([]);
+
+    const res = await handler(event("PATCH", AT_100, { disabled: true }));
+
+    expect(res.statusCode).toBe(404);
+    expect(parse(res.body)).toMatchObject({ error: { code: "NOT_FOUND" } });
+  });
+
+  it("400s a malformed rule id", async () => {
+    seed([]);
+
+    const res = await handler(
+      event("PATCH", `${BASE}/nonsense`, { disabled: true }),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(parse(res.body)).toMatchObject({ error: { code: "BAD_REQUEST" } });
+  });
+
+  const badBodies: [string, unknown][] = [
+    ["a missing disabled", {}],
+    ["a non-boolean disabled", { disabled: "true" }],
+    ["a null body", null],
+    ["an array", [{ disabled: true }]],
+  ];
+
+  it.each(badBodies)("400s %s", async (_label, body) => {
+    seed([redirect("00100")]);
+
+    const res = await handler(event("PATCH", AT_100, body));
+
+    expect(res.statusCode).toBe(400);
+    expect(parse(res.body)).toMatchObject({
+      error: { code: "VALIDATION_ERROR" },
+    });
+  });
+
+  it("400s any other field rather than ignoring it", async () => {
+    // Silently dropping it would let a client believe it had edited a rule it
+    // had only toggled.
+    seed([redirect("00100")]);
+
+    const res = await handler(
+      event("PATCH", AT_100, { disabled: true, statusCode: 302 }),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(parse(res.body)).toMatchObject({
+      error: {
+        code: "VALIDATION_ERROR",
+        details: [{ path: "/statusCode" }],
+      },
+    });
+
+    const untouched = await handler(event("GET", AT_100));
+    expect(parse(untouched.body)).toEqual(redirect("00100"));
+  });
+});
+
 describe("PUT a rule", () => {
   const AT_100 = `${BASE}/REDIRECT%2300100`;
 

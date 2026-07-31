@@ -126,9 +126,6 @@ module "console_api" {
 
 ## Not here yet
 
-- **The `disabled` toggle** — the last ER-203 route. It needs `dynamodb:UpdateItem`
-  added to the `TargetRulesTables` statement in `main.tf`; the actions granted
-  today cover rule list/fetch/create/update/delete but not that one.
 - **Cross-account targets** — the `roleArn` shape supports it; nothing has been
   exercised against a second account.
 - **Cognito authorizer** — ER-205. The API is deployed open for now.

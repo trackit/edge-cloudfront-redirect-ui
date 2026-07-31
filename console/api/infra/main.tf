@@ -131,6 +131,9 @@ data "aws_iam_policy_document" "registry" {
         "dynamodb:Query",
         "dynamodb:GetItem",
         "dynamodb:PutItem",
+        # The `disabled` toggle is an UpdateItem, not a Put — it must not depend
+        # on the client having sent the whole rule.
+        "dynamodb:UpdateItem",
         "dynamodb:DeleteItem",
         "dynamodb:Scan",
       ]
