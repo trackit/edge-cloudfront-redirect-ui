@@ -29,6 +29,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # The UI's API types are generated from console/api/openapi.yaml and
+      # committed. Regenerate and fail if the result differs, so a spec or
+      # shared-schema edit cannot leave the client typed against a stale
+      # contract that still compiles.
+      - run: npm run generate:api:check --workspace console/ui
       # Exercise the esbuild bundle so ESM output / JSON imports / externals
       # can't break unnoticed until a real deploy.
       - run: npm run build -w console/api
