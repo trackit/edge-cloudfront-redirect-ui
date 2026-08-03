@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    // Composite projects must emit, and the only input here is vite.config.ts.
+    // Park the output out of the tree so it needs no ignore entries.
+    "outDir": "./node_modules/.tmp",
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "strict": true
+  },
+  "include": ["vite.config.ts"]
+}

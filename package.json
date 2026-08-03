@@ -6,9 +6,9 @@
   "workspaces": [
     "shared",
     "infra/lambda",
-    "console/api"
+    "console/api",
+    "console/ui"
   ],
-  "//": "Add 'console/ui' to workspaces as that package is created (ER-301).",
   "scripts": {
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
