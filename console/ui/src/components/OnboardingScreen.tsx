@@ -2,8 +2,13 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import Brand from "./Brand";
 import DistributionFields from "./DistributionFields";
-import { SAMPLE_DISTRIBUTION, emptyDistribution } from "../distribution";
-import type { Distribution } from "../types";
+import {
+  SAMPLE_DISTRIBUTION,
+  connectDistribution,
+  emptyDistribution,
+} from "../distribution";
+import { ApiError } from "../api";
+import type { Distribution, DistributionDraft } from "../types";
 import { IconArrow, IconBolt, IconServer, IconSliders } from "./icons";
 
 interface Props {
@@ -28,20 +33,63 @@ const STEPS = [
   },
 ];
 
+/**
+ * A short heading for the failure, so the API's prose is not the only thing the
+ * user reads. Codes are stable; messages are not, so the branch is on `code`.
+ */
+const errorHeading = (error: ApiError): string => {
+  switch (error.code) {
+    case "NETWORK_ERROR":
+      return "Cannot reach the API";
+    case "VALIDATION_ERROR":
+      return "Check these details";
+    case "TARGET_UNREACHABLE":
+      return "The API cannot reach that table";
+    default:
+      return "Could not connect";
+  }
+};
+
 /* Ticket: MVP - Front — Console + env configuration, the "no env available"
    half. Explains EdgeRoute on the left, takes the distribution details on the
    right. Shown until a distribution is connected. */
 export default function OnboardingScreen({ onConnect }: Props) {
-  const [d, setD] = useState<Distribution>(emptyDistribution);
+  const [d, setD] = useState<DistributionDraft>(emptyDistribution);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
 
   const distributionId = d.distributionId.trim();
   const tableName = d.tableName.trim();
   const valid = distributionId !== "" && tableName !== "";
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!valid) return;
-    onConnect({ distributionId, tableName, region: d.region });
+    if (!valid || pending) return;
+
+    setPending(true);
+    setError(null);
+    try {
+      // Registers the table with the API, which assigns the target id the rules
+      // routes are keyed on. Only after that is there anything worth persisting.
+      onConnect(
+        await connectDistribution({
+          distributionId,
+          tableName,
+          region: d.region,
+        }),
+      );
+    } catch (caught) {
+      setError(
+        caught instanceof ApiError
+          ? caught
+          : new ApiError({
+              status: 0,
+              code: "MALFORMED_RESPONSE",
+              message: "Something went wrong connecting the distribution",
+            }),
+      );
+      setPending(false);
+    }
   };
 
   return (
@@ -89,10 +137,30 @@ export default function OnboardingScreen({ onConnect }: Props) {
               />
             </div>
 
+            {error !== null && (
+              <div className="onboard-error" role="alert">
+                <strong>{errorHeading(error)}</strong>
+                <span>{error.message}</span>
+                {error.details.length > 0 && (
+                  <ul>
+                    {/* Index as key: several details can share one path, and the
+                        capped final entry has none. The list never reorders. */}
+                    {error.details.map((detail, i) => (
+                      <li key={i}>
+                        <span className="mono">{detail.path}</span>{" "}
+                        {detail.message}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
             <div className="onboard-actions">
               <button
                 className="btn btn-ghost"
                 type="button"
+                disabled={pending}
                 onClick={() => setD(SAMPLE_DISTRIBUTION)}
               >
                 Use sample values
@@ -100,10 +168,11 @@ export default function OnboardingScreen({ onConnect }: Props) {
               <button
                 className="btn btn-primary btn-lg"
                 type="submit"
-                disabled={!valid}
-                style={!valid ? { opacity: 0.5 } : undefined}
+                disabled={!valid || pending}
+                style={!valid || pending ? { opacity: 0.5 } : undefined}
               >
-                Connect <IconArrow size={18} />
+                {pending ? "Connecting…" : "Connect"}
+                <IconArrow size={18} />
               </button>
             </div>
           </form>

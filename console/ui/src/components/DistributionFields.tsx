@@ -1,8 +1,10 @@
-import type { Distribution } from "../types";
+import type { DistributionDraft } from "../types";
 
 interface Props {
-  value: Distribution;
-  onChange: (patch: Partial<Distribution>) => void;
+  /** The draft, not a connected Distribution — these fields exist before the
+      API has assigned a target id, and none of them can edit one. */
+  value: DistributionDraft;
+  onChange: (patch: Partial<DistributionDraft>) => void;
 }
 
 /**

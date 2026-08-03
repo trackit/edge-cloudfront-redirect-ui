@@ -630,3 +630,34 @@ button {
   font-size: 14px;
   line-height: 1.6;
 }
+
+/* Connect failures: the API's message, plus per-field detail when it sent any. */
+.onboard-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  background: var(--red-glow);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.onboard-error strong {
+  color: var(--red);
+  font-size: 13.5px;
+}
+.onboard-error ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.onboard-error li {
+  margin-top: 2px;
+}
+.console-target {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--ink-dim);
+}

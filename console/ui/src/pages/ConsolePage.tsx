@@ -33,6 +33,10 @@ export default function ConsolePage() {
 
       <main className="console-empty">
         <h1>No rules yet</h1>
+        {/* The id the rules routes are keyed on — worth showing while there is
+            no rules UI, since it is the only visible proof the table is
+            registered with the API. Goes when the console skeleton lands. */}
+        <p className="console-target mono">target {distribution.targetId}</p>
         <p>
           This distribution is connected. Browsing hosts and editing redirect
           and rewrite rules arrives with the console skeleton.
