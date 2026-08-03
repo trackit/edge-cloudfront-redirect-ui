@@ -9,8 +9,9 @@ info:
     redefined here.
 
 
-    The targets registry (ER-202) is implemented. Rule routes are defined ahead
-    of their handlers (ER-203) and return `501` until then.
+    The targets registry (ER-202) and rules CRUD with the `disabled` toggle
+    (ER-203) are implemented. Authentication is ER-205 — the API is open until
+    then.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -167,7 +168,12 @@ paths:
     get:
       operationId: listRules
       summary: List a host's rules by priority.
-      description: Redirect and rewrite rules for the host, in sort-key order.
+      description: >-
+        Redirect and rewrite rules for the host, in sort-key order — redirects
+        before rewrites, ascending priority within each. That is the order the
+        Lambda@Edge evaluates them in; the two kinds are separate lists at the
+        edge, since redirects run at viewer-request and rewrites at
+        origin-request. A host with no rules is an empty array, not a 404.
       tags: [rules]
       responses:
         "200":
@@ -186,21 +192,30 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
     post:
       operationId: createRule
       summary: Create a rule for a host.
+      description: >-
+        The server owns both keys: `pk` is the host from the path and `sk` is
+        `TYPE#priority` with the priority zero-padded. Never overwrites — a
+        priority already taken for that host and rule type is a 409.
+
+
+        The response body's `sk` is the created rule's id. It contains a `#`, so
+        addressing the rule afterwards means percent-encoding it:
+        `…/rules/REDIRECT%2300100`.
       tags: [rules]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/Rule"
+              $ref: "#/components/schemas/RuleInput"
       responses:
         "201":
-          description: The created rule.
+          description: The created rule, in the shape it was stored.
           content:
             application/json:
               schema:
@@ -211,10 +226,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/RuleConflict"
         "500":
           $ref: "#/components/responses/InternalError"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
   /targets/{targetId}/hosts/{host}/rules/{sk}:
     parameters:
       - $ref: "#/components/parameters/TargetId"
@@ -239,21 +256,75 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
     put:
       operationId: putRule
       summary: Replace a rule.
+      description: >-
+        Full replace: a field omitted from the body is cleared, so send the whole
+        rule — including `priority`, which is required here for the same reason.
+
+
+        Changing `priority` **moves** the rule, because the priority is part of
+        its key: the item is rewritten under a new `sk` and removed from the old
+        one, atomically. The rule then answers on a new URL — the response body
+        is the authority on where it lives. Moving onto a priority another rule
+        already holds is a 409, and neither rule is touched.
+
+
+        A body may carry `sk`, but on this route it names the rule being
+        replaced, so it must equal the sort key in the path — not the key the new
+        `priority` implies. A client re-prioritising a rule should simply omit it.
       tags: [rules]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/Rule"
+              $ref: "#/components/schemas/RuleInput"
       responses:
         "200":
-          description: The updated rule.
+          description: The updated rule, in the shape it was stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/RuleConflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
+    patch:
+      operationId: toggleRule
+      summary: Enable or disable a rule.
+      description: >-
+        Flips `disabled` and changes nothing else. The only edit that is not a
+        full replace: turning a rule off is one click in the UI and must not
+        depend on the client holding a complete, current copy of the rule.
+
+
+        Not a general PATCH — `disabled` is the only accepted field, and any other
+        is a 400 rather than being silently ignored. A disabled rule stays in the
+        table and keeps its priority; the Lambda@Edge skips it, which takes effect
+        within the edge cache TTL (~1 min) rather than immediately.
+      tags: [rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuleToggle"
+      responses:
+        "200":
+          description: The rule, as stored after the toggle.
           content:
             application/json:
               schema:
@@ -266,11 +337,14 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
     delete:
       operationId: deleteRule
       summary: Delete a rule.
+      description: >-
+        Deleting a rule that does not exist is a 404, not a silent 204 — the
+        write is conditional on the item existing.
       tags: [rules]
       responses:
         "204":
@@ -283,8 +357,8 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
 components:
   parameters:
     TargetPathId:
@@ -409,6 +483,104 @@ components:
       oneOf:
         - $ref: "../../shared/redirect-rule.schema.json"
         - $ref: "../../shared/rewrite-rule.schema.json"
+    RuleInput:
+      description: >-
+        A rule as a client sends it: the rule's own fields plus `priority`, an
+        integer the server zero-pads into the sort key. The response is a `Rule`
+        — the stored item, with `pk`/`sk` and without `priority`.
+
+
+        This is the one place a rule shape is restated outside `shared/`. Draft-07
+        cannot relax `required` or `additionalProperties` by composition, so the
+        input — which has no `sk` yet, and one field the item must never carry —
+        cannot be expressed as a `$ref` to the shared schemas. Everything nested
+        still points at them, and `openapi-rule-input.test.ts` fails if the field
+        lists drift apart.
+      oneOf:
+        - $ref: "#/components/schemas/RedirectRuleInput"
+        - $ref: "#/components/schemas/RewriteRuleInput"
+    RuleToggle:
+      description: >-
+        The enable/disable body. `disabled` is the only field this route accepts.
+      type: object
+      additionalProperties: false
+      required: [disabled]
+      properties:
+        disabled:
+          type: boolean
+          description: >-
+            `true` takes the rule out of service at the edge while leaving it in
+            the table at its current priority; `false` puts it back.
+    RulePriority:
+      type: integer
+      minimum: 0
+      maximum: 99999
+      description: >-
+        Lower runs first. Zero-padded to five digits and joined to the rule type
+        as `sk` (`REDIRECT#00100`), so it is unique per host per type — and the
+        width is why the range ends at 99999.
+    RuleKeyPk:
+      type: string
+      description: >-
+        Host. Derived from the path; may be sent (a rule fetched with GET carries
+        it) but must match, or the request is a 400.
+    RuleKeySk:
+      type: string
+      description: >-
+        Sort key. Derived by the server, and safest omitted. If sent, it must
+        equal the key of the rule the request *addresses* — the sort key in the
+        path on an item route, or the key derived from `type` and `priority` on
+        create. On a PUT that changes the priority those two differ, and the
+        path's value is the one that must be sent.
+    RedirectRuleInput:
+      description: Redirect (erMatchRule) input. Mirrors redirect-rule.schema.json.
+      type: object
+      additionalProperties: false
+      required: [type, priority, statusCode, redirectURL, matches]
+      properties:
+        type:
+          const: erMatchRule
+        priority:
+          $ref: "#/components/schemas/RulePriority"
+        pk:
+          $ref: "#/components/schemas/RuleKeyPk"
+        sk:
+          $ref: "#/components/schemas/RuleKeySk"
+        statusCode:
+          enum: [301, 302]
+        redirectURL:
+          type: string
+          minLength: 1
+        useIncomingQueryString:
+          type: boolean
+        matches:
+          type: array
+          items:
+            $ref: "../../shared/redirect-rule.schema.json#/definitions/match"
+        disabled:
+          type: boolean
+    RewriteRuleInput:
+      description: Rewrite (frMatchRule) input. Mirrors rewrite-rule.schema.json.
+      type: object
+      additionalProperties: false
+      required: [type, priority, matches, forwardSettings]
+      properties:
+        type:
+          const: frMatchRule
+        priority:
+          $ref: "#/components/schemas/RulePriority"
+        pk:
+          $ref: "#/components/schemas/RuleKeyPk"
+        sk:
+          $ref: "#/components/schemas/RuleKeySk"
+        matches:
+          type: array
+          items:
+            $ref: "../../shared/redirect-rule.schema.json#/definitions/match"
+        forwardSettings:
+          $ref: "../../shared/rewrite-rule.schema.json#/properties/forwardSettings"
+        disabled:
+          type: boolean
     ValidationDetail:
       description: >-
         One validation failure. Mirrors ValidationDetail in
@@ -456,8 +628,9 @@ components:
                 - INVALID_JSON
                 - METHOD_NOT_ALLOWED
                 - NOT_FOUND
-                - NOT_IMPLEMENTED
+                - RULE_EXISTS
                 - TARGET_EXISTS
+                - TARGET_UNREACHABLE
                 - UNKNOWN_TARGET
                 - VALIDATION_ERROR
             message:
@@ -510,11 +683,23 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
-    NotImplemented:
+    TargetUnreachable:
       description: >-
-        Route is defined but its persistence is not implemented yet (ER-203).
-        Returned once the target resolves, so a rule route can still answer 404
-        for an unknown target or 400 for a malformed body.
+        The target is registered but its DynamoDB table cannot be reached — the
+        assumed role was refused, the API's execution role does not cover the
+        table, or the table does not exist in that region. A configuration
+        problem, not a bad request: targets are registered at runtime while IAM
+        is granted at apply time, and both grants are empty by default. See
+        console/api/infra/README.md.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RuleConflict:
+      description: >-
+        That priority is already taken for this host and rule type. Priority is
+        part of a rule's key, so two rules cannot share one. Nothing was written
+        — on a move, neither the rule being moved nor the one already there.
       content:
         application/json:
           schema:

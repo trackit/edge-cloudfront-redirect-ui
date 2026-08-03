@@ -27,7 +27,7 @@
     },
     "disabled": {
       "type": "boolean",
-      "$comment": "Optional. Not present in the source runtime type — the edge does NOT yet honor it. ER-101 must skip rules where disabled=true, or this is a no-op."
+      "$comment": "Optional; absent means enabled. The Lambda@Edge filters out rules where disabled=true (RulesService.loadRules), so a toggle takes effect within the edge cache TTL (~1 min). The console writes it through PATCH."
     }
   },
   "definitions": {

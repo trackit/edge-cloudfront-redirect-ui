@@ -418,6 +418,27 @@ run "target_table_arns_grants_the_listed_tables" {
     ])
     error_message = "the rules-table grant must never include DeleteTable"
   }
+
+  # And every call the rule routes actually make. Asserting only what is
+  # forbidden let the `disabled` toggle ship against a policy with no UpdateItem,
+  # where the symptom is an AccessDenied at runtime that reads like a
+  # connectivity problem. A dropped action fails here instead.
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      alltrue([
+        for action in [
+          "dynamodb:Query",      # list a host's rules
+          "dynamodb:GetItem",    # fetch one
+          "dynamodb:PutItem",    # create, replace, and the move's Put leg
+          "dynamodb:UpdateItem", # the disabled toggle
+          "dynamodb:DeleteItem", # delete, and the move's Delete leg
+        ] : contains(s.actions, action)
+      ])
+      if s.sid == "TargetRulesTables"
+    ])
+    error_message = "the rules-table grant must cover every DynamoDB call the rule routes make"
+  }
 }
 
 run "allowed_regions_passed_through_when_set" {

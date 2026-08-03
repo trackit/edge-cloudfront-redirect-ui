@@ -1,88 +1,104 @@
 import type { ApiRequest, ApiResponse } from "../context.js";
 import { ApiError } from "../lib/errors.js";
-import { validateRule } from "../lib/validate.js";
+import { json } from "../lib/respond.js";
+import { parseSk } from "../lib/rule-keys.js";
+import { composeRule, parseToggle } from "../lib/rule-input.js";
+import { getRulesRepository, type RuleItem } from "../lib/rules-repository.js";
 import { resolveTarget } from "../lib/targets-repository.js";
 
-// Rule persistence is ER-203. These stubs enforce the three things that are the
-// scaffold's job — the target scope, the request shape, and that the body
-// addresses the same rule as the path — and 501 where a real read or write would
-// happen. Resolving the target first makes an unknown targetId a 404 rather than
-// indistinguishable from a valid one, and keeps the scoping boundary in one place
-// for ER-205 to attach authorization to.
-const notImplemented = (operation: string): never => {
-  throw new ApiError(
-    501,
-    "NOT_IMPLEMENTED",
-    `${operation} is not implemented yet (ER-203)`,
-  );
-};
+const ruleNotFound = (host: string, sk: string): ApiError =>
+  ApiError.notFound(`No rule "${sk}" for host "${host}" in this target`);
 
 /**
- * A rule item carries its own keys: `pk` is the host, `sk` is TYPE#priority. The
- * path says the same thing, so the two can disagree — and ER-203 will write
- * `Item: body`, which would put the item in a partition the caller never
- * addressed. `PUT` is worse: a mismatched `sk` creates a second item instead of
- * replacing the addressed one.
- *
- * Checked here so it sits at the same choke point as the target scope, while the
- * routes are still stubs. Path params arrive URL-decoded, so `sk` compares
- * against `REDIRECT#00100`, not `REDIRECT%2300100`.
+ * Priority is unique per host per type because it *is* the sort key. ER-204 owns
+ * the friendly form of this; what matters here is that the write was refused
+ * rather than silently overwriting the rule already at that priority.
  */
-const assertBodyMatchesPath = (req: ApiRequest): void => {
-  const body = req.body as { pk?: unknown; sk?: unknown };
-  const mismatched: { path: string; message: string }[] = [];
-
-  if (body.pk !== req.params.host) {
-    mismatched.push({
-      path: "/pk",
-      message: `must equal the host in the path ("${req.params.host}")`,
-    });
-  }
-
-  // Only the item routes address a specific sort key; the collection routes have
-  // nothing to compare against.
-  if (req.params.sk !== undefined && body.sk !== req.params.sk) {
-    mismatched.push({
-      path: "/sk",
-      message: `must equal the sort key in the path ("${req.params.sk}")`,
-    });
-  }
-
-  if (mismatched.length > 0) {
-    throw new ApiError(
-      400,
-      "VALIDATION_ERROR",
-      "Rule body does not match the path it was sent to",
-      mismatched,
-    );
-  }
-};
+const ruleExists = (item: RuleItem): ApiError =>
+  new ApiError(
+    409,
+    "RULE_EXISTS",
+    `Host "${item.pk}" already has a rule at "${item.sk}" — priorities are unique per host and rule type`,
+  );
 
 export const listRules = async (req: ApiRequest): Promise<ApiResponse> => {
-  await resolveTarget(req.params.targetId);
-  return notImplemented("listRules");
+  const target = await resolveTarget(req.params.targetId);
+  const rules = await getRulesRepository(target).listByHost(req.params.host);
+
+  // DynamoDB already returns ascending sk, but sorting here keeps the order a
+  // documented property of the endpoint rather than an implementation detail of
+  // whichever repository answered — the same reason RulesService re-sorts.
+  rules.sort((a, b) => a.sk.localeCompare(b.sk));
+  return json(200, rules);
 };
 
 export const getRule = async (req: ApiRequest): Promise<ApiResponse> => {
-  await resolveTarget(req.params.targetId);
-  return notImplemented("getRule");
+  const target = await resolveTarget(req.params.targetId);
+  const { host, sk } = req.params;
+  parseSk(sk);
+
+  const rule = await getRulesRepository(target).get(host, sk);
+  if (!rule) throw ruleNotFound(host, sk);
+  return json(200, rule);
+};
+
+/**
+ * The enable/disable toggle — the one edit that is not a full replace, because
+ * turning a rule off is a single click in the UI and must not depend on the
+ * client holding a complete, current copy of the rule.
+ *
+ * Takes effect at the edge within its cache TTL (~1 min), not instantly.
+ */
+export const toggleRule = async (req: ApiRequest): Promise<ApiResponse> => {
+  const target = await resolveTarget(req.params.targetId);
+  const { host, sk } = req.params;
+  parseSk(sk);
+
+  const disabled = parseToggle(req.body);
+  const rule = await getRulesRepository(target).setDisabled(host, sk, disabled);
+  if (!rule) throw ruleNotFound(host, sk);
+  return json(200, rule);
 };
 
 export const deleteRule = async (req: ApiRequest): Promise<ApiResponse> => {
-  await resolveTarget(req.params.targetId);
-  return notImplemented("deleteRule");
+  const target = await resolveTarget(req.params.targetId);
+  const { host, sk } = req.params;
+  parseSk(sk);
+
+  const deleted = await getRulesRepository(target).delete(host, sk);
+  if (!deleted) throw ruleNotFound(host, sk);
+  return json(204, undefined);
 };
 
 export const createRule = async (req: ApiRequest): Promise<ApiResponse> => {
-  await resolveTarget(req.params.targetId);
-  validateRule(req.body);
-  assertBodyMatchesPath(req);
-  return notImplemented("createRule");
+  const target = await resolveTarget(req.params.targetId);
+  const item = composeRule(req);
+
+  if (!(await getRulesRepository(target).create(item))) throw ruleExists(item);
+  return json(201, item);
 };
 
+/**
+ * Full replace. The path names the rule being addressed and `priority` names
+ * where it should end up, so a PUT that changes the priority is a *move*: the
+ * item's key changes, and with it the URL the rule answers on — which is why the
+ * response body is the authority on where it now lives.
+ */
 export const putRule = async (req: ApiRequest): Promise<ApiResponse> => {
-  await resolveTarget(req.params.targetId);
-  validateRule(req.body);
-  assertBodyMatchesPath(req);
-  return notImplemented("putRule");
+  const target = await resolveTarget(req.params.targetId);
+  const { host, sk } = req.params;
+  parseSk(sk);
+
+  const item = composeRule(req);
+  const repo = getRulesRepository(target);
+
+  if (item.sk === sk) {
+    if (!(await repo.replace(item))) throw ruleNotFound(host, sk);
+    return json(200, item);
+  }
+
+  const outcome = await repo.move(sk, item);
+  if (outcome === "missing") throw ruleNotFound(host, sk);
+  if (outcome === "occupied") throw ruleExists(item);
+  return json(200, item);
 };
