@@ -9,8 +9,8 @@ info:
     redefined here.
 
 
-    Rule routes are defined ahead of their handlers (ER-203). Only `/health` is
-    implemented today; the rest return `501` until then.
+    The targets registry (ER-202) is implemented. Rule routes are defined ahead
+    of their handlers (ER-203) and return `501` until then.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -20,6 +20,8 @@ servers:
 tags:
   - name: system
     description: Operational endpoints.
+  - name: targets
+    description: Registry of DynamoDB tables (targets) the console manages.
   - name: rules
     description: Redirect and rewrite rule management, scoped to a target and host.
 paths:
@@ -36,8 +38,128 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /targets:
+    get:
+      operationId: listTargets
+      summary: List all targets.
+      tags: [targets]
+      responses:
+        "200":
+          description: All registered targets, sorted by name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Target"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      operationId: createTarget
+      summary: Register a new target.
+      tags: [targets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TargetInput"
+      responses:
+        "201":
+          description: The created target.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /targets/{id}:
+    parameters:
+      - $ref: "#/components/parameters/TargetPathId"
+    get:
+      operationId: getTarget
+      summary: Fetch a single target.
+      tags: [targets]
+      responses:
+        "200":
+          description: The target.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      operationId: updateTarget
+      summary: Update a target.
+      description: >-
+        Full replace: a field omitted from the body is cleared, so send the whole
+        target. Accepts the `id` returned by GET as long as it matches the path,
+        so a fetched target can be edited and PUT back unchanged.
+      tags: [targets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TargetUpdate"
+      responses:
+        "200":
+          description: The updated target.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      operationId: deleteTarget
+      summary: Remove a target from the registry.
+      description: >-
+        Removes the target from the registry only — its actual DynamoDB rules
+        table is never deleted.
+      tags: [targets]
+      responses:
+        "204":
+          description: The target was removed from the registry.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /targets/{targetId}/hosts/{host}/rules:
     parameters:
       - $ref: "#/components/parameters/TargetId"
@@ -58,8 +180,12 @@ paths:
                   $ref: "#/components/schemas/Rule"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
     post:
@@ -81,8 +207,12 @@ paths:
                 $ref: "#/components/schemas/Rule"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
   /targets/{targetId}/hosts/{host}/rules/{sk}:
@@ -107,6 +237,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
     put:
@@ -132,6 +264,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
     delete:
@@ -147,10 +281,20 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
 components:
   parameters:
+    TargetPathId:
+      name: id
+      in: path
+      required: true
+      description: Target id.
+      schema:
+        type: string
+        minLength: 1
     TargetId:
       name: targetId
       in: path
@@ -183,11 +327,111 @@ components:
       properties:
         status:
           const: ok
+    TargetInput:
+      description: Fields a client supplies to create or update a target.
+      type: object
+      additionalProperties: false
+      required: [name, region, tableName]
+      properties:
+        name:
+          type: string
+          pattern: "\\S"
+          maxLength: 128
+          description: >-
+            Human-readable target name. Must contain a non-whitespace character;
+            stored trimmed.
+        region:
+          type: string
+          pattern: "^[a-z]{2}(-[a-z]+)+-\\d+$"
+          description: >-
+            AWS region of the target's DynamoDB table. This pattern checks format
+            only — the server also checks the region is one it allows, so a
+            well-formed value can still be rejected (e.g. us-east-11). The allowed
+            set is deployment-specific (ALLOWED_REGIONS), so it is not published
+            here as an enum.
+        tableName:
+          type: string
+          pattern: "^[a-zA-Z0-9_.-]{3,255}$"
+          description: DynamoDB rules table the Lambda@Edge reads for this target.
+        roleArn:
+          type: string
+          pattern: "^arn:aws[a-z-]*:iam::\\d{12}:role/.+$"
+          description: >-
+            Optional IAM role the API assumes to read and write this target's
+            rules table. Omit to use the API's own execution role, which only
+            reaches tables its policy already covers. Required in practice for a
+            target registered after deploy, or one in another account.
+    TargetUpdate:
+      description: >-
+        Update body. Same fields as TargetInput plus an optional `id`, which must
+        equal the id in the path if present; a mismatch is a 400. Spelled out
+        rather than composed with TargetInput because `allOf` cannot add a
+        property to a schema that sets `additionalProperties: false`.
+      type: object
+      additionalProperties: false
+      required: [name, region, tableName]
+      properties:
+        id:
+          type: string
+          description: Must equal the id in the path. Ignored otherwise.
+        name:
+          type: string
+          pattern: "\\S"
+          maxLength: 128
+        region:
+          type: string
+          pattern: "^[a-z]{2}(-[a-z]+)+-\\d+$"
+        tableName:
+          type: string
+          pattern: "^[a-zA-Z0-9_.-]{3,255}$"
+        roleArn:
+          type: string
+          pattern: "^arn:aws[a-z-]*:iam::\\d{12}:role/.+$"
+    Target:
+      description: A registered target. `id` is server-generated and immutable.
+      type: object
+      additionalProperties: false
+      required: [id, name, region, tableName]
+      properties:
+        id:
+          type: string
+          description: Server-generated id; used as the targetId in rule routes.
+        name:
+          type: string
+        region:
+          type: string
+        tableName:
+          type: string
+        roleArn:
+          type: string
     Rule:
       description: A redirect or rewrite rule item, per the shared schemas.
       oneOf:
         - $ref: "../../shared/redirect-rule.schema.json"
         - $ref: "../../shared/rewrite-rule.schema.json"
+    ValidationDetail:
+      description: >-
+        One validation failure. Mirrors ValidationDetail in
+        console/api/src/lib/ajv-errors.ts.
+      type: object
+      additionalProperties: false
+      required: [path, message]
+      properties:
+        path:
+          type: string
+          description: >-
+            JSON Pointer to the offending value, or "(root)" for the body itself.
+        message:
+          type: string
+          description: Human-readable reason, straight from the schema validator.
+        params:
+          type: object
+          additionalProperties: true
+          description: >-
+            Validator metadata identifying the field — e.g.
+            `{"additionalProperty":"typo"}` or `{"allowedValues":[301,302]}`. The
+            message alone often does not name the field, which is why this is
+            passed through. Never contains request values.
     Error:
       type: object
       additionalProperties: false
@@ -200,15 +444,33 @@ components:
           properties:
             code:
               type: string
-              description: Stable, machine-readable error code the SPA switches on.
+              description: >-
+                Stable, machine-readable error code. Closed set — see ERROR_CODES
+                in console/api/src/lib/errors.ts, which a test keeps in sync with
+                this enum. UNKNOWN_TARGET and NOT_FOUND are both 404s: the first
+                means the target id in the path is not registered, the second that
+                the addressed resource does not exist within a known target.
+              enum:
+                - BAD_REQUEST
+                - INTERNAL
+                - INVALID_JSON
+                - METHOD_NOT_ALLOWED
+                - NOT_FOUND
+                - NOT_IMPLEMENTED
+                - TARGET_EXISTS
+                - UNKNOWN_TARGET
+                - VALIDATION_ERROR
             message:
               type: string
               description: Human-readable summary.
             details:
               type: array
-              description: Optional structured detail, e.g. validation errors.
+              description: >-
+                Optional structured detail. Present on validation failures, where
+                each entry locates one bad field. Capped — a final entry with no
+                `params` reports how many were omitted.
               items:
-                type: object
+                $ref: "#/components/schemas/ValidationDetail"
   responses:
     BadRequest:
       description: The request was malformed or failed schema validation.
@@ -216,8 +478,20 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
-    NotFound:
-      description: No such resource.
+    Conflict:
+      description: >-
+        That table is already registered as another target. A table is identified
+        by (account, region, tableName) — the account coming from `roleArn`, so
+        two accounts may register the same table name, but two roles in one
+        account may not.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: >-
+        Unexpected failure. The response carries only a generic message; the cause
+        is in the function's CloudWatch logs.
       content:
         application/json:
           schema:
@@ -230,10 +504,17 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     NotImplemented:
       description: >-
         Route is defined but its persistence is not implemented yet (ER-203).
-        This is the only response the rule routes return today.
+        Returned once the target resolves, so a rule route can still answer 404
+        for an unknown target or 400 for a malformed body.
       content:
         application/json:
           schema:

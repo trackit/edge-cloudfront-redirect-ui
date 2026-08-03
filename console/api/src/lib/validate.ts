@@ -1,7 +1,8 @@
-import { Ajv, type ErrorObject } from "ajv";
+import { Ajv } from "ajv";
 import redirectSchema from "@cloudfront-redirect-rules/shared/redirect-rule.schema.json" with { type: "json" };
 import rewriteSchema from "@cloudfront-redirect-rules/shared/rewrite-rule.schema.json" with { type: "json" };
 import { ApiError } from "./errors.js";
+import { formatAjvErrors } from "./ajv-errors.js";
 
 // Both schemas are registered under their filenames because rewrite-rule cross-
 // refs `redirect-rule.schema.json#/definitions/match`. Same setup as shared/test.
@@ -15,42 +16,6 @@ const SCHEMA_BY_TYPE = {
 } as const;
 
 type RuleType = keyof typeof SCHEMA_BY_TYPE;
-
-/**
- * `allErrors` + `additionalProperties: false` makes one junk key produce one
- * detail, so a large body amplifies into a much larger response — enough to
- * pass Lambda's 6 MB response cap, at which point API Gateway replaces the
- * whole envelope with its own 502. Cap the list: past a few dozen the response
- * is unreadable anyway, and the client only needs enough to fix the request.
- */
-const MAX_DETAILS = 50;
-
-/**
- * Ajv puts the offending field in `params`, not in `message` — an
- * `additionalProperties` error says only "must NOT have additional properties"
- * and carries the key in `params.additionalProperty`. Without it the SPA can't
- * highlight the field that failed, so `params` is passed through. It holds
- * schema metadata (the bad key, allowed enum values), never request values.
- */
-const toDetails = (errors: ErrorObject[] | null | undefined) => {
-  const all = errors ?? [];
-  const details: unknown[] = all.slice(0, MAX_DETAILS).map((e) => ({
-    path: e.instancePath || "(root)",
-    message: e.message ?? "invalid",
-    ...(e.params && Object.keys(e.params).length > 0
-      ? { params: e.params }
-      : {}),
-  }));
-
-  if (all.length > MAX_DETAILS) {
-    details.push({
-      path: "(root)",
-      message: `${all.length - MAX_DETAILS} further errors omitted; showing the first ${MAX_DETAILS}`,
-    });
-  }
-
-  return details;
-};
 
 /**
  * Validates a rule body against its shared JSON Schema, picked by `type`.
@@ -84,7 +49,7 @@ export const validateRule = (body: unknown): void => {
       400,
       "VALIDATION_ERROR",
       "Rule failed schema validation",
-      toDetails(validate.errors),
+      formatAjvErrors(validate.errors),
     );
   }
 };

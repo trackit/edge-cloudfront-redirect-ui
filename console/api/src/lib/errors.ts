@@ -1,6 +1,26 @@
 import type { ApiResponse } from "../context.js";
 
 /**
+ * Every error code the API can return. This is the contract the SPA switches on,
+ * so it is a closed set rather than free-form strings: a typo fails to compile,
+ * and `openapi-error-codes.test.ts` fails if the OpenAPI `code` enum drifts from
+ * this list. Add a code here first, then to the spec.
+ */
+export const ERROR_CODES = [
+  "BAD_REQUEST",
+  "INTERNAL",
+  "INVALID_JSON",
+  "METHOD_NOT_ALLOWED",
+  "NOT_FOUND",
+  "NOT_IMPLEMENTED",
+  "TARGET_EXISTS",
+  "UNKNOWN_TARGET",
+  "VALIDATION_ERROR",
+] as const;
+
+export type ErrorCode = (typeof ERROR_CODES)[number];
+
+/**
  * A failure with an HTTP status and a stable `code` the SPA can switch on.
  * Anything thrown from a handler that is an `ApiError` becomes a standardized
  * error response; anything else becomes a 500.
@@ -8,7 +28,7 @@ import type { ApiResponse } from "../context.js";
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
-    public readonly code: string,
+    public readonly code: ErrorCode,
     message: string,
     public readonly details?: unknown,
   ) {

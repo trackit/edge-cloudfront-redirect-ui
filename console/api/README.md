@@ -1,6 +1,6 @@
 # @cloudfront-redirect-rules/api
 
-The control-plane console API (ER-201). A single Node 20 Lambda behind an HTTP
+The control-plane console API (ER-201). A single Node 22 Lambda behind an HTTP
 API Gateway (v2) that manages redirect/rewrite rules in DynamoDB. It is a client
 of the rules table — it only ever writes rules the [Lambda@Edge](../../infra/lambda)
 reads; the two never talk directly.

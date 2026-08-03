@@ -9,6 +9,12 @@ variable "function_name" {
   }
 }
 
+variable "targets_table_name" {
+  type        = string
+  default     = null
+  description = "Name of the targets registry DynamoDB table. Defaults to <function_name>-targets."
+}
+
 variable "timeout" {
   type        = number
   default     = 10
@@ -48,6 +54,56 @@ variable "npm_install_command" {
   nullable    = false
   default     = "npm ci"
   description = "Dependency install run at monorepo_root before the build. `npm ci` deletes and reinstalls node_modules, so an apply from a working repo wipes the operator's install — set this to \"npm install\" to keep it, or to \"\" to skip installing and build with whatever is already there."
+}
+
+variable "deletion_protection" {
+  type        = bool
+  default     = true
+  description = "Deletion protection on the targets registry table. On by default — the table is the only record of which rules table each target points at."
+}
+
+variable "assumable_role_arns" {
+  type        = list(string)
+  default     = []
+  description = "Role ARNs the API may assume to reach a target's rules table, matching the `roleArn` on registered targets. Empty means no sts:AssumeRole grant. A trailing * is allowed in the role name; the account must be literal. Keep these as narrow as your role-naming convention allows."
+
+  # The account must be spelled out. With no authentication until ER-205, a grant
+  # that spans accounts (`*` alone, or `arn:aws:iam::*:role/*`) would let any
+  # caller register a target pointing anywhere the API can reach. A trailing `*`
+  # in the role *name* is fine — that is how a naming convention is expressed.
+  # `?` is rejected outright: IAM treats it as a single-character wildcard, so
+  # `role/??????????????` matches every 14-character role, and no legal role or
+  # table name contains one anyway.
+  validation {
+    condition = alltrue([
+      for arn in var.assumable_role_arns :
+      can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/[^*?]+\\*?$", arn))
+    ])
+    error_message = "each assumable_role_arns entry must be a role ARN with a literal 12-digit account, and a role name that is literal except for an optional trailing * (no ? anywhere), e.g. arn:aws:iam::123456789012:role/edgeroute-target-*."
+  }
+}
+
+variable "target_table_arns" {
+  type        = list(string)
+  default     = []
+  description = "Rules-table ARNs the API's own execution role may read and write. The alternative to a per-target `roleArn`: a target with no roleArn is only reachable if its table is listed here. Empty means every target must carry a roleArn. The region may be a wildcard and the table name may end in *; the account must be literal."
+
+  # Same reasoning as assumable_role_arns, and it matters more here: this grant is
+  # direct rather than via AssumeRole, so a bare wildcard would hand the API
+  # PutItem/DeleteItem on every table in the account, not just the rules tables.
+  validation {
+    condition = alltrue([
+      for arn in var.target_table_arns :
+      can(regex("^arn:aws[a-z-]*:dynamodb:[a-z0-9*-]+:[0-9]{12}:table/[^*?]+\\*?$", arn))
+    ])
+    error_message = "each target_table_arns entry must be a DynamoDB table ARN with a non-empty region and a literal 12-digit account, and a table name that is literal except for an optional trailing * (no ? anywhere), e.g. arn:aws:dynamodb:us-east-1:123456789012:table/edgeroute-rules-*."
+  }
+}
+
+variable "allowed_regions" {
+  type        = list(string)
+  default     = []
+  description = "Regions a target may name, passed to the Lambda as ALLOWED_REGIONS. Empty uses the API's built-in list of commercial regions, which both ages and includes opt-in regions your account may not have enabled. Set this to the regions this deployment can actually reach."
 }
 
 variable "tags" {

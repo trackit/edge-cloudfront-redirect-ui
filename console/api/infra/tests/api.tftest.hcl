@@ -16,8 +16,8 @@ run "lambda_runtime_and_handler" {
   command = plan
 
   assert {
-    condition     = aws_lambda_function.this.runtime == "nodejs20.x"
-    error_message = "runtime must be nodejs20.x"
+    condition     = aws_lambda_function.this.runtime == "nodejs22.x"
+    error_message = "runtime must be a supported Node runtime; nodejs20.x reached end of support"
   }
 
   assert {
@@ -97,6 +97,30 @@ run "apigw_invoke_permission" {
   }
 }
 
+run "registry_table_and_env" {
+  command = plan
+
+  assert {
+    condition     = aws_dynamodb_table.targets.hash_key == "id"
+    error_message = "registry table must be keyed by id"
+  }
+
+  assert {
+    condition     = aws_dynamodb_table.targets.billing_mode == "PAY_PER_REQUEST"
+    error_message = "registry table should be PAY_PER_REQUEST"
+  }
+
+  assert {
+    condition     = aws_dynamodb_table.targets.name == "edgeroute-console-api-targets"
+    error_message = "registry table should default to <function_name>-targets"
+  }
+
+  assert {
+    condition     = aws_lambda_function.this.environment[0].variables["TARGETS_TABLE_NAME"] == aws_dynamodb_table.targets.name
+    error_message = "Lambda must receive the registry table name via TARGETS_TABLE_NAME"
+  }
+}
+
 run "log_group_named_for_function" {
   command = plan
 
@@ -118,4 +142,304 @@ run "function_name_rejects_bad_chars" {
   }
 
   expect_failures = [var.function_name]
+}
+
+# =============================================================================
+# Reaching a target's table (ER-202)
+# =============================================================================
+
+run "registry_table_is_protected_by_default" {
+  command = plan
+
+  # The registry is the only record of which table each target points at.
+  assert {
+    condition     = aws_dynamodb_table.targets.deletion_protection_enabled == true
+    error_message = "the targets registry must have deletion protection on by default"
+  }
+}
+
+run "no_assume_role_grant_by_default" {
+  command = plan
+
+  # Default must not hand out sts:AssumeRole — the grant is opt-in and scoped.
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "AssumeTargetRoles"
+    ]) == 0
+    error_message = "sts:AssumeRole must not be granted unless assumable_role_arns is set"
+  }
+}
+
+run "assume_role_scoped_to_the_given_arns" {
+  command = plan
+
+  variables {
+    assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
+  }
+
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "AssumeTargetRoles"
+    ]) == 1
+    error_message = "assumable_role_arns must add an AssumeTargetRoles statement"
+  }
+
+  # Never a wildcard on resources — the whole point of the per-target role.
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s.resources == toset(["arn:aws:iam::123456789012:role/edgeroute-target-*"])
+      if s.sid == "AssumeTargetRoles"
+    ])
+    error_message = "AssumeRole must be scoped to exactly the configured role ARNs"
+  }
+}
+
+run "assume_role_grant_adds_nothing_else" {
+  command = plan
+
+  variables {
+    assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
+  }
+
+  # The registry statement's own resources can't be asserted here — they hold the
+  # provider-computed table ARN, which is unknown under a mocked plan. What is
+  # knowable is the statement count: enabling the grant must add exactly one
+  # statement and not a third, broader one.
+  assert {
+    condition     = length(data.aws_iam_policy_document.registry.statement) == 2
+    error_message = "enabling assumable_role_arns must add exactly one statement"
+  }
+
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "TargetsRegistry"
+    ]) == 1
+    error_message = "the registry statement must survive unchanged alongside the grant"
+  }
+}
+
+run "rejects_a_bare_wildcard_assumable_role" {
+  command = plan
+
+  # With no auth until ER-205, "*" would let any caller point the API anywhere.
+  variables {
+    assumable_role_arns = ["*"]
+  }
+
+  expect_failures = [var.assumable_role_arns]
+}
+
+run "rejects_a_cross_account_assumable_role" {
+  command = plan
+
+  # The dangerous form an exact-match guard would miss: shaped like an ARN but
+  # spanning every account.
+  variables {
+    assumable_role_arns = ["arn:aws:iam::*:role/*"]
+  }
+
+  expect_failures = [var.assumable_role_arns]
+}
+
+run "rejects_assuming_any_role_in_the_account" {
+  command = plan
+
+  # Shaped like a scoped ARN with a literal account, but the role name is a bare
+  # wildcard — i.e. assume anything in the account. The account check alone
+  # does not catch this.
+  variables {
+    assumable_role_arns = ["arn:aws:iam::123456789012:role/*"]
+  }
+
+  expect_failures = [var.assumable_role_arns]
+}
+
+run "rejects_every_table_in_the_account" {
+  command = plan
+
+  # The same hole on the more dangerous variable: this grant is direct, so
+  # `table/*` means PutItem/DeleteItem on every table in the account.
+  variables {
+    target_table_arns = ["arn:aws:dynamodb:*:123456789012:table/*"]
+  }
+
+  expect_failures = [var.target_table_arns]
+}
+
+run "rejects_a_single_character_wildcard_role" {
+  command = plan
+
+  # IAM treats `?` as a single-character wildcard, so this matches every
+  # 14-character role in the account. A guard that only blocks `*` misses it.
+  variables {
+    assumable_role_arns = ["arn:aws:iam::123456789012:role/??????????????"]
+  }
+
+  expect_failures = [var.assumable_role_arns]
+}
+
+run "rejects_a_single_character_wildcard_table" {
+  command = plan
+
+  variables {
+    target_table_arns = ["arn:aws:dynamodb:us-east-1:123456789012:table/????????????????"]
+  }
+
+  expect_failures = [var.target_table_arns]
+}
+
+run "allows_a_role_path" {
+  command = plan
+
+  # Roles can carry a path; that must not be mistaken for a wildcard.
+  variables {
+    assumable_role_arns = ["arn:aws:iam::123456789012:role/service-roles/edgeroute-target-prod"]
+  }
+
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "AssumeTargetRoles"
+    ]) == 1
+    error_message = "a role ARN with a path must be accepted"
+  }
+}
+
+run "allows_a_role_name_wildcard" {
+  command = plan
+
+  # A wildcard in the role *name* is how a naming convention is expressed.
+  variables {
+    assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
+  }
+
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "AssumeTargetRoles"
+    ]) == 1
+    error_message = "a role-name wildcard with a literal account must be accepted"
+  }
+}
+
+run "rejects_a_bare_wildcard_target_table" {
+  command = plan
+
+  # Worse than the AssumeRole case: this grant is direct, so "*" would mean
+  # PutItem/DeleteItem on every table in the account.
+  variables {
+    target_table_arns = ["*"]
+  }
+
+  expect_failures = [var.target_table_arns]
+}
+
+run "rejects_a_cross_account_target_table" {
+  command = plan
+
+  variables {
+    target_table_arns = ["arn:aws:dynamodb:*:*:table/*"]
+  }
+
+  expect_failures = [var.target_table_arns]
+}
+
+run "allows_a_region_and_table_name_wildcard" {
+  command = plan
+
+  # Multi-region targets are a real case; only the account must be literal.
+  variables {
+    target_table_arns = ["arn:aws:dynamodb:*:123456789012:table/edgeroute-rules-*"]
+  }
+
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "TargetRulesTables"
+    ]) == 1
+    error_message = "a region/table wildcard with a literal account must be accepted"
+  }
+}
+
+run "no_rules_table_grant_by_default" {
+  command = plan
+
+  # Default grants access to no rules table, so every target needs a roleArn.
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "TargetRulesTables"
+    ]) == 0
+    error_message = "rules-table access must be opt-in via target_table_arns"
+  }
+}
+
+run "target_table_arns_grants_the_listed_tables" {
+  command = plan
+
+  # The alternative to a per-target role: a target with no roleArn is only
+  # reachable if its table is named here at apply time.
+  variables {
+    target_table_arns = ["arn:aws:dynamodb:us-east-1:123456789012:table/rules-prod"]
+  }
+
+  # The count guard is load-bearing: `alltrue([])` is true, so without it every
+  # assertion below would pass if the statement were deleted or its sid renamed —
+  # including the DeleteTable guard, which is criterion 6's safety net.
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "TargetRulesTables"
+    ]) == 1
+    error_message = "target_table_arns must add exactly one TargetRulesTables statement"
+  }
+
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s.resources == toset([
+        "arn:aws:dynamodb:us-east-1:123456789012:table/rules-prod"
+      ])
+      if s.sid == "TargetRulesTables"
+    ])
+    error_message = "rules-table access must be scoped to exactly target_table_arns"
+  }
+
+  # Item-level actions only — never DeleteTable, which criterion 6 forbids.
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      !contains(s.actions, "dynamodb:DeleteTable")
+      if s.sid == "TargetRulesTables"
+    ])
+    error_message = "the rules-table grant must never include DeleteTable"
+  }
+}
+
+run "allowed_regions_passed_through_when_set" {
+  command = plan
+
+  variables {
+    allowed_regions = ["us-east-1", "eu-west-1"]
+  }
+
+  assert {
+    condition     = aws_lambda_function.this.environment[0].variables["ALLOWED_REGIONS"] == "us-east-1,eu-west-1"
+    error_message = "allowed_regions must reach the Lambda as a comma-separated ALLOWED_REGIONS"
+  }
+}
+
+run "allowed_regions_omitted_when_empty" {
+  command = plan
+
+  # Absent, not empty — the API falls back to its built-in list, and an empty
+  # string would be indistinguishable from "allow nothing" if that ever changed.
+  assert {
+    condition     = !contains(keys(aws_lambda_function.this.environment[0].variables), "ALLOWED_REGIONS")
+    error_message = "ALLOWED_REGIONS must be omitted entirely when allowed_regions is empty"
+  }
 }

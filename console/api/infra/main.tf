@@ -6,6 +6,10 @@ locals {
   install_command = trimspace(var.npm_install_command)
   build_command   = "npm run build --workspace @cloudfront-redirect-rules/api"
 
+  targets_table_name = coalesce(
+    var.targets_table_name, "${var.function_name}-targets"
+  )
+
   handler_hash = sha256(join("", [
     for f in fileset(local.api_source_dir, "src/**/*.ts") :
     filesha256("${local.api_source_dir}/${f}")
@@ -52,6 +56,30 @@ data "archive_file" "lambda_zip" {
   depends_on = [null_resource.build]
 }
 
+# The targets registry — the control-plane's own state. Separate from every
+# rules table (those are keyed pk=host/sk=TYPE#priority); this is keyed by id.
+resource "aws_dynamodb_table" "targets" {
+  name         = local.targets_table_name
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "id"
+
+  # This table is the only record of which table each target points at — losing
+  # it loses the mapping, not just a cache. Protected by default, matching
+  # infra/modules/table. PITR covers accidental item-level damage.
+  deletion_protection_enabled = var.deletion_protection
+
+  attribute {
+    name = "id"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  tags = var.tags
+}
+
 data "aws_iam_policy_document" "assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -61,6 +89,60 @@ data "aws_iam_policy_document" "assume" {
       identifiers = ["lambda.amazonaws.com"]
     }
   }
+}
+
+data "aws_iam_policy_document" "registry" {
+  statement {
+    sid = "TargetsRegistry"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:Scan",
+    ]
+    resources = [aws_dynamodb_table.targets.arn]
+  }
+
+  # Targets are registered at runtime; IAM is granted at apply. A target's
+  # `roleArn` bridges that gap — the API assumes the role to reach that target's
+  # rules table, so no Terraform change is needed per target. Empty by default:
+  # with no patterns the API can only reach tables its own policy covers, which
+  # today is none, so rule operations (ER-203) need this set. Keep the patterns
+  # as narrow as the naming convention allows.
+  dynamic "statement" {
+    for_each = length(var.assumable_role_arns) > 0 ? [1] : []
+
+    content {
+      sid       = "AssumeTargetRoles"
+      actions   = ["sts:AssumeRole"]
+      resources = var.assumable_role_arns
+    }
+  }
+
+  # The other half of the same problem: a target with no `roleArn` uses the API's
+  # own credentials, so its table has to be named here at apply time. Listing
+  # nothing means every target must carry a roleArn.
+  dynamic "statement" {
+    for_each = length(var.target_table_arns) > 0 ? [1] : []
+
+    content {
+      sid = "TargetRulesTables"
+      actions = [
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Scan",
+      ]
+      resources = var.target_table_arns
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "registry" {
+  name   = "${var.function_name}-registry"
+  role   = aws_iam_role.this.id
+  policy = data.aws_iam_policy_document.registry.json
 }
 
 resource "aws_iam_role" "this" {
@@ -96,7 +178,7 @@ resource "aws_lambda_function" "this" {
   function_name = var.function_name
   role          = aws_iam_role.this.arn
   handler       = "index.handler"
-  runtime       = "nodejs20.x"
+  runtime       = "nodejs22.x"
 
   filename         = data.archive_file.lambda_zip.output_path
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
@@ -104,10 +186,24 @@ resource "aws_lambda_function" "this" {
   timeout     = var.timeout
   memory_size = var.memory_size
 
-  # No env vars needed yet; the targets registry + DynamoDB access arrive in
-  # ER-203, Cognito auth in ER-205.
+  environment {
+    variables = merge(
+      {
+        # AWS_REGION is injected by the runtime; only the table name is ours.
+        TARGETS_TABLE_NAME = aws_dynamodb_table.targets.name
+      },
+      # Omitted when empty so the API falls back to its built-in region list.
+      length(var.allowed_regions) > 0
+      ? { ALLOWED_REGIONS = join(",", var.allowed_regions) }
+      : {},
+    )
+  }
 
-  depends_on = [aws_iam_role_policy.logs, aws_cloudwatch_log_group.this]
+  depends_on = [
+    aws_iam_role_policy.logs,
+    aws_iam_role_policy.registry,
+    aws_cloudwatch_log_group.this,
+  ]
 
   tags = var.tags
 }

@@ -1,6 +1,13 @@
 import type { Route } from "./router.js";
 import { health } from "./handlers/health.js";
 import {
+  createTarget,
+  deleteTarget,
+  getTarget,
+  listTargets,
+  updateTarget,
+} from "./handlers/targets.js";
+import {
   createRule,
   deleteRule,
   getRule,
@@ -11,11 +18,18 @@ import {
 const RULES = "/targets/:targetId/hosts/:host/rules";
 
 /**
- * The route table, target-scoped per the OpenAPI spec. Rule handlers validate
+ * The route table. Targets registry (ER-202) is live; rule handlers validate
  * their bodies but defer persistence to ER-203 (they 501).
  */
 export const routes: Route[] = [
   { method: "GET", pattern: "/health", handler: health },
+
+  { method: "GET", pattern: "/targets", handler: listTargets },
+  { method: "POST", pattern: "/targets", handler: createTarget },
+  { method: "GET", pattern: "/targets/:id", handler: getTarget },
+  { method: "PUT", pattern: "/targets/:id", handler: updateTarget },
+  { method: "DELETE", pattern: "/targets/:id", handler: deleteTarget },
+
   { method: "GET", pattern: RULES, handler: listRules },
   { method: "POST", pattern: RULES, handler: createRule },
   { method: "GET", pattern: `${RULES}/:sk`, handler: getRule },

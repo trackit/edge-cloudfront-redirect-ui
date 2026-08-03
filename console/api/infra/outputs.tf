@@ -22,3 +22,13 @@ output "log_group_name" {
   value       = aws_cloudwatch_log_group.this.name
   description = "CloudWatch log group for the function."
 }
+
+output "targets_table_name" {
+  value       = aws_dynamodb_table.targets.name
+  description = "Name of the targets registry DynamoDB table."
+}
+
+output "targets_table_arn" {
+  value       = aws_dynamodb_table.targets.arn
+  description = "ARN of the targets registry DynamoDB table."
+}
