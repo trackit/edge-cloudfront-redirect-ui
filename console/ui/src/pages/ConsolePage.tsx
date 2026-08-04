@@ -13,10 +13,10 @@ import { useDistributions } from "../distribution";
  */
 type Flow = null | "add" | "settings";
 
-/* Ticket: MVP - Front — Console - Display host.
+/* Tickets: MVP - Front — Console + env configuration, and Console - Display host.
    Nothing configured → the connect screen. Configured → the bar carries the
-   connected environment and the ones this browser knows about, and the host
-   list and selected host sit below it. */
+   connected environment and the ones this browser knows about, and the host list
+   and selected host below it. */
 export default function ConsolePage() {
   const { distributions, current, connect, replaceCurrent, select } =
     useDistributions();
