@@ -38,8 +38,12 @@ const rule = (pk: string, sk: string): RuleItem => ({
   type: sk.startsWith("REDIRECT#") ? "erMatchRule" : "frMatchRule",
 });
 
+// One instance behind the factory, not one per call: the factory runs per
+// request, so a fresh repository each time would silently undo every write
+// between two requests in the same test.
 const seed = (...items: RuleItem[]) => {
-  setRulesRepositoryFactory(() => new FakeRulesRepository(items));
+  const repository = new FakeRulesRepository(items);
+  setRulesRepositoryFactory(() => repository);
 };
 
 beforeEach(() => {
@@ -123,6 +127,105 @@ describe("GET /targets/:targetId/hosts", () => {
   it("405s a write to the collection", async () => {
     const res = await handler(event("POST", "/targets/t1/hosts"));
     expect(res.statusCode).toBe(405);
+  });
+});
+
+describe("DELETE /targets/:targetId/hosts/:host", () => {
+  it("removes the host's rules and answers 204", async () => {
+    seed(
+      rule("www.example.com", "REDIRECT#00100"),
+      rule("www.example.com", "REWRITE#00150"),
+    );
+
+    const res = await handler(
+      event("DELETE", "/targets/t1/hosts/www.example.com"),
+    );
+    expect(res.statusCode).toBe(204);
+
+    const after = await handler(event("GET", "/targets/t1/hosts"));
+    expect(parse(after.body)).toEqual([]);
+  });
+
+  it("leaves every other host alone", async () => {
+    // The delete is scoped to one partition; a filter on the wrong field would
+    // take the whole table with it.
+    seed(
+      rule("www.example.com", "REDIRECT#00100"),
+      rule("shop.example.com", "REDIRECT#00100"),
+      rule("shop.example.com", "REWRITE#00150"),
+    );
+
+    await handler(event("DELETE", "/targets/t1/hosts/www.example.com"));
+
+    expect(
+      parse((await handler(event("GET", "/targets/t1/hosts"))).body),
+    ).toEqual([{ host: "shop.example.com", redirects: 1, rewrites: 1 }]);
+  });
+
+  it("404s a host with no rules", async () => {
+    // Same stored state as a host that never existed, so it cannot report a
+    // success — that would hide a typo or a second click on the trash icon.
+    seed(rule("www.example.com", "REDIRECT#00100"));
+
+    const res = await handler(
+      event("DELETE", "/targets/t1/hosts/other.example.com"),
+    );
+    expect(res.statusCode).toBe(404);
+    expect(parse(res.body)).toMatchObject({ error: { code: "NOT_FOUND" } });
+  });
+
+  it("404s the second delete of the same host", async () => {
+    seed(rule("www.example.com", "REDIRECT#00100"));
+
+    const first = await handler(
+      event("DELETE", "/targets/t1/hosts/www.example.com"),
+    );
+    const second = await handler(
+      event("DELETE", "/targets/t1/hosts/www.example.com"),
+    );
+
+    expect(first.statusCode).toBe(204);
+    expect(second.statusCode).toBe(404);
+  });
+
+  it("404s an unknown target before touching any table", async () => {
+    const res = await handler(
+      event("DELETE", "/targets/nope/hosts/www.example.com"),
+    );
+    expect(res.statusCode).toBe(404);
+    expect(parse(res.body)).toMatchObject({
+      error: { code: "UNKNOWN_TARGET" },
+    });
+  });
+
+  it("decodes a percent-encoded host", async () => {
+    // The client encodes every path segment, so the host arrives encoded. Left
+    // undecoded it addresses a partition key that does not exist, and the delete
+    // reports 404 for a host sitting right there.
+    seed(rule("www.example.com", "REDIRECT#00100"));
+
+    const res = await handler(
+      event("DELETE", "/targets/t1/hosts/www%2Eexample%2Ecom"),
+    );
+    expect(res.statusCode).toBe(204);
+    expect(
+      parse((await handler(event("GET", "/targets/t1/hosts"))).body),
+    ).toEqual([]);
+  });
+
+  it("does not delete the rules collection route by mistake", async () => {
+    // `/hosts/:host` and `/hosts/:host/rules` differ by one segment; a router
+    // matching loosely would let a DELETE on the rules path wipe the host.
+    seed(rule("www.example.com", "REDIRECT#00100"));
+
+    const res = await handler(
+      event("DELETE", "/targets/t1/hosts/www.example.com/rules"),
+    );
+
+    expect(res.statusCode).toBe(405);
+    expect(
+      parse((await handler(event("GET", "/targets/t1/hosts"))).body),
+    ).toEqual([{ host: "www.example.com", redirects: 1, rewrites: 0 }]);
   });
 });
 

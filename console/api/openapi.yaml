@@ -199,6 +199,41 @@ paths:
           $ref: "#/components/responses/InternalError"
         "502":
           $ref: "#/components/responses/TargetUnreachable"
+  /targets/{targetId}/hosts/{host}:
+    parameters:
+      - $ref: "#/components/parameters/TargetId"
+      - $ref: "#/components/parameters/Host"
+    delete:
+      operationId: deleteHost
+      summary: Delete a host and all of its rules.
+      description: >-
+        Destructive. A host is the partition key of its rules and nothing else,
+        so removing it means removing every redirect and rewrite stored under it.
+        The target and its DynamoDB table are untouched.
+
+
+        A host with no rules is a 404, not a 204 — the two are the same stored
+        state, and reporting success would hide a mistyped or already-deleted
+        host.
+
+
+        Not atomic: the rules are removed in batches of 25, so a failure part-way
+        leaves the host with fewer rules rather than none. Repeat the request to
+        finish the job.
+      tags: [rules]
+      responses:
+        "204":
+          description: The host and all its rules were removed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
   /targets/{targetId}/hosts/{host}/rules:
     parameters:
       - $ref: "#/components/parameters/TargetId"

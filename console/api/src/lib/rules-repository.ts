@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  BatchWriteCommand,
   DeleteCommand,
   GetCommand,
   PutCommand,
@@ -45,6 +46,19 @@ export interface HostSummary {
 /** The two key attributes `listHosts` projects; the rest of the item is not read. */
 type RuleKey = Pick<RuleItem, "pk" | "sk">;
 
+/** DynamoDB's hard cap on one BatchWriteItem request. */
+const BATCH_LIMIT = 25;
+
+/**
+ * How many times a batch is re-sent for the items DynamoDB declined.
+ *
+ * BatchWriteItem answers **200 with an `UnprocessedItems` map** when it throttles
+ * part of a request — a success as far as the SDK's retry policy is concerned, so
+ * nothing below this code will ever re-send them. Ignored, those rules quietly
+ * survive a delete that reported success.
+ */
+const UNPROCESSED_ATTEMPTS = 5;
+
 /**
  * Folds projected keys into one entry per host. Exported so the in-memory fake
  * counts the same way the real repository does rather than reimplementing it.
@@ -89,6 +103,11 @@ export interface RulesRepository {
   listByHost(host: string): Promise<RuleItem[]>;
   /** Every host holding at least one rule, with per-kind counts. Unordered. */
   listHosts(): Promise<HostSummary[]>;
+  /**
+   * Deletes every rule under a host. Returns how many were removed — 0 means the
+   * host had none, which is the caller's 404, a host being exactly its rules.
+   */
+  deleteHost(host: string): Promise<number>;
   get(host: string, sk: string): Promise<RuleItem | null>;
   /** `false` when there was no such rule — the caller turns that into a 404. */
   delete(host: string, sk: string): Promise<boolean>;
@@ -195,6 +214,86 @@ export class DynamoRulesRepository implements RulesRepository {
     } while (start);
 
     return summarizeHosts(keys);
+  }
+
+  /**
+   * Deleting a host means deleting its rules one by one — DynamoDB has no
+   * "drop this partition" operation, so this reads the keys and writes them back
+   * as deletes, 25 at a time.
+   *
+   * **Not atomic.** A `TransactWriteItems` would be, but it caps at 100 items,
+   * and a host with more rules than that would need several transactions anyway
+   * — atomic in pieces is not atomic. So a failure part-way leaves the host with
+   * fewer rules rather than none. That is recoverable by repeating the delete,
+   * which is why this reports the count rather than pretending to be all-or-
+   * nothing.
+   *
+   * The keys are read first with a strongly consistent Query: an eventually
+   * consistent one can miss a rule written moments ago, and a delete that skips
+   * the newest rule is the one an author is most likely to notice.
+   */
+  async deleteHost(host: string): Promise<number> {
+    const keys = await this.listKeys(host);
+    if (keys.length === 0) return 0;
+
+    for (let i = 0; i < keys.length; i += BATCH_LIMIT) {
+      await this.deleteBatch(keys.slice(i, i + BATCH_LIMIT));
+    }
+
+    return keys.length;
+  }
+
+  /** Keys only, for the delete above — the item bodies are never needed. */
+  private async listKeys(host: string): Promise<RuleKey[]> {
+    const keys: RuleKey[] = [];
+    let start: Record<string, unknown> | undefined;
+
+    do {
+      const out = await this.send(() =>
+        this.client.send(
+          new QueryCommand({
+            TableName: this.target.tableName,
+            KeyConditionExpression: "pk = :pk",
+            ExpressionAttributeValues: { ":pk": host },
+            ProjectionExpression: "pk, sk",
+            ConsistentRead: true,
+            ...(start ? { ExclusiveStartKey: start } : {}),
+          }),
+        ),
+      );
+
+      keys.push(...((out.Items ?? []) as RuleKey[]));
+      start = out.LastEvaluatedKey;
+    } while (start);
+
+    return keys;
+  }
+
+  /** One BatchWriteItem, re-sending whatever DynamoDB hands back unprocessed. */
+  private async deleteBatch(keys: RuleKey[]): Promise<void> {
+    let pending = keys.map((Key) => ({ DeleteRequest: { Key } }));
+
+    for (let attempt = 0; attempt < UNPROCESSED_ATTEMPTS; attempt += 1) {
+      const out = await this.send(() =>
+        this.client.send(
+          new BatchWriteCommand({
+            RequestItems: { [this.target.tableName]: pending },
+          }),
+        ),
+      );
+
+      const left = out.UnprocessedItems?.[this.target.tableName] ?? [];
+      if (left.length === 0) return;
+      pending = left as typeof pending;
+    }
+
+    // A plain Error, so the handler logs it and answers 500: the rules that did
+    // go are gone, and the caller's remedy is to repeat the delete. Reporting
+    // 204 here would claim a host was removed while some of it is still live at
+    // the edge.
+    throw new Error(
+      `BatchWriteItem left ${pending.length} of ${keys.length} rules undeleted on "${this.target.tableName}" after ${UNPROCESSED_ATTEMPTS} attempts`,
+    );
   }
 
   // ConsistentRead for the same reason the targets registry uses it: the SPA

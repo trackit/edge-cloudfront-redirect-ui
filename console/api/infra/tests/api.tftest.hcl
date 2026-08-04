@@ -449,6 +449,8 @@ run "target_table_arns_grants_the_listed_tables" {
           "dynamodb:PutItem",    # create, replace, and the move's Put leg
           "dynamodb:UpdateItem", # the disabled toggle
           "dynamodb:DeleteItem", # delete, and the move's Delete leg
+          # Deleting a host. Its own IAM action, not implied by DeleteItem.
+          "dynamodb:BatchWriteItem",
         ] : contains(s.actions, action)
       ])
       if s.sid == "TargetRulesTables"

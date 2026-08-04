@@ -203,6 +203,134 @@ describe("listHosts", () => {
   });
 });
 
+describe("deleteHost", () => {
+  /** A BatchWriteCommand's delete keys for the mocked table. */
+  const deletedKeys = (n: number) =>
+    (
+      call(n).input as unknown as {
+        RequestItems: Record<string, { DeleteRequest: { Key: RuleItem } }[]>;
+      }
+    ).RequestItems["rules-prod"].map((r) => r.DeleteRequest.Key.sk);
+
+  it("reads the host's keys consistently, then batch-deletes them", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          { pk: HOST, sk: "REDIRECT#00100" },
+          { pk: HOST, sk: "REWRITE#00150" },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    expect(await (await repository()).deleteHost(HOST)).toBe(2);
+
+    expect(call()).toMatchObject({
+      name: "QueryCommand",
+      input: {
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": HOST },
+        ProjectionExpression: "pk, sk",
+        // An eventually consistent read can miss a rule written moments ago,
+        // and skipping the newest rule is the one an author notices.
+        ConsistentRead: true,
+      },
+    });
+    expect(call(1).name).toBe("BatchWriteCommand");
+    expect(deletedKeys(1)).toEqual(["REDIRECT#00100", "REWRITE#00150"]);
+  });
+
+  it("writes nothing when the host has no rules", async () => {
+    // Otherwise this sends an empty BatchWriteItem, which DynamoDB rejects as a
+    // ValidationException — a 500 where the handler wants a plain 404.
+    send.mockResolvedValueOnce({ Items: [] });
+
+    expect(await (await repository()).deleteHost(HOST)).toBe(0);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("splits more than 25 rules across batches", async () => {
+    // BatchWriteItem's hard cap. A 26-item request is rejected outright.
+    const keys = Array.from({ length: 26 }, (_, i) => ({
+      pk: HOST,
+      sk: `REDIRECT#${String(i).padStart(5, "0")}`,
+    }));
+    send
+      .mockResolvedValueOnce({ Items: keys })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    expect(await (await repository()).deleteHost(HOST)).toBe(26);
+
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(deletedKeys(1)).toHaveLength(25);
+    expect(deletedKeys(2)).toHaveLength(1);
+  });
+
+  it("follows the key Query across pages", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [{ pk: HOST, sk: "REDIRECT#00100" }],
+        LastEvaluatedKey: { pk: HOST, sk: "REDIRECT#00100" },
+      })
+      .mockResolvedValueOnce({ Items: [{ pk: HOST, sk: "REDIRECT#00200" }] })
+      .mockResolvedValueOnce({});
+
+    expect(await (await repository()).deleteHost(HOST)).toBe(2);
+    expect(deletedKeys(2)).toEqual(["REDIRECT#00100", "REDIRECT#00200"]);
+  });
+
+  it("re-sends items DynamoDB left unprocessed", async () => {
+    // The dangerous case: BatchWriteItem answers 200 while declining part of the
+    // request, so the SDK's own retries never fire. Left alone, those rules
+    // survive a delete that reported success.
+    const unprocessed = [
+      { DeleteRequest: { Key: { pk: HOST, sk: "REWRITE#00150" } } },
+    ];
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          { pk: HOST, sk: "REDIRECT#00100" },
+          { pk: HOST, sk: "REWRITE#00150" },
+        ],
+      })
+      .mockResolvedValueOnce({
+        UnprocessedItems: { "rules-prod": unprocessed },
+      })
+      .mockResolvedValueOnce({});
+
+    expect(await (await repository()).deleteHost(HOST)).toBe(2);
+
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(deletedKeys(2)).toEqual(["REWRITE#00150"]);
+  });
+
+  it("gives up loudly when a batch never drains", async () => {
+    // Reporting 204 here would claim the host was removed while some of its
+    // rules are still live at the edge.
+    send.mockResolvedValueOnce({ Items: [{ pk: HOST, sk: "REDIRECT#00100" }] });
+    send.mockResolvedValue({
+      UnprocessedItems: {
+        "rules-prod": [
+          { DeleteRequest: { Key: { pk: HOST, sk: "REDIRECT#00100" } } },
+        ],
+      },
+    });
+
+    await expect((await repository()).deleteHost(HOST)).rejects.toThrow(
+      /undeleted/,
+    );
+  });
+
+  it("502s an unreachable target rather than a bare 500", async () => {
+    send.mockRejectedValue(awsError("AccessDeniedException"));
+
+    await expect((await repository()).deleteHost(HOST)).rejects.toMatchObject({
+      status: 502,
+      code: "TARGET_UNREACHABLE",
+    });
+  });
+});
+
 describe("get", () => {
   it("reads the item consistently", async () => {
     // The SPA reads a rule back right after writing it; an eventually consistent

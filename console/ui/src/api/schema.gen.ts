@@ -97,6 +97,35 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/targets/{targetId}/hosts/{host}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        targetId: components["parameters"]["TargetId"];
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. */
+        host: components["parameters"]["Host"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Delete a host and all of its rules.
+     * @description Destructive. A host is the partition key of its rules and nothing else, so removing it means removing every redirect and rewrite stored under it. The target and its DynamoDB table are untouched.
+     *
+     *     A host with no rules is a 404, not a 204 — the two are the same stored state, and reporting success would hide a mistyped or already-deleted host.
+     *
+     *     Not atomic: the rules are removed in batches of 25, so a failure part-way leaves the host with fewer rules rather than none. Repeat the request to finish the job.
+     */
+    delete: operations["deleteHost"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/targets/{targetId}/hosts/{host}/rules": {
     parameters: {
       query?: never;
@@ -645,6 +674,34 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["HostSummary"][];
         };
+      };
+      400: components["responses"]["BadRequest"];
+      404: components["responses"]["NotFound"];
+      405: components["responses"]["MethodNotAllowed"];
+      500: components["responses"]["InternalError"];
+      502: components["responses"]["TargetUnreachable"];
+    };
+  };
+  deleteHost: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        targetId: components["parameters"]["TargetId"];
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. */
+        host: components["parameters"]["Host"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The host and all its rules were removed. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       400: components["responses"]["BadRequest"];
       404: components["responses"]["NotFound"];

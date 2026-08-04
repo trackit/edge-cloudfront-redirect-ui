@@ -143,6 +143,10 @@ data "aws_iam_policy_document" "registry" {
         "dynamodb:UpdateItem",
         "dynamodb:DeleteItem",
         "dynamodb:Scan",
+        # Deleting a host removes its rules 25 at a time. BatchWriteItem is its
+        # own IAM action — DeleteItem does not imply it — so without this every
+        # host delete fails with AccessDenied after the keys have been read.
+        "dynamodb:BatchWriteItem",
       ]
       resources = var.target_table_arns
     }

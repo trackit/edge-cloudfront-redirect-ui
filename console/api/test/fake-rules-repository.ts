@@ -37,6 +37,17 @@ export class FakeRulesRepository implements RulesRepository {
     return Promise.resolve(summarizeHosts([...this.items.values()]));
   }
 
+  // All of them at once — the real one deletes in batches and can fail part-way,
+  // which is a DynamoDB property the fake cannot usefully imitate. The batching
+  // and the unprocessed-items retry are covered against the mocked client in
+  // dynamo-rules-repository.test.ts.
+  deleteHost(host: string): Promise<number> {
+    const doomed = [...this.items.values()].filter((item) => item.pk === host);
+    for (const item of doomed) this.items.delete(this.key(item.pk, item.sk));
+
+    return Promise.resolve(doomed.length);
+  }
+
   get(host: string, sk: string): Promise<RuleItem | null> {
     return Promise.resolve(this.items.get(this.key(host, sk)) ?? null);
   }
