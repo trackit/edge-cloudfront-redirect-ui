@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import LandingPage from "./pages/LandingPage";
+import ConsolePage from "./pages/ConsolePage";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -9,9 +10,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<LandingPage />} />
-        {/* The console itself is a later ticket. Until "/console" exists, an
-            unknown path returns to the landing page rather than rendering a
-            blank screen — delete this once the console route is added. */}
+        <Route path="/console" element={<ConsolePage />} />
+        {/* Unknown paths go home rather than rendering a blank screen. */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

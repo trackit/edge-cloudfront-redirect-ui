@@ -369,3 +369,295 @@ button {
   flex-wrap: wrap;
   gap: 12px;
 }
+
+/* ============================================================
+   FORM PRIMITIVES
+   ============================================================ */
+.field {
+  margin-bottom: 18px;
+}
+.field > label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 7px;
+}
+.field .hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.input,
+.select {
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text);
+  font-family: inherit;
+  outline: none;
+  transition:
+    border 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.input:focus,
+.select:focus {
+  border-color: var(--orange);
+  box-shadow: 0 0 0 3px var(--orange-glow);
+}
+.input.mono {
+  font-family: var(--mono);
+}
+.select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%238a97b0' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+}
+
+/* ============================================================
+   CONSOLE ONBOARDING (dark)
+   ============================================================ */
+.onboard {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 40px 20px;
+  background:
+    radial-gradient(
+      1000px 500px at 80% -10%,
+      rgba(255, 153, 0, 0.12),
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 460px at 0% 10%,
+      rgba(77, 168, 255, 0.1),
+      transparent 55%
+    ),
+    var(--navy-900);
+}
+.onboard-shell {
+  width: min(920px, 100%);
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  background: linear-gradient(180deg, var(--navy-700), var(--navy-800));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  color: var(--ink);
+}
+
+/* left aside */
+.onboard-aside {
+  padding: 36px;
+  background:
+    linear-gradient(160deg, rgba(255, 153, 0, 0.08), transparent 45%),
+    var(--navy-900);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+.oa-title {
+  margin: 26px 0 30px;
+  font-size: 22px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+.oa-steps {
+  list-style: none;
+  margin: 0 0 auto;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.oa-steps li {
+  display: flex;
+  gap: 12px;
+}
+.oa-step-ico {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--orange);
+}
+.oa-step-title {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+}
+.oa-step-desc {
+  display: block;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+  line-height: 1.5;
+  margin-top: 2px;
+}
+.oa-back-home {
+  margin-top: 28px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.oa-back-home:hover {
+  color: var(--ink);
+}
+
+/* right main */
+.onboard-main {
+  padding: 40px 36px;
+  display: flex;
+  align-items: center;
+}
+.onboard-connect {
+  width: 100%;
+}
+.onboard-main h1 {
+  margin: 0 0 10px;
+  font-size: 26px;
+  letter-spacing: -0.02em;
+}
+.onboard-sub {
+  margin: 0 0 26px;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.6;
+}
+/* the form sits on a dark card, so lighten the light-console field styles */
+.onboard-form .field > label {
+  color: var(--ink);
+}
+.onboard-form .hint {
+  color: var(--ink-dim);
+}
+.onboard-form .input,
+.onboard-form .select {
+  background: var(--navy-600);
+  border-color: var(--line);
+  color: var(--ink);
+}
+.onboard-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.onboard-actions .btn-ghost {
+  color: var(--ink-soft);
+  border-color: var(--line);
+}
+.onboard-actions .btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+}
+@media (max-width: 720px) {
+  .onboard-shell {
+    grid-template-columns: 1fr;
+  }
+  .onboard-aside {
+    display: none;
+  }
+}
+
+/* ============================================================
+   CONSOLE — empty view (placeholder until the skeleton ticket)
+   ============================================================ */
+.console {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  background: var(--navy-900);
+  color: var(--ink);
+}
+.console-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.console-conn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.console-conn-sep {
+  color: var(--ink-dim);
+}
+.console-conn .btn-ghost {
+  color: var(--ink-soft);
+  border-color: var(--line);
+  margin-left: 6px;
+}
+.console-conn .btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+}
+.console-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 60px 28px;
+}
+.console-empty h1 {
+  margin: 0 0 10px;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+.console-empty p {
+  margin: 0;
+  max-width: 420px;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Connect failures: the API's message, plus per-field detail when it sent any. */
+.onboard-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  background: var(--red-glow);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.onboard-error strong {
+  color: var(--red);
+  font-size: 13.5px;
+}
+.onboard-error ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.onboard-error li {
+  margin-top: 2px;
+}
+.console-target {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
