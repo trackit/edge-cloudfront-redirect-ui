@@ -136,6 +136,11 @@ data "aws_iam_policy_document" "registry" {
         "dynamodb:UpdateItem",
         "dynamodb:DeleteItem",
         "dynamodb:Scan",
+        # Registering a target checks the table exists, so a mistyped name is
+        # refused instead of becoming a second entry that only fails later.
+        # Without this the check cannot tell "no such table" from "no access"
+        # and, by design, allows the registration.
+        "dynamodb:DescribeTable",
       ]
       resources = var.target_table_arns
     }

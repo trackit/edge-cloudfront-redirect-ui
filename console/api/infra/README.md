@@ -11,7 +11,8 @@ Node 22 Lambda that runs the request router in `console/api/src`.
   API with a catch-all route; the Lambda's own router dispatches every path.
 - **`aws_iam_role`** — execution role: CloudWatch Logs, read/write on the targets
   registry table, and — both off by default — `sts:AssumeRole` on
-  `assumable_role_arns` plus item-level DynamoDB access on `target_table_arns`
+  `assumable_role_arns` plus item-level DynamoDB access (and `DescribeTable`) on
+  `target_table_arns`
   (see [Reaching a target's table](#reaching-a-targets-table)).
 - **`aws_cloudwatch_log_group`** — `/aws/lambda/<function_name>`.
 - **`aws_dynamodb_table` (targets registry)** — the control-plane's own state
@@ -56,6 +57,14 @@ assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
 
 Each target's role needs a trust policy admitting this Lambda's execution role and
 a permissions policy covering its own rules table.
+
+That permissions policy should include **`dynamodb:DescribeTable`** alongside the
+item-level actions. Registering a target describes its table first, so a mistyped
+name is refused with a 400 instead of being stored as a second entry that only
+fails on the first rules request. Without the grant nothing breaks — the check
+cannot tell "no such table" from "no access", and deliberately allows the
+registration rather than blocking a target whose IAM has not been applied yet —
+but you lose the typo check for targets behind that role.
 
 Both variables are validated, and the rules are the same for each: the **account
 must be literal**, and the role or table name must be literal apart from an

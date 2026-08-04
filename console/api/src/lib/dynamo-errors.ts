@@ -37,6 +37,15 @@ export const isConditionalCheckFailed = (err: unknown): boolean =>
   nameOf(err) === "ConditionalCheckFailedException";
 
 /**
+ * True when DynamoDB says the table itself is not there. Distinct from the
+ * `UNREACHABLE` set above, which lumps it in with "cannot reach": at
+ * registration this one is a definitive answer about the *input* and the others
+ * are not, so `verify-table.ts` has to tell them apart.
+ */
+export const isResourceNotFound = (err: unknown): boolean =>
+  nameOf(err) === "ResourceNotFoundException";
+
+/**
  * Maps a DynamoDB/STS failure to the error a client should see: a 502 naming the
  * unreachable table, or the original error (which becomes a 500) for anything
  * else — a malformed request the API built itself is a bug here, not a caller's

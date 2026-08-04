@@ -6,6 +6,12 @@ import {
   setTargetsRepository,
 } from "../src/lib/targets-repository.js";
 import { FakeTargetsRepository } from "./fake-targets-repository.js";
+import {
+  resetTableVerifier,
+  setTableVerifier,
+  type TableLocation,
+} from "../src/lib/verify-table.js";
+import { ApiError } from "../src/lib/errors.js";
 
 const event = (
   method: string,
@@ -33,8 +39,37 @@ const create = async (over: Record<string, unknown> = {}) =>
     name: string;
   };
 
-beforeEach(() => setTargetsRepository(new FakeTargetsRepository()));
-afterEach(() => resetTargetsRepository());
+/**
+ * Tables the stub verifier reports as absent. Empty by default — these tests are
+ * about the registry, so a table exists unless a test says otherwise.
+ */
+let missingTables: string[] = [];
+/** What the handler asked about, for the tests that assert on the lookup. */
+let verified: TableLocation[] = [];
+
+beforeEach(() => {
+  setTargetsRepository(new FakeTargetsRepository());
+  missingTables = [];
+  verified = [];
+
+  // Stands in for verify-table.ts, whose own suite covers the AWS call. Without
+  // this seam every create here would try to DescribeTable for real.
+  setTableVerifier((table) => {
+    verified.push(table);
+    if (!missingTables.includes(table.tableName)) return Promise.resolve();
+
+    return Promise.reject(
+      new ApiError(400, "VALIDATION_ERROR", "Target failed validation", [
+        { path: "/tableName", message: "no such table" },
+      ]),
+    );
+  });
+});
+
+afterEach(() => {
+  resetTargetsRepository();
+  resetTableVerifier();
+});
 
 describe("targets API", () => {
   it("POST /targets creates with a server-generated id", async () => {
@@ -303,5 +338,72 @@ describe("targets API", () => {
       }),
     );
     expect(bad.statusCode).toBe(400);
+  });
+
+  it("POST /targets 400s a table that does not exist", async () => {
+    missingTables = ["rules-prodd"];
+
+    const res = await handler(
+      event("POST", "/targets", { ...input, tableName: "rules-prodd" }),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(parse(res.body)).toMatchObject({
+      error: {
+        code: "VALIDATION_ERROR",
+        details: [{ path: "/tableName" }],
+      },
+    });
+  });
+
+  it("POST /targets does not register a mistyped table alongside the real one", async () => {
+    // The reported bug: the uniqueness check compares tableName exactly — as it
+    // must, DynamoDB table names being case-sensitive — so a typo is not a
+    // duplicate, and used to land as a second entry under the same display name.
+    // Nothing caught it until the first rules request 502'd.
+    await create();
+    missingTables = ["Rules-Prod"];
+
+    const res = await handler(
+      event("POST", "/targets", { ...input, tableName: "Rules-Prod" }),
+    );
+    expect(res.statusCode).toBe(400);
+
+    const list = parse((await handler(event("GET", "/targets"))).body) as {
+      tableName: string;
+    }[];
+    expect(list.map((t) => t.tableName)).toEqual(["rules-prod"]);
+  });
+
+  it("POST /targets checks the table under the target's own role and region", async () => {
+    const roleArn = "arn:aws:iam::111111111111:role/edgeroute-target-prod";
+    await handler(
+      event("POST", "/targets", { ...input, region: "eu-west-1", roleArn }),
+    );
+
+    // A cross-account table is only visible through its role, so verifying with
+    // the API's own credentials would report every one of them as missing.
+    expect(verified).toEqual([
+      { name: "Prod", region: "eu-west-1", tableName: "rules-prod", roleArn },
+    ]);
+  });
+
+  it("PUT /targets/:id 400s when repointed at a table that does not exist", async () => {
+    const created = await create();
+    missingTables = ["rules-typo"];
+
+    const res = await handler(
+      event("PUT", `/targets/${created.id}`, {
+        ...input,
+        tableName: "rules-typo",
+      }),
+    );
+    expect(res.statusCode).toBe(400);
+
+    const after = parse(
+      (await handler(event("GET", `/targets/${created.id}`))).body,
+    ) as {
+      tableName: string;
+    };
+    expect(after.tableName).toBe("rules-prod");
   });
 });

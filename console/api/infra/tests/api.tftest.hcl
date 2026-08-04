@@ -409,7 +409,8 @@ run "target_table_arns_grants_the_listed_tables" {
     error_message = "rules-table access must be scoped to exactly target_table_arns"
   }
 
-  # Item-level actions only — never DeleteTable, which criterion 6 forbids.
+  # Item-level actions, plus the read-only DescribeTable the registration check
+  # needs — never DeleteTable, which criterion 6 forbids.
   assert {
     condition = alltrue([
       for s in data.aws_iam_policy_document.registry.statement :
@@ -433,6 +434,10 @@ run "target_table_arns_grants_the_listed_tables" {
           "dynamodb:PutItem",    # create, replace, and the move's Put leg
           "dynamodb:UpdateItem", # the disabled toggle
           "dynamodb:DeleteItem", # delete, and the move's Delete leg
+          # Registering a target. Dropping this one is silent: the check treats
+          # AccessDenied as "cannot tell" and lets the registration through, so
+          # mistyped tables start being accepted again with nothing in the logs.
+          "dynamodb:DescribeTable",
         ] : contains(s.actions, action)
       ])
       if s.sid == "TargetRulesTables"

@@ -7,6 +7,7 @@ import {
   getTargetsRepository,
   type Target,
 } from "../lib/targets-repository.js";
+import { getTableVerifier } from "../lib/verify-table.js";
 
 const notFound = (id: string): ApiError =>
   ApiError.notFound(`No target with id "${id}"`);
@@ -102,8 +103,15 @@ const assertTableNotRegistered = async (
   }
 };
 
+/**
+ * Existence before uniqueness: "there is no such table" is a fact about the
+ * input alone, and it is the more useful of the two answers when a nonexistent
+ * table is *also* already registered — which is exactly the state the missing
+ * check used to produce. Costs one DescribeTable on the duplicate path.
+ */
 export const createTarget = async (req: ApiRequest): Promise<ApiResponse> => {
   const input = validateTarget(req.body);
+  await getTableVerifier()(input);
   await assertTableNotRegistered(input);
 
   const target: Target = { id: randomUUID(), ...input };
@@ -153,6 +161,9 @@ export const updateTarget = async (req: ApiRequest): Promise<ApiResponse> => {
   const input = validateTarget(withoutMatchingId(req.body, id));
   const repo = getTargetsRepository();
   if (!(await repo.get(id))) throw notFound(id);
+  // An update can retarget an entry at a different table, so it can introduce
+  // the same typo a create can.
+  await getTableVerifier()(input);
   await assertTableNotRegistered(input, id);
 
   const target: Target = { id, ...input };
