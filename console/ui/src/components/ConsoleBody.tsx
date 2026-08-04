@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import AddHostModal from "./AddHostModal";
+import DeleteHostDialog from "./DeleteHostDialog";
 import HostsSidebar from "./HostsSidebar";
 import { useHosts } from "../hosts";
-import { hostPath } from "../hostRoutes";
+import { CONSOLE_PATH, hostPath } from "../hostRoutes";
+import type { HostSummary } from "../api";
 import type { Distribution } from "../types";
 
 interface Props {
@@ -21,6 +23,9 @@ interface Props {
 export default function ConsoleBody({ distribution }: Props) {
   const { state, reload } = useHosts(distribution.targetId);
   const [adding, setAdding] = useState(false);
+  // The whole summary, not just the name: the confirmation names the rules that
+  // go with it, and those counts are only in the list.
+  const [deleting, setDeleting] = useState<HostSummary | null>(null);
   const navigate = useNavigate();
 
   // Decoded by React Router, so this is the host itself, not its URL spelling.
@@ -42,13 +47,38 @@ export default function ConsoleBody({ distribution }: Props) {
     navigate(hostPath(host));
   };
 
-  const modal = adding ? (
-    <AddHostModal
-      targetId={distribution.targetId}
-      onClose={() => setAdding(false)}
-      onAdded={added}
-    />
-  ) : null;
+  /*
+    Only leave the current host if it is the one that just went. Deleting another
+    host from the list must not move the page out from under whoever is reading
+    it. CONSOLE_PATH rather than a guess at the next host: it redirects to the
+    first remaining one, or shows the empty view when that was the last host, and
+    both of those decisions already live in one place below.
+  */
+  const deleted = (host: string) => {
+    setDeleting(null);
+    reload();
+    if (host === current) navigate(CONSOLE_PATH, { replace: true });
+  };
+
+  const modal = (
+    <>
+      {adding && (
+        <AddHostModal
+          targetId={distribution.targetId}
+          onClose={() => setAdding(false)}
+          onAdded={added}
+        />
+      )}
+      {deleting !== null && (
+        <DeleteHostDialog
+          targetId={distribution.targetId}
+          host={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={deleted}
+        />
+      )}
+    </>
+  );
 
   if (state.status === "loading") {
     return (
@@ -112,6 +142,7 @@ export default function ConsoleBody({ distribution }: Props) {
         hosts={hosts}
         current={current}
         onAdd={() => setAdding(true)}
+        onDelete={setDeleting}
       />
 
       <main className="host-view">

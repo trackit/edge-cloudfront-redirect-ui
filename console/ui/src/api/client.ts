@@ -133,6 +133,14 @@ export function createApiClient(options: ApiClientOptions = {}) {
        */
       create: (targetId: string, host: string) =>
         request<HostSummary>("POST", hostsPath(targetId), { host }),
+
+      /**
+       * Deletes the host **and every rule under it**. A host that is not there
+       * is a 404. Not atomic server-side: a failure part-way leaves the host
+       * with fewer rules, and repeating the call finishes the job.
+       */
+      remove: (targetId: string, host: string) =>
+        request<void>("DELETE", `${hostsPath(targetId)}/${segment(host)}`),
     },
 
     rules: {

@@ -1,13 +1,15 @@
 import { Link } from "react-router-dom";
 import type { HostSummary } from "../api";
 import { hostPath } from "../hostRoutes";
-import { IconPlus } from "./icons";
+import { IconPlus, IconTrash } from "./icons";
 
 interface Props {
   hosts: HostSummary[];
   /** The host the console is showing, or `null` when none is addressed yet. */
   current: string | null;
   onAdd: () => void;
+  /** Takes the whole summary, so the confirmation can name what will be lost. */
+  onDelete: (host: HostSummary) => void;
 }
 
 /**
@@ -26,7 +28,12 @@ const ruleCount = (host: HostSummary): string => {
   browser's own affordances still work — middle-click, copy link address, and
   the back button after picking a host.
 */
-export default function HostsSidebar({ hosts, current, onAdd }: Props) {
+export default function HostsSidebar({
+  hosts,
+  current,
+  onAdd,
+  onDelete,
+}: Props) {
   return (
     <nav className="hosts" aria-label="Hosts">
       <div className="hosts-head">
@@ -50,7 +57,10 @@ export default function HostsSidebar({ hosts, current, onAdd }: Props) {
           const active = host.host === current;
 
           return (
-            <li key={host.host}>
+            /* The delete button is a sibling of the link, never inside it: a
+               button nested in an anchor is invalid HTML, and a click on it
+               would navigate to the host it is about to delete. */
+            <li key={host.host} className="hosts-row">
               <Link
                 to={hostPath(host.host)}
                 className={`hosts-item${active ? " is-active" : ""}`}
@@ -83,6 +93,18 @@ export default function HostsSidebar({ hosts, current, onAdd }: Props) {
                   )}
                 </span>
               </Link>
+
+              <button
+                className="hosts-del"
+                type="button"
+                onClick={() => onDelete(host)}
+                // Names the host: "Delete" alone is ambiguous read out of a list
+                // of them, and this is the destructive one.
+                aria-label={`Delete ${host.host}`}
+                title={`Delete ${host.host}`}
+              >
+                <IconTrash size={14} />
+              </button>
             </li>
           );
         })}

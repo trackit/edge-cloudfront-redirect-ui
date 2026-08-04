@@ -890,11 +890,22 @@ button {
   padding: 0;
   list-style: none;
 }
+/* The link and its delete button are siblings, so the row is what lays them out
+   and what hover applies to. */
+.hosts-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
 .hosts-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  /* Takes the row minus the delete button; `min-width: 0` so a long host
+     ellipsizes rather than pushing the button off the edge. */
+  flex: 1;
+  min-width: 0;
   padding: 9px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
@@ -1028,6 +1039,41 @@ button {
   font-size: 13.5px;
 }
 
+/* Space is reserved whether or not it is showing, so revealing it on hover does
+   not shift the row it sits in. Hidden with opacity rather than `display: none`
+   or `visibility` so it stays focusable — Tab reaches it, and :focus-visible
+   below brings it into view for anyone not using a mouse. */
+.hosts-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.hosts-row:hover .hosts-del,
+.hosts-del:focus-visible {
+  opacity: 1;
+}
+.hosts-del:hover {
+  background: var(--red-glow);
+  color: var(--red);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hosts-del {
+    transition: none;
+  }
+}
+
 .hosts-add {
   display: inline-flex;
   align-items: center;
@@ -1132,6 +1178,19 @@ button {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text-soft);
+}
+.modal-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+.modal-text strong {
+  color: var(--text);
+}
+.modal-text-dim {
+  font-size: 12.5px;
+  color: var(--text-dim);
 }
 .modal-body .hint {
   margin-top: 6px;
