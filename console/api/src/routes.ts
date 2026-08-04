@@ -15,7 +15,7 @@ import {
   putRule,
   toggleRule,
 } from "./handlers/rules.js";
-import { deleteHost, listHosts } from "./handlers/hosts.js";
+import { createHost, deleteHost, listHosts } from "./handlers/hosts.js";
 
 const HOSTS = "/targets/:targetId/hosts";
 const HOST = `${HOSTS}/:host`;
@@ -35,6 +35,7 @@ export const routes: Route[] = [
   { method: "DELETE", pattern: "/targets/:id", handler: deleteTarget },
 
   { method: "GET", pattern: HOSTS, handler: listHosts },
+  { method: "POST", pattern: HOSTS, handler: createHost },
   { method: "DELETE", pattern: HOST, handler: deleteHost },
 
   { method: "GET", pattern: RULES, handler: listRules },

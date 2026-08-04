@@ -1,4 +1,6 @@
+import { isRuleSk } from "../src/lib/rule-keys.js";
 import {
+  HOST_MARKER_SK,
   summarizeHosts,
   type HostSummary,
   type MoveOutcome,
@@ -25,8 +27,13 @@ export class FakeRulesRepository implements RulesRepository {
     return JSON.stringify([pk, sk]);
   }
 
+  // Skips the host marker exactly as the real one does — a partition holds more
+  // than rules, and a fake that returned it would hide the phantom row instead
+  // of catching it.
   listByHost(host: string): Promise<RuleItem[]> {
-    const rules = [...this.items.values()].filter((item) => item.pk === host);
+    const rules = [...this.items.values()].filter(
+      (item) => item.pk === host && isRuleSk(item.sk),
+    );
     return Promise.resolve(rules);
   }
 
@@ -35,6 +42,21 @@ export class FakeRulesRepository implements RulesRepository {
   // stands in for drift apart.
   listHosts(): Promise<HostSummary[]> {
     return Promise.resolve(summarizeHosts([...this.items.values()]));
+  }
+
+  // "Exists" means anything under the partition — a rule or an earlier marker —
+  // not just the marker's own key, matching the two-step check in the real one.
+  createHost(host: string): Promise<boolean> {
+    const exists = [...this.items.values()].some((item) => item.pk === host);
+    if (exists) return Promise.resolve(false);
+
+    // Cast because the marker carries no `type`: it is not a rule, and the fake
+    // stores it exactly as the real repository writes it.
+    this.items.set(this.key(host, HOST_MARKER_SK), {
+      pk: host,
+      sk: HOST_MARKER_SK,
+    } as RuleItem);
+    return Promise.resolve(true);
   }
 
   // All of them at once — the real one deletes in batches and can fail part-way,

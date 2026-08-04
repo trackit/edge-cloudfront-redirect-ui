@@ -93,6 +93,62 @@ describe("caching", () => {
   });
 });
 
+describe("host lookup", () => {
+  it("looks rules up under the lowercased host", async () => {
+    // The console API stores every host lowercased, because a DynamoDB
+    // partition key is case-sensitive and DNS is not. A viewer may still send
+    // any case in the Host header; looking that up verbatim finds an empty
+    // partition and every rule for the site silently stops firing.
+    const repo = new FakeRepository([rule()]);
+    const service = new RulesService(repo, 60_000);
+
+    const result = await service.match(
+      params({ hostname: "WWW.Example.COM" }),
+      "REDIRECT",
+    );
+
+    expect(result).not.toBeNull();
+  });
+
+  it("shares one cache entry across spellings of a host", async () => {
+    const repo = new FakeRepository([rule()]);
+    const service = new RulesService(repo, 60_000);
+
+    await service.match(params({ hostname: "WWW.Example.COM" }), "REDIRECT");
+    await service.match(params({ hostname: "www.example.com" }), "REDIRECT");
+
+    // Same rules either way, so caching them twice would be pure waste.
+    expect(repo.queryCount).toBe(1);
+  });
+
+  it("still matches a hostname condition against what the viewer sent", async () => {
+    // Only the *key* is lowered. A `hostname` match may be declared
+    // caseSensitive, so the value it tests has to be the real header.
+    const service = new RulesService(
+      new FakeRepository([
+        rule({
+          matches: [
+            {
+              matchType: "hostname",
+              matchOperator: "equals",
+              matchValue: "WWW.Example.COM",
+              caseSensitive: true,
+            },
+          ],
+        }),
+      ]),
+      60_000,
+    );
+
+    expect(
+      await service.match(params({ hostname: "WWW.Example.COM" }), "REDIRECT"),
+    ).not.toBeNull();
+    expect(
+      await service.match(params({ hostname: "www.example.com" }), "REDIRECT"),
+    ).toBeNull();
+  });
+});
+
 describe("match conditions", () => {
   it("requires every condition to match", async () => {
     const service = new RulesService(

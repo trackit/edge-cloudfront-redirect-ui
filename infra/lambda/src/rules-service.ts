@@ -54,14 +54,24 @@ export class RulesService {
     hostname: string,
     kind: RuleKind,
   ): Promise<RedirectRule[]> {
-    const cacheKey = `${hostname}:${kind}`;
+    // The partition key is stored lowercase — DNS is case-insensitive while a
+    // DynamoDB key is not, so the console API normalizes every host it writes.
+    // A viewer is free to send `WWW.Example.com` in the Host header, and looking
+    // that up verbatim finds an empty partition: every rule for the site
+    // silently stops firing, with nothing in the logs to say why.
+    //
+    // Only the key is lowered. `params.hostname` keeps the value the viewer
+    // actually sent, because a `hostname` match condition may be declared
+    // `caseSensitive` and has to see the real thing.
+    const key = hostname.toLowerCase();
+
+    // Keyed on the normalized host too, so the two spellings share one entry
+    // instead of caching the same rules twice.
+    const cacheKey = `${key}:${kind}`;
     const cached = this.cache.get(cacheKey);
     if (cached !== undefined) return cached;
 
-    const items = await this.repo.queryByPrefix<RedirectRule>(
-      hostname,
-      `${kind}#`,
-    );
+    const items = await this.repo.queryByPrefix<RedirectRule>(key, `${kind}#`);
 
     // DynamoDB already returns ascending sk, but sorting here keeps priority
     // correct for any other repository implementation, and `disabled` rules

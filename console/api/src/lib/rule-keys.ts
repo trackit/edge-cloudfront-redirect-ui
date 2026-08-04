@@ -61,6 +61,16 @@ export interface ParsedSk {
 const SK_PATTERN = /^(REDIRECT|REWRITE)#(\d{5})$/;
 
 /**
+ * Whether a sort key addresses a rule at all.
+ *
+ * Not everything in a host's partition is one — the host marker
+ * (`HOST_MARKER_SK`) shares the partition so that a host with no rules can
+ * exist. Anything reading a whole partition has to say which it wants: listing
+ * rules must skip the marker, deleting a host must take it.
+ */
+export const isRuleSk = (sk: string): boolean => SK_PATTERN.test(sk);
+
+/**
  * Parses a sort key taken from the request path. A malformed one is a 400 rather
  * than a DynamoDB round-trip that can only miss — `sk` is half the primary key,
  * so anything off this shape addresses an item the API could never have written.

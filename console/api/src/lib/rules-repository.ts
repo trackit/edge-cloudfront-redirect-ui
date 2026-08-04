@@ -12,7 +12,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { docClient } from "./dynamo.js";
 import { isConditionalCheckFailed, toTargetError } from "./dynamo-errors.js";
-import type { RuleType } from "./rule-keys.js";
+import { isRuleSk, type RuleType } from "./rule-keys.js";
 import type { ResolvedTarget } from "./targets-repository.js";
 
 /**
@@ -45,6 +45,22 @@ export interface HostSummary {
 
 /** The two key attributes `listHosts` projects; the rest of the item is not read. */
 type RuleKey = Pick<RuleItem, "pk" | "sk">;
+
+/**
+ * Sort key of the item that makes a host exist before it has any rules.
+ *
+ * A host is otherwise only the partition key of its rules, so one with none is
+ * indistinguishable from one that was never created — it cannot be listed, and
+ * would vanish on the next page load. This item is what the console's "add host"
+ * writes.
+ *
+ * Invisible to the edge by construction: the Lambda@Edge queries
+ * `begins_with(sk, "REDIRECT#")` and `begins_with(sk, "REWRITE#")`, and `"HOST"`
+ * begins with neither, so it is never read, matched, or evaluated. It is equally
+ * unaddressable over the API — `parseSk` rejects anything that is not
+ * `TYPE#priority`, so `/rules/HOST` is a 400 rather than a route to this item.
+ */
+export const HOST_MARKER_SK = "HOST";
 
 /** DynamoDB's hard cap on one BatchWriteItem request. */
 const BATCH_LIMIT = 25;
@@ -103,6 +119,12 @@ export interface RulesRepository {
   listByHost(host: string): Promise<RuleItem[]>;
   /** Every host holding at least one rule, with per-kind counts. Unordered. */
   listHosts(): Promise<HostSummary[]>;
+  /**
+   * Creates a host that has no rules yet. `false` when the host already exists —
+   * whether it holds rules or was created this way before — which the caller
+   * turns into a 409. Never touches an existing host's rules.
+   */
+  createHost(host: string): Promise<boolean>;
   /**
    * Deletes every rule under a host. Returns how many were removed — 0 means the
    * host had none, which is the caller's 404, a host being exactly its rules.
@@ -177,7 +199,12 @@ export class DynamoRulesRepository implements RulesRepository {
       start = out.LastEvaluatedKey;
     } while (start);
 
-    return items;
+    // The partition holds more than rules: a host created before it had any
+    // carries a marker item, and returning that as a rule would put a phantom
+    // row in the console's list — one with no type, priority or action. Filtered
+    // here rather than with a FilterExpression, which costs the same read and
+    // cannot express "either prefix" in a key condition anyway.
+    return items.filter((item) => isRuleSk(item.sk));
   }
 
   /**
@@ -214,6 +241,61 @@ export class DynamoRulesRepository implements RulesRepository {
     } while (start);
 
     return summarizeHosts(keys);
+  }
+
+  /**
+   * Writes the marker that makes an empty host exist.
+   *
+   * Two steps, because "already exists" is broader than "this key is taken": a
+   * host with rules and no marker must still be refused, and a condition on the
+   * marker's own key cannot see those rules. So the partition is probed first,
+   * and the conditional Put then guards the narrow race where two callers add
+   * the same empty host at once. A host that gained its first *rule* between the
+   * probe and the Put still gets a marker — harmless, since `listHosts` folds
+   * the partition into one entry and `deleteHost` takes the whole thing.
+   */
+  async createHost(host: string): Promise<boolean> {
+    if (await this.hostExists(host)) return false;
+
+    // Its own Put rather than `putIf`: the marker carries no `type`, because it
+    // is not a rule and must not read as a malformed one to anything that walks
+    // the table.
+    try {
+      await this.send(() =>
+        this.client.send(
+          new PutCommand({
+            TableName: this.target.tableName,
+            Item: { pk: host, sk: HOST_MARKER_SK },
+            ConditionExpression: "attribute_not_exists(pk)",
+          }),
+        ),
+      );
+      return true;
+    } catch (err) {
+      if (isConditionalCheckFailed(err)) return false;
+      throw err;
+    }
+  }
+
+  /** Whether anything at all is stored under this host — a rule or a marker. */
+  private async hostExists(host: string): Promise<boolean> {
+    const out = await this.send(() =>
+      this.client.send(
+        new QueryCommand({
+          TableName: this.target.tableName,
+          KeyConditionExpression: "pk = :pk",
+          ExpressionAttributeValues: { ":pk": host },
+          // One item is enough to answer the question, and the key is all of it
+          // that is read. ConsistentRead so a host created moments ago cannot be
+          // created a second time.
+          ProjectionExpression: "pk",
+          ConsistentRead: true,
+          Limit: 1,
+        }),
+      ),
+    );
+
+    return (out.Items ?? []).length > 0;
   }
 
   /**

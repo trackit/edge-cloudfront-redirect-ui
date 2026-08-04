@@ -21,10 +21,15 @@ const target = {
   tableName: "rules-prod",
 };
 
-const event = (method: string, path: string): APIGatewayProxyEventV2 =>
+const event = (
+  method: string,
+  path: string,
+  body?: unknown,
+): APIGatewayProxyEventV2 =>
   ({
     rawPath: path,
     headers: {},
+    body: body === undefined ? undefined : JSON.stringify(body),
     isBase64Encoded: false,
     requestContext: { http: { method } },
   }) as APIGatewayProxyEventV2;
@@ -124,9 +129,169 @@ describe("GET /targets/:targetId/hosts", () => {
     ]);
   });
 
-  it("405s a write to the collection", async () => {
-    const res = await handler(event("POST", "/targets/t1/hosts"));
+  it("405s a method the collection does not serve", async () => {
+    const res = await handler(event("PUT", "/targets/t1/hosts"));
     expect(res.statusCode).toBe(405);
+  });
+});
+
+describe("POST /targets/:targetId/hosts", () => {
+  const create = (host: unknown) =>
+    handler(event("POST", "/targets/t1/hosts", { host }));
+
+  it("creates a host with no rules and returns it with zero counts", async () => {
+    const res = await create("shop.example.com");
+
+    expect(res.statusCode).toBe(201);
+    expect(parse(res.body)).toEqual({
+      host: "shop.example.com",
+      redirects: 0,
+      rewrites: 0,
+    });
+  });
+
+  it("makes the host survive a reload", async () => {
+    // The whole point: without the marker item, listHosts derives hosts from
+    // rules and an empty one cannot come back at all.
+    await create("shop.example.com");
+
+    expect(
+      parse((await handler(event("GET", "/targets/t1/hosts"))).body),
+    ).toEqual([{ host: "shop.example.com", redirects: 0, rewrites: 0 }]);
+  });
+
+  it("can then be deleted like any other host", async () => {
+    // The marker sits in the partition, so deleteHost takes it with everything
+    // else — an empty host must not become undeletable.
+    await create("shop.example.com");
+
+    const res = await handler(
+      event("DELETE", "/targets/t1/hosts/shop.example.com"),
+    );
+    expect(res.statusCode).toBe(204);
+    expect(
+      parse((await handler(event("GET", "/targets/t1/hosts"))).body),
+    ).toEqual([]);
+  });
+
+  it("does not disturb a host's rule counts", async () => {
+    seed(rule("www.example.com", "REDIRECT#00100"));
+    await create("shop.example.com");
+
+    expect(
+      parse((await handler(event("GET", "/targets/t1/hosts"))).body),
+    ).toEqual([
+      { host: "shop.example.com", redirects: 0, rewrites: 0 },
+      { host: "www.example.com", redirects: 1, rewrites: 0 },
+    ]);
+  });
+
+  it("409s a host that already has rules", async () => {
+    // Existing means anything under the partition, not just a previous marker —
+    // otherwise adding a live host would write a marker beside its rules.
+    seed(rule("www.example.com", "REDIRECT#00100"));
+
+    const res = await create("www.example.com");
+    expect(res.statusCode).toBe(409);
+    expect(parse(res.body)).toMatchObject({ error: { code: "HOST_EXISTS" } });
+  });
+
+  it("409s the same empty host twice", async () => {
+    await create("shop.example.com");
+
+    expect((await create("shop.example.com")).statusCode).toBe(409);
+  });
+
+  it("stores the host lowercased", async () => {
+    // A partition key is case-sensitive and DNS is not, so two cases would be
+    // two sidebar entries, only one of which the edge can ever match.
+    const res = await create("Shop.Example.COM");
+
+    expect(parse(res.body)).toMatchObject({ host: "shop.example.com" });
+    expect((await create("shop.example.com")).statusCode).toBe(409);
+  });
+
+  it.each([
+    ["a URL rather than a hostname", "https://shop.example.com"],
+    ["a path", "shop.example.com/sale"],
+    ["a port", "shop.example.com:443"],
+    ["a trailing dot", "shop.example.com."],
+    ["a space", "shop example.com"],
+    ["empty", ""],
+    ["a leading hyphen in a label", "-shop.example.com"],
+  ])("400s %s", async (_label, host) => {
+    // The modal's own hint says "not the redirect destination", and users paste
+    // a URL in anyway. Stored, it becomes a partition key no request can match.
+    const res = await create(host);
+
+    expect(res.statusCode).toBe(400);
+    expect(parse(res.body)).toMatchObject({
+      error: { code: "VALIDATION_ERROR", details: [{ path: "/host" }] },
+    });
+  });
+
+  it("400s a body that is not a host at all", async () => {
+    expect(
+      (await handler(event("POST", "/targets/t1/hosts", { nope: 1 })))
+        .statusCode,
+    ).toBe(400);
+    expect((await create(42)).statusCode).toBe(400);
+  });
+
+  it("is the same host a rule route addresses in another case", async () => {
+    // The bug this closes: createRule took the host from the path untouched, so
+    // a rule created at `WWW.Example.com` landed in a partition the console —
+    // which lists lowercased hosts — could never show or delete.
+    await create("shop.example.com");
+
+    const created = await handler(
+      event("POST", "/targets/t1/hosts/SHOP.Example.COM/rules", {
+        type: "erMatchRule",
+        priority: 100,
+        statusCode: 301,
+        redirectURL: "https://example.com/new",
+        matches: [
+          { matchType: "path", matchOperator: "equals", matchValue: "/old" },
+        ],
+      }),
+    );
+    expect(created.statusCode).toBe(201);
+    expect(parse(created.body)).toMatchObject({ pk: "shop.example.com" });
+
+    // One host, one partition, and the rule is visible from the lowercase path.
+    expect(
+      parse((await handler(event("GET", "/targets/t1/hosts"))).body),
+    ).toEqual([{ host: "shop.example.com", redirects: 1, rewrites: 0 }]);
+
+    const listed = await handler(
+      event("GET", "/targets/t1/hosts/shop.example.com/rules"),
+    );
+    expect((parse(listed.body) as unknown[]).length).toBe(1);
+  });
+
+  it("does not show its marker in the host's rule list", async () => {
+    // The marker shares the partition with the rules, so a listing that took
+    // the whole partition would put a phantom row in the console — an entry with
+    // no type, priority or action, on every host added this way.
+    await create("shop.example.com");
+
+    const res = await handler(
+      event("GET", "/targets/t1/hosts/shop.example.com/rules"),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(parse(res.body)).toEqual([]);
+  });
+
+  it("404s an unknown target before validating the body", async () => {
+    // A caller cannot tell a bad target from a bad host otherwise.
+    const res = await handler(
+      event("POST", "/targets/nope/hosts", { host: "not a host" }),
+    );
+
+    expect(res.statusCode).toBe(404);
+    expect(parse(res.body)).toMatchObject({
+      error: { code: "UNKNOWN_TARGET" },
+    });
   });
 });
 

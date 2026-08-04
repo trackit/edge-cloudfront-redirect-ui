@@ -26,12 +26,20 @@ These schemas model the exact DynamoDB **item** shape the edge reads, derived fr
 
 **Keys**
 
-- `pk` (string) — the host, e.g. `www.example.com`
+- `pk` (string) — the host, e.g. `www.example.com`. **Always lowercase.** DNS is case-insensitive but a partition key is not, so the console API lowercases every host it stores or looks up; two cases of one name would otherwise be two partitions, only one of which a request can match.
 - `sk` (string) — `TYPE#priority` where `TYPE ∈ {REDIRECT, REWRITE}` and priority is a **zero-padded 5-digit integer** (e.g. `REDIRECT#00100`). Lower number = higher priority. Priority must be **unique per host per type** — the API enforces this (ER-204); the format itself is enforced by the `sk` `pattern` in each schema.
+
+**The host marker (not a rule)**
+
+One item per table row is not a rule: `sk = "HOST"`, with no other attributes. A host is otherwise only the partition key of its rules, so a host with no rules cannot be listed and would vanish on the next page load — this item is what the console's "add host" writes, and it is deleted with the host.
+
+It is invisible to the edge by construction: both edge queries are `begins_with(sk, "REDIRECT#" | "REWRITE#")`, and `"HOST"` begins with neither. It is equally unaddressable as a rule over the API, whose `sk` parser accepts only `TYPE#priority`. No rule schema describes it, and none should — it has no rule fields.
+
+Anything else reading a whole partition has to choose: listing a host's rules skips it, deleting a host takes it. A reader that forgets shows a rule with no type, priority or action.
 
 **Access patterns**
 
-- The Lambda@Edge **reads**: `Query(pk = host, begins_with(sk, "REDIRECT#"))` on viewer-request, `begins_with(sk, "REWRITE#")` on origin-request. Results are cached in-memory briefly at the edge.
+- The Lambda@Edge **reads**: `Query(pk = host, begins_with(sk, "REDIRECT#"))` on viewer-request, `begins_with(sk, "REWRITE#")` on origin-request. Results are cached in-memory briefly at the edge. The host is lowercased for the lookup, since that is how it is stored; the value a `hostname` match condition is tested against stays as the viewer sent it, so `caseSensitive` still means something. The `begins_with` is also why the edge never sees the host marker.
 - The console API **writes**: Put / Update / Delete of whole items. It never talks to the Lambda@Edge — the table is the only interface.
 
 **Propagation**

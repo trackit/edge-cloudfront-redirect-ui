@@ -126,6 +126,19 @@ describe("listByHost", () => {
 
     expect(call().input).not.toHaveProperty("ExclusiveStartKey");
   });
+
+  it("drops the host marker, which shares the partition", async () => {
+    // The Query takes the whole partition — it cannot express "either rule
+    // prefix" as a key condition — so the marker comes back with the rules and
+    // would render as a rule with no type, priority or action.
+    send.mockResolvedValue({
+      Items: [{ pk: HOST, sk: "HOST" }, rule("REDIRECT#00100")],
+    });
+
+    expect(await (await repository()).listByHost(HOST)).toEqual([
+      rule("REDIRECT#00100"),
+    ]);
+  });
 });
 
 describe("listHosts", () => {
@@ -200,6 +213,70 @@ describe("listHosts", () => {
   it("is empty for an empty table", async () => {
     send.mockResolvedValue({});
     expect(await (await repository()).listHosts()).toEqual([]);
+  });
+});
+
+describe("createHost", () => {
+  it("probes the partition, then writes a marker conditionally", async () => {
+    send.mockResolvedValueOnce({ Items: [] }).mockResolvedValueOnce({});
+
+    expect(await (await repository()).createHost(HOST)).toBe(true);
+
+    expect(call()).toMatchObject({
+      name: "QueryCommand",
+      input: {
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": HOST },
+        // One item answers "does anything live here", and ConsistentRead so a
+        // host created moments ago cannot be created again.
+        Limit: 1,
+        ConsistentRead: true,
+      },
+    });
+    expect(call(1)).toMatchObject({
+      name: "PutCommand",
+      input: {
+        Item: { pk: HOST, sk: "HOST" },
+        ConditionExpression: "attribute_not_exists(pk)",
+      },
+    });
+  });
+
+  it("writes a marker carrying no rule type", async () => {
+    // It is not a rule. A `type` here would make it read as a malformed one to
+    // anything that walks the table.
+    send.mockResolvedValueOnce({ Items: [] }).mockResolvedValueOnce({});
+    await (await repository()).createHost(HOST);
+
+    expect(call(1).input["Item"]).toEqual({ pk: HOST, sk: "HOST" });
+  });
+
+  it("refuses a host that already holds a rule", async () => {
+    // The probe is what catches this: a condition on the marker's own key
+    // cannot see the host's rules, and would write a marker beside them.
+    send.mockResolvedValueOnce({ Items: [{ pk: HOST }] });
+
+    expect(await (await repository()).createHost(HOST)).toBe(false);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses when the conditional Put loses the race", async () => {
+    // Two callers adding the same empty host: both probes come back empty, and
+    // the condition is what stops the second from overwriting the first.
+    send
+      .mockResolvedValueOnce({ Items: [] })
+      .mockRejectedValueOnce(awsError("ConditionalCheckFailedException"));
+
+    expect(await (await repository()).createHost(HOST)).toBe(false);
+  });
+
+  it("502s an unreachable target rather than a bare 500", async () => {
+    send.mockRejectedValue(awsError("ResourceNotFoundException"));
+
+    await expect((await repository()).createHost(HOST)).rejects.toMatchObject({
+      status: 502,
+      code: "TARGET_UNREACHABLE",
+    });
   });
 });
 

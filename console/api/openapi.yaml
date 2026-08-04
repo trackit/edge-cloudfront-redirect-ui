@@ -199,6 +199,49 @@ paths:
           $ref: "#/components/responses/InternalError"
         "502":
           $ref: "#/components/responses/TargetUnreachable"
+    post:
+      operationId: createHost
+      summary: Create a host that has no rules yet.
+      description: >-
+        Makes a host exist before anything is stored under it, so the console can
+        add one and still find it after a refresh. Without this a host is only
+        the partition key of its rules, and one with none cannot be listed.
+
+
+        Writes a single marker item the edge never reads: the Lambda@Edge queries
+        `begins_with(sk, "REDIRECT#" | "REWRITE#")`, and the marker's sort key
+        begins with neither. It disappears with the host when the host is
+        deleted, and is not addressable as a rule.
+
+
+        The host is stored lowercased — DNS is case-insensitive, a DynamoDB
+        partition key is not.
+      tags: [rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HostInput"
+      responses:
+        "201":
+          description: The created host, with both counts at zero.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/HostConflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
   /targets/{targetId}/hosts/{host}:
     parameters:
       - $ref: "#/components/parameters/TargetId"
@@ -454,7 +497,12 @@ components:
       name: host
       in: path
       required: true
-      description: Rule host — the DynamoDB partition key, e.g. www.example.com.
+      description: >-
+        Rule host — the DynamoDB partition key, e.g. www.example.com. Matched
+        case-insensitively: the value is lowercased before it is used as a key,
+        so `WWW.Example.com` and `www.example.com` address one host rather than
+        two partitions. Rules are therefore always stored under the lowercased
+        host, whichever case created them.
       schema:
         type: string
         minLength: 1
@@ -557,6 +605,20 @@ components:
           type: string
         roleArn:
           type: string
+    HostInput:
+      description: A host to create, before it has any rules.
+      type: object
+      additionalProperties: false
+      required: [host]
+      properties:
+        host:
+          type: string
+          maxLength: 253
+          pattern: "^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$"
+          description: >-
+            A hostname, not a URL — no scheme, port, path or trailing dot. This
+            is the incoming domain rules apply to, and it becomes the DynamoDB
+            partition key, so it is stored lowercased.
     HostSummary:
       description: >-
         One host in a target's table and how many rules of each kind it holds.
@@ -723,6 +785,7 @@ components:
                 the addressed resource does not exist within a known target.
               enum:
                 - BAD_REQUEST
+                - HOST_EXISTS
                 - INTERNAL
                 - INVALID_JSON
                 - METHOD_NOT_ALLOWED
@@ -790,6 +853,15 @@ components:
         problem, not a bad request: targets are registered at runtime while IAM
         is granted at apply time, and both grants are empty by default. See
         console/api/infra/README.md.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    HostConflict:
+      description: >-
+        That host already exists in this target — either it holds rules, or it
+        was created empty before. Nothing was written, and no existing rule was
+        touched.
       content:
         application/json:
           schema:
