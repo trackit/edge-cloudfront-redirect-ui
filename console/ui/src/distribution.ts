@@ -4,14 +4,23 @@ import type { ApiClient } from "./api";
 import type { Distribution, DistributionDraft } from "./types";
 
 /**
- * Where the connected distribution is kept, and how one comes to exist.
+ * Where the connected distributions are kept, and how one comes to exist.
  *
- * localStorage holds only the *link* — which registered target this browser is
- * pointed at. The target itself lives in the API's registry, so the id here
- * refers to server state. The ticket defers moving this to the user profile;
- * when that happens it is a change in this module and nowhere else.
+ * localStorage holds only the *links* — which registered targets this browser
+ * knows about, and which one is selected. The targets themselves live in the
+ * API's registry, so the ids here refer to server state. The ticket defers
+ * moving this to the user profile; when that happens it is a change in this
+ * module and nowhere else.
  */
-const STORAGE_KEY = "edgeroute.distribution";
+const STORAGE_KEY = "edgeroute.distributions";
+
+/**
+ * The key this module used when it held a single distribution. Read once, on
+ * first load, so a browser that connected before this change keeps its
+ * environment instead of being sent back to the connect screen. Not written
+ * again — the migration is one-way.
+ */
+const LEGACY_STORAGE_KEY = "edgeroute.distribution";
 
 /** Prefills the connect form. Nothing is sent until the user connects. */
 export const SAMPLE_DISTRIBUTION: DistributionDraft = {
@@ -105,44 +114,173 @@ const parse = (raw: string | null): Distribution | null => {
   }
 };
 
-const read = (): Distribution | null => {
+/**
+ * What the browser remembers: every distribution it has connected, and which one
+ * the console is currently pointed at.
+ *
+ * `current` is a `distributionId`, and so is the identity of an entry in the list.
+ * Not `targetId`: the API identifies a target by (account, region, table), so two
+ * distributions served by the same rules table share one target id. Keying on it
+ * would make connecting a second distribution silently overwrite the first, and
+ * the design lists distributions — its two rows show the same table.
+ *
+ * A distribution ID is unique within AWS, so it is the right identity for the
+ * thing the user is naming. `targetId` stays on each entry: it is what the rules
+ * routes need, and two entries may legitimately carry the same one.
+ *
+ * Not an index, either — the list is rewritten on every change, and an index
+ * would silently point at a different entry after one is replaced.
+ */
+interface Stored {
+  distributions: Distribution[];
+  current: string | null;
+}
+
+const EMPTY: Stored = { distributions: [], current: null };
+
+/**
+ * Each entry is validated on its own, and an invalid one is dropped rather than
+ * discarding the whole list — one corrupt entry should not cost the user the
+ * environments that are still readable.
+ *
+ * `current` is only kept if it names an entry that survived, so the selection can
+ * never point at something that is not in the list.
+ */
+const parseStored = (raw: string | null): Stored => {
+  if (raw === null) return EMPTY;
+
   try {
-    return parse(localStorage.getItem(STORAGE_KEY));
+    const value: unknown = JSON.parse(raw);
+    if (typeof value !== "object" || value === null) return EMPTY;
+
+    const { distributions, current } = value as Record<string, unknown>;
+    if (!Array.isArray(distributions)) return EMPTY;
+
+    const parsed = distributions
+      .map((entry) => parse(JSON.stringify(entry)))
+      .filter((entry): entry is Distribution => entry !== null);
+
+    const selected =
+      typeof current === "string" &&
+      parsed.some((entry) => entry.distributionId === current)
+        ? current
+        : (parsed[0]?.distributionId ?? null);
+
+    return { distributions: parsed, current: selected };
+  } catch {
+    return EMPTY;
+  }
+};
+
+const read = (): Stored => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw !== null) return parseStored(raw);
+
+    // Nothing under the current key: fall back to the single-distribution shape
+    // this module used to write, and promote it to a one-entry list.
+    const legacy = parse(localStorage.getItem(LEGACY_STORAGE_KEY));
+    return legacy === null
+      ? EMPTY
+      : { distributions: [legacy], current: legacy.distributionId };
   } catch {
     // Private-browsing modes throw on access rather than returning null.
-    return null;
+    return EMPTY;
   }
 };
 
 /**
- * The connected distribution, or `null` when the console has nothing configured.
+ * The distributions this browser knows about, and the one in use.
  *
- * `disconnect` forgets the link locally and leaves the target registered — the
- * registry is shared state, and removing it would break anyone else pointed at
- * the same table.
+ * Every mutation replaces the whole `Stored` value, so the list and the selection
+ * can never be persisted out of step with each other.
+ *
+ * Nothing here deletes a target from the API's registry: it is shared state, and
+ * removing it would break anyone else pointed at the same table. Forgetting a
+ * distribution locally is all this module does.
  */
-export function useDistribution() {
-  const [distribution, setDistribution] = useState<Distribution | null>(read);
+export function useDistributions() {
+  const [stored, setStored] = useState<Stored>(read);
 
+  const distributions = stored.distributions;
+  const current =
+    distributions.find((entry) => entry.distributionId === stored.current) ??
+    null;
+
+  /**
+   * Adds a distribution and selects it. Re-connecting the same distribution ID
+   * replaces that entry rather than duplicating it — its table or region may have
+   * changed, and two rows naming one distribution is not something the menu could
+   * tell apart.
+   */
   const connect = useCallback((value: Distribution) => {
-    setDistribution(value);
+    setStored((prev) => ({
+      distributions: [
+        ...prev.distributions.filter(
+          (entry) => entry.distributionId !== value.distributionId,
+        ),
+        value,
+      ],
+      current: value.distributionId,
+    }));
   }, []);
 
-  const disconnect = useCallback(() => {
-    setDistribution(null);
+  /**
+   * Swaps the selected distribution for an edited one, in place. Settings can
+   * change every field including the distribution ID, so this is a replace rather
+   * than an update — but it keeps the entry's position so the menu does not
+   * reorder under the user.
+   */
+  const replaceCurrent = useCallback((value: Distribution) => {
+    setStored((prev) => {
+      const at = prev.distributions.findIndex(
+        (entry) => entry.distributionId === prev.current,
+      );
+      if (at === -1) {
+        return {
+          distributions: [...prev.distributions, value],
+          current: value.distributionId,
+        };
+      }
+
+      const next = [...prev.distributions];
+      next[at] = value;
+      // Renaming onto an ID another entry already holds would leave two rows the
+      // menu cannot tell apart, so the older one goes.
+      return {
+        distributions: next.filter(
+          (entry, i) =>
+            i === at || entry.distributionId !== value.distributionId,
+        ),
+        current: value.distributionId,
+      };
+    });
+  }, []);
+
+  const select = useCallback((distributionId: string) => {
+    setStored((prev) =>
+      prev.distributions.some(
+        (entry) => entry.distributionId === distributionId,
+      )
+        ? { ...prev, current: distributionId }
+        : prev,
+    );
   }, []);
 
   useEffect(() => {
     try {
-      if (distribution === null) {
+      if (stored.distributions.length === 0) {
         localStorage.removeItem(STORAGE_KEY);
       } else {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(distribution));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
       }
+      // The legacy single-distribution key is dropped once its content has been
+      // carried over, so a later load cannot resurrect a stale environment.
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
     } catch {
       // Storage unavailable or full: the console still works for this session.
     }
-  }, [distribution]);
+  }, [stored]);
 
-  return { distribution, connect, disconnect };
+  return { distributions, current, connect, replaceCurrent, select };
 }
