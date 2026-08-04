@@ -835,3 +835,207 @@ button {
   font-size: 12px;
   color: var(--ink-dim);
 }
+
+/* ============================================================
+   Console body — host list beside the addressed host.
+   The bar above stays dark; everything below it is the light
+   console surface, which is what the rule list is designed on.
+   ============================================================ */
+
+.console-body {
+  flex: 1;
+  display: grid;
+  /* Fixed rail, fluid content. `minmax(0, 1fr)` and not `1fr`: a grid track is
+     min-content wide by default, so a long rule URL would push the column out
+     rather than scroll inside it. */
+  grid-template-columns: 260px minmax(0, 1fr);
+  align-items: stretch;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* --- host list --- */
+
+.hosts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 12px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.hosts-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 10px;
+}
+.hosts-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.hosts-count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+.hosts-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hosts-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  text-decoration: none;
+  color: inherit;
+}
+.hosts-item:hover {
+  background: var(--surface-2);
+}
+.hosts-item.is-active {
+  background: var(--orange-glow);
+  border-color: rgba(255, 153, 0, 0.35);
+}
+.hosts-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Lets the name ellipsize instead of widening the rail. */
+  min-width: 0;
+}
+.hosts-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hosts-item.is-active .hosts-item-name {
+  color: var(--orange-600);
+}
+.hosts-item-sub {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.hosts-badges {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.hosts-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.hosts-badge.is-redirect {
+  background: var(--orange-glow);
+  color: var(--orange-600);
+}
+.hosts-badge.is-rewrite {
+  background: var(--blue-glow);
+  color: var(--blue-600);
+}
+
+/* --- the addressed host --- */
+
+.host-view {
+  padding: 26px 28px;
+}
+.host-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 22px;
+}
+.host-name {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  /* A hostname has no spaces to break at, so a long one has to be allowed to
+     wrap mid-string rather than widen the page. */
+  overflow-wrap: anywhere;
+}
+.host-sub {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.console-note-inline {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--text-soft);
+}
+
+/* --- loading, empty and failed, before there is a host to show --- */
+
+.console-note {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+  padding: 60px 28px;
+  background: var(--bg);
+  color: var(--text);
+}
+.console-note h1 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+.console-note p {
+  margin: 0;
+  max-width: 420px;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.console-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 460px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  background: var(--red-glow);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  color: var(--text-soft);
+}
+.console-error strong {
+  color: #c0392b;
+  font-size: 13.5px;
+}
+
+@media (max-width: 720px) {
+  /* The rail becomes a band above the content — 260px of it beside a phone-width
+     column leaves nothing for the rules. */
+  .console-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .hosts {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}

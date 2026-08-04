@@ -17,6 +17,15 @@ export type TargetInput = Schemas["TargetInput"];
 /** Body for replacing a target. May carry `id`, which must match the path. */
 export type TargetUpdate = Schemas["TargetUpdate"];
 
+/**
+ * A host in a target's table, with how many rules of each kind it holds. Counts
+ * include disabled rules — they are of rules that exist, not rules that are live.
+ */
+export type HostSummary = Schemas["HostSummary"];
+
+/** Body for creating a host that has no rules yet. */
+export type HostInput = Schemas["HostInput"];
+
 /** A stored rule item, exactly as the Lambda@Edge reads it. */
 export type Rule = Schemas["Rule"];
 export type RedirectRule = Schemas["redirect-rule.schema"];

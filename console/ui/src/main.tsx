@@ -11,6 +11,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/console" element={<ConsolePage />} />
+        {/* Same page — the host is a route param so the console is linkable and
+            survives a reload. Without a host it redirects to the first one. */}
+        <Route path="/console/hosts/:host" element={<ConsolePage />} />
         {/* Unknown paths go home rather than rendering a blank screen. */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
