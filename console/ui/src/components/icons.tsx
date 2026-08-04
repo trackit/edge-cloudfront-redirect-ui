@@ -41,3 +41,21 @@ export const IconBolt = ({ size = 16 }: P) => (
     <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8Z" />
   </svg>
 );
+
+export const IconChevron = ({ size = 16 }: P) => (
+  <svg {...base(size)}>
+    <path d="M6 9l6 6 6-6" />
+  </svg>
+);
+
+export const IconCheck = ({ size = 16 }: P) => (
+  <svg {...base(size)}>
+    <path d="M20 6L9 17l-5-5" />
+  </svg>
+);
+
+export const IconPlus = ({ size = 16 }: P) => (
+  <svg {...base(size)}>
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
