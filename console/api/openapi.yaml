@@ -161,6 +161,44 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
+  /targets/{targetId}/hosts:
+    parameters:
+      - $ref: "#/components/parameters/TargetId"
+    get:
+      operationId: listHosts
+      summary: List the hosts that have rules.
+      description: >-
+        Every host in the target's table holding at least one rule, sorted by
+        host name, with a count of each rule kind.
+
+
+        A host is the DynamoDB partition key of its rules, not a stored entity of
+        its own, so a host with no rules does not appear here — there is nothing
+        in the table to report. Counts include disabled rules.
+
+
+        Backed by a table Scan, so cost grows with the number of rules in the
+        target, not the number of hosts.
+      tags: [rules]
+      responses:
+        "200":
+          description: The target's hosts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HostSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
   /targets/{targetId}/hosts/{host}/rules:
     parameters:
       - $ref: "#/components/parameters/TargetId"
@@ -484,6 +522,26 @@ components:
           type: string
         roleArn:
           type: string
+    HostSummary:
+      description: >-
+        One host in a target's table and how many rules of each kind it holds.
+        Named `HostSummary` rather than `Host` because there is no fuller host
+        resource behind it — the host is its rules.
+      type: object
+      additionalProperties: false
+      required: [host, redirects, rewrites]
+      properties:
+        host:
+          type: string
+          description: The rule host — the DynamoDB partition key.
+        redirects:
+          type: integer
+          minimum: 0
+          description: Rules with an `sk` under `REDIRECT#`, disabled ones included.
+        rewrites:
+          type: integer
+          minimum: 0
+          description: Rules with an `sk` under `REWRITE#`, disabled ones included.
     Rule:
       description: A redirect or rewrite rule item, per the shared schemas.
       oneOf:

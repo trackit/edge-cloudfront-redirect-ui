@@ -4,6 +4,7 @@ import {
   GetCommand,
   PutCommand,
   QueryCommand,
+  ScanCommand,
   TransactWriteCommand,
   UpdateCommand,
   type DynamoDBDocumentClient,
@@ -29,6 +30,48 @@ export interface RuleItem {
 }
 
 /**
+ * One host in a target's table, with how many rules of each kind it holds.
+ *
+ * A host is not a stored entity — it is the partition key of its rule items — so
+ * a host exists exactly as long as it has at least one rule, and one with none
+ * cannot be listed because there is nothing in the table to list.
+ */
+export interface HostSummary {
+  host: string;
+  redirects: number;
+  rewrites: number;
+}
+
+/** The two key attributes `listHosts` projects; the rest of the item is not read. */
+type RuleKey = Pick<RuleItem, "pk" | "sk">;
+
+/**
+ * Folds projected keys into one entry per host. Exported so the in-memory fake
+ * counts the same way the real repository does rather than reimplementing it.
+ *
+ * An `sk` matching neither prefix still puts its host on the list but counts
+ * toward neither total: the sort key is where a future non-rule item (a marker
+ * for a host with no rules, say) would live, and such an item must not be
+ * reported as a rule.
+ */
+export const summarizeHosts = (keys: RuleKey[]): HostSummary[] => {
+  const hosts = new Map<string, HostSummary>();
+
+  for (const { pk, sk } of keys) {
+    let summary = hosts.get(pk);
+    if (!summary) {
+      summary = { host: pk, redirects: 0, rewrites: 0 };
+      hosts.set(pk, summary);
+    }
+
+    if (sk.startsWith("REDIRECT#")) summary.redirects += 1;
+    else if (sk.startsWith("REWRITE#")) summary.rewrites += 1;
+  }
+
+  return [...hosts.values()];
+};
+
+/**
  * Why a move is its own operation: `sk` embeds the priority, so re-prioritising a
  * rule is not an update but a delete plus an insert under a new key. Done as two
  * calls, a failure between them leaves the rule live at both priorities.
@@ -44,6 +87,8 @@ export type MoveOutcome =
 export interface RulesRepository {
   /** Every rule for a host, ascending `sk` (type, then priority). */
   listByHost(host: string): Promise<RuleItem[]>;
+  /** Every host holding at least one rule, with per-kind counts. Unordered. */
+  listHosts(): Promise<HostSummary[]>;
   get(host: string, sk: string): Promise<RuleItem | null>;
   /** `false` when there was no such rule — the caller turns that into a 404. */
   delete(host: string, sk: string): Promise<boolean>;
@@ -114,6 +159,42 @@ export class DynamoRulesRepository implements RulesRepository {
     } while (start);
 
     return items;
+  }
+
+  /**
+   * A Scan, because the hosts *are* the partition keys: there is no index to
+   * query for "every distinct pk", and a GSI keyed on one would cost a second
+   * copy of the table to answer a question the console asks once per page load.
+   *
+   * `ProjectionExpression` keeps this off the item bodies — a rule carries its
+   * matches and forwardSettings, and the Scan's 1 MB pages are counted against
+   * the bytes read, not the bytes returned. Neither `pk` nor `sk` is a DynamoDB
+   * reserved word, so they need no ExpressionAttributeNames indirection (unlike
+   * `disabled` in `setDisabled`).
+   *
+   * Eventually consistent, like `listByHost` and for the same reason: this is a
+   * whole-table read, not an item the caller was just handed.
+   */
+  async listHosts(): Promise<HostSummary[]> {
+    const keys: RuleKey[] = [];
+    let start: Record<string, unknown> | undefined;
+
+    do {
+      const out = await this.send(() =>
+        this.client.send(
+          new ScanCommand({
+            TableName: this.target.tableName,
+            ProjectionExpression: "pk, sk",
+            ...(start ? { ExclusiveStartKey: start } : {}),
+          }),
+        ),
+      );
+
+      keys.push(...((out.Items ?? []) as RuleKey[]));
+      start = out.LastEvaluatedKey;
+    } while (start);
+
+    return summarizeHosts(keys);
   }
 
   // ConsistentRead for the same reason the targets registry uses it: the SPA

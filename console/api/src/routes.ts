@@ -15,8 +15,10 @@ import {
   putRule,
   toggleRule,
 } from "./handlers/rules.js";
+import { listHosts } from "./handlers/hosts.js";
 
-const RULES = "/targets/:targetId/hosts/:host/rules";
+const HOSTS = "/targets/:targetId/hosts";
+const RULES = `${HOSTS}/:host/rules`;
 
 /**
  * The route table. Targets registry (ER-202) and rules CRUD plus the `disabled`
@@ -30,6 +32,8 @@ export const routes: Route[] = [
   { method: "GET", pattern: "/targets/:id", handler: getTarget },
   { method: "PUT", pattern: "/targets/:id", handler: updateTarget },
   { method: "DELETE", pattern: "/targets/:id", handler: deleteTarget },
+
+  { method: "GET", pattern: HOSTS, handler: listHosts },
 
   { method: "GET", pattern: RULES, handler: listRules },
   { method: "POST", pattern: RULES, handler: createRule },

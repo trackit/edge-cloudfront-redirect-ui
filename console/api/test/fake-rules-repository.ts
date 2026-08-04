@@ -1,7 +1,9 @@
-import type {
-  MoveOutcome,
-  RuleItem,
-  RulesRepository,
+import {
+  summarizeHosts,
+  type HostSummary,
+  type MoveOutcome,
+  type RuleItem,
+  type RulesRepository,
 } from "../src/lib/rules-repository.js";
 
 /**
@@ -26,6 +28,13 @@ export class FakeRulesRepository implements RulesRepository {
   listByHost(host: string): Promise<RuleItem[]> {
     const rules = [...this.items.values()].filter((item) => item.pk === host);
     return Promise.resolve(rules);
+  }
+
+  // Shares `summarizeHosts` with the real repository rather than counting again
+  // here — two implementations of the same fold is how the fake and the thing it
+  // stands in for drift apart.
+  listHosts(): Promise<HostSummary[]> {
+    return Promise.resolve(summarizeHosts([...this.items.values()]));
   }
 
   get(host: string, sk: string): Promise<RuleItem | null> {

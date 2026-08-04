@@ -128,6 +128,81 @@ describe("listByHost", () => {
   });
 });
 
+describe("listHosts", () => {
+  it("scans the table for keys only", async () => {
+    send.mockResolvedValue({
+      Items: [
+        { pk: HOST, sk: "REDIRECT#00100" },
+        { pk: HOST, sk: "REWRITE#00150" },
+      ],
+    });
+
+    const hosts = await (await repository()).listHosts();
+
+    expect(hosts).toEqual([{ host: HOST, redirects: 1, rewrites: 1 }]);
+    expect(call()).toMatchObject({
+      name: "ScanCommand",
+      input: {
+        TableName: "rules-prod",
+        // Without the projection every rule body is read to count it, and the
+        // 1 MB page limit counts bytes read.
+        ProjectionExpression: "pk, sk",
+      },
+    });
+  });
+
+  it("follows LastEvaluatedKey to the end", async () => {
+    // Stopping at the first page would silently hide whole hosts — the failure
+    // looks like a host that "does not exist" rather than an error.
+    send
+      .mockResolvedValueOnce({
+        Items: [{ pk: "a.example.com", sk: "REDIRECT#00100" }],
+        LastEvaluatedKey: { pk: "a.example.com", sk: "REDIRECT#00100" },
+      })
+      .mockResolvedValueOnce({
+        Items: [{ pk: "b.example.com", sk: "REWRITE#00100" }],
+      });
+
+    const hosts = await (await repository()).listHosts();
+
+    expect(hosts.map((h) => h.host)).toEqual([
+      "a.example.com",
+      "b.example.com",
+    ]);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(call(1).input).toMatchObject({
+      ExclusiveStartKey: { pk: "a.example.com", sk: "REDIRECT#00100" },
+    });
+  });
+
+  it("counts a host split across two pages once", async () => {
+    // The fold runs over every page together; per-page folding would report the
+    // same host twice.
+    send
+      .mockResolvedValueOnce({
+        Items: [{ pk: HOST, sk: "REDIRECT#00100" }],
+        LastEvaluatedKey: { pk: HOST, sk: "REDIRECT#00100" },
+      })
+      .mockResolvedValueOnce({ Items: [{ pk: HOST, sk: "REDIRECT#00200" }] });
+
+    expect(await (await repository()).listHosts()).toEqual([
+      { host: HOST, redirects: 2, rewrites: 0 },
+    ]);
+  });
+
+  it("sends no ExclusiveStartKey on the first page", async () => {
+    send.mockResolvedValue({ Items: [] });
+    await (await repository()).listHosts();
+
+    expect(call().input).not.toHaveProperty("ExclusiveStartKey");
+  });
+
+  it("is empty for an empty table", async () => {
+    send.mockResolvedValue({});
+    expect(await (await repository()).listHosts()).toEqual([]);
+  });
+});
+
 describe("get", () => {
   it("reads the item consistently", async () => {
     // The SPA reads a rule back right after writing it; an eventually consistent
@@ -399,6 +474,18 @@ describe("an unreachable target", () => {
     send.mockRejectedValue(awsError(name));
 
     await expect((await repository()).listByHost(HOST)).rejects.toMatchObject({
+      status: 502,
+      code: "TARGET_UNREACHABLE",
+    });
+  });
+
+  it("502s a listHosts scan too", async () => {
+    // Its own case because the mapping comes from routing every call through
+    // `send()`; a method reaching for `this.client` directly would skip it and
+    // surface a bare 500.
+    send.mockRejectedValue(awsError("ResourceNotFoundException"));
+
+    await expect((await repository()).listHosts()).rejects.toMatchObject({
       status: 502,
       code: "TARGET_UNREACHABLE",
     });

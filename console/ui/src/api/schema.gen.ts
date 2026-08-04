@@ -70,6 +70,33 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/targets/{targetId}/hosts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        targetId: components["parameters"]["TargetId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * List the hosts that have rules.
+     * @description Every host in the target's table holding at least one rule, sorted by host name, with a count of each rule kind.
+     *
+     *     A host is the DynamoDB partition key of its rules, not a stored entity of its own, so a host with no rules does not appear here — there is nothing in the table to report. Counts include disabled rules.
+     *
+     *     Backed by a table Scan, so cost grows with the number of rules in the target, not the number of hosts.
+     */
+    get: operations["listHosts"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/targets/{targetId}/hosts/{host}/rules": {
     parameters: {
       query?: never;
@@ -179,6 +206,15 @@ export interface components {
       region: string;
       tableName: string;
       roleArn?: string;
+    };
+    /** @description One host in a target's table and how many rules of each kind it holds. Named `HostSummary` rather than `Host` because there is no fuller host resource behind it — the host is its rules. */
+    HostSummary: {
+      /** @description The rule host — the DynamoDB partition key. */
+      host: string;
+      /** @description Rules with an `sk` under `REDIRECT#`, disabled ones included. */
+      redirects: number;
+      /** @description Rules with an `sk` under `REWRITE#`, disabled ones included. */
+      rewrites: number;
     };
     /** @description A redirect or rewrite rule item, per the shared schemas. */
     Rule:
@@ -587,6 +623,34 @@ export interface operations {
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       500: components["responses"]["InternalError"];
+    };
+  };
+  listHosts: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        targetId: components["parameters"]["TargetId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The target's hosts. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HostSummary"][];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      404: components["responses"]["NotFound"];
+      405: components["responses"]["MethodNotAllowed"];
+      500: components["responses"]["InternalError"];
+      502: components["responses"]["TargetUnreachable"];
     };
   };
   listRules: {
