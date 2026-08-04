@@ -125,6 +125,14 @@ export function createApiClient(options: ApiClientOptions = {}) {
        */
       list: (targetId: string) =>
         request<HostSummary[]>("GET", hostsPath(targetId)),
+
+      /**
+       * Creates a host that has no rules yet, so it survives a reload. A host
+       * that already exists — with rules or without — is a 409 `HOST_EXISTS`.
+       * The server lowercases it, so the returned `host` is the one to address.
+       */
+      create: (targetId: string, host: string) =>
+        request<HostSummary>("POST", hostsPath(targetId), { host }),
     },
 
     rules: {

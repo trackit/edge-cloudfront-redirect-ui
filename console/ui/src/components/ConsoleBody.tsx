@@ -1,4 +1,6 @@
-import { Navigate, useParams } from "react-router-dom";
+import { useState } from "react";
+import { Navigate, useNavigate, useParams } from "react-router-dom";
+import AddHostModal from "./AddHostModal";
 import HostsSidebar from "./HostsSidebar";
 import { useHosts } from "../hosts";
 import { hostPath } from "../hostRoutes";
@@ -18,10 +20,35 @@ interface Props {
  */
 export default function ConsoleBody({ distribution }: Props) {
   const { state, reload } = useHosts(distribution.targetId);
+  const [adding, setAdding] = useState(false);
+  const navigate = useNavigate();
 
   // Decoded by React Router, so this is the host itself, not its URL spelling.
   const { host } = useParams<{ host: string }>();
   const current = host ?? null;
+
+  /*
+    Reload rather than push the new host into the list here: the counts come from
+    the server, and the host may already have had rules — created by someone else,
+    or left behind by a host of the same name added before. Guessing them would
+    show a count the rule list then contradicts.
+
+    Navigating is what makes the add feel finished; it also covers the case where
+    the host was already there and simply needed selecting.
+  */
+  const added = (host: string) => {
+    setAdding(false);
+    reload();
+    navigate(hostPath(host));
+  };
+
+  const modal = adding ? (
+    <AddHostModal
+      targetId={distribution.targetId}
+      onClose={() => setAdding(false)}
+      onAdded={added}
+    />
+  ) : null;
 
   if (state.status === "loading") {
     return (
@@ -47,6 +74,9 @@ export default function ConsoleBody({ distribution }: Props) {
 
   const { hosts } = state;
 
+  // The sidebar's own add button is not on screen in this state, so the empty
+  // view has to carry one — otherwise a target with no hosts has no way to gain
+  // its first.
   if (hosts.length === 0) {
     return (
       <main className="console-note">
@@ -55,6 +85,14 @@ export default function ConsoleBody({ distribution }: Props) {
           A host is a domain your distribution serves. Add one to start writing
           redirect and rewrite rules for it.
         </p>
+        <button
+          className="btn btn-primary"
+          type="button"
+          onClick={() => setAdding(true)}
+        >
+          Add a host
+        </button>
+        {modal}
       </main>
     );
   }
@@ -70,7 +108,11 @@ export default function ConsoleBody({ distribution }: Props) {
 
   return (
     <div className="console-body">
-      <HostsSidebar hosts={hosts} current={current} />
+      <HostsSidebar
+        hosts={hosts}
+        current={current}
+        onAdd={() => setAdding(true)}
+      />
 
       <main className="host-view">
         <header className="host-head">
@@ -96,6 +138,8 @@ export default function ConsoleBody({ distribution }: Props) {
           </div>
         )}
       </main>
+
+      {modal}
     </div>
   );
 }

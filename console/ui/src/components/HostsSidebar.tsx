@@ -1,11 +1,13 @@
 import { Link } from "react-router-dom";
 import type { HostSummary } from "../api";
 import { hostPath } from "../hostRoutes";
+import { IconPlus } from "./icons";
 
 interface Props {
   hosts: HostSummary[];
   /** The host the console is showing, or `null` when none is addressed yet. */
   current: string | null;
+  onAdd: () => void;
 }
 
 /**
@@ -24,12 +26,23 @@ const ruleCount = (host: HostSummary): string => {
   browser's own affordances still work — middle-click, copy link address, and
   the back button after picking a host.
 */
-export default function HostsSidebar({ hosts, current }: Props) {
+export default function HostsSidebar({ hosts, current, onAdd }: Props) {
   return (
     <nav className="hosts" aria-label="Hosts">
       <div className="hosts-head">
         <span className="hosts-title">Hosts</span>
         <span className="hosts-count">{hosts.length}</span>
+        <button
+          className="hosts-add"
+          type="button"
+          onClick={onAdd}
+          // The icon alone says nothing to a screen reader, and "add" without a
+          // noun is no better in a page that also adds rules.
+          aria-label="Add a host"
+          title="Add a host"
+        >
+          <IconPlus size={15} />
+        </button>
       </div>
 
       <ul className="hosts-list">
