@@ -70,6 +70,14 @@ const identifiesSameTable = (a: TableIdentity, b: TableIdentity): boolean => {
   return accountA === accountB;
 };
 
+/** True when an update points the entry at a table other than the one it had. */
+const retargets = (current: TableIdentity, input: TableIdentity): boolean =>
+  current.region !== input.region ||
+  current.tableName !== input.tableName ||
+  // A different role can see a different table of the same name, so this is part
+  // of *which* table the entry points at, not just how it is reached.
+  current.roleArn !== input.roleArn;
+
 /**
  * Read-then-write, so two simultaneous creates can still both succeed. The read
  * is a Scan and therefore eventually consistent, so a genuine double-submit
@@ -160,10 +168,15 @@ export const updateTarget = async (req: ApiRequest): Promise<ApiResponse> => {
   const { id } = req.params;
   const input = validateTarget(withoutMatchingId(req.body, id));
   const repo = getTargetsRepository();
-  if (!(await repo.get(id))) throw notFound(id);
+  const current = await repo.get(id);
+  if (!current) throw notFound(id);
+
   // An update can retarget an entry at a different table, so it can introduce
-  // the same typo a create can.
-  await getTableVerifier()(input);
+  // the same typo a create can. One that leaves the table alone must not be
+  // checked: a rename is how an operator labels a target whose table has since
+  // been deleted, and re-verifying would refuse the edit and leave them with an
+  // entry they can only delete.
+  if (retargets(current, input)) await getTableVerifier()(input);
   await assertTableNotRegistered(input, id);
 
   const target: Target = { id, ...input };

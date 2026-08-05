@@ -91,6 +91,13 @@ data "aws_iam_policy_document" "assume" {
   }
 }
 
+data "aws_caller_identity" "current" {}
+
+# Partition is read rather than hardcoded because a wrong one here is silent: the
+# grant below simply matches nothing, and the check it exists for degrades to
+# allowing everything (see DescribeTargetTables).
+data "aws_partition" "current" {}
+
 data "aws_iam_policy_document" "registry" {
   statement {
     sid = "TargetsRegistry"
@@ -136,14 +143,30 @@ data "aws_iam_policy_document" "registry" {
         "dynamodb:UpdateItem",
         "dynamodb:DeleteItem",
         "dynamodb:Scan",
-        # Registering a target checks the table exists, so a mistyped name is
-        # refused instead of becoming a second entry that only fails later.
-        # Without this the check cannot tell "no such table" from "no access"
-        # and, by design, allows the registration.
-        "dynamodb:DescribeTable",
       ]
       resources = var.target_table_arns
     }
+  }
+
+  # Registering a target describes its table first, so a mistyped name is refused
+  # instead of becoming a second entry that only fails on the first rules request.
+  #
+  # Deliberately every table in the account rather than `target_table_arns`. The
+  # check turns "no such table" into a 400 and treats "no access" as "cannot
+  # tell", which allows the registration — so scoping the grant to the tables
+  # that are *supposed* to exist would deny exactly the mistyped names the check
+  # exists to catch, and it would report each one as inconclusive. That is the
+  # whole check, silently off. It stays unconditional for the same reason: a
+  # fresh deployment has no `target_table_arns` yet, and typos there are the ones
+  # most worth catching.
+  #
+  # Read-only metadata (no item data, no mutation), and still this account only —
+  # a target reached by assuming a role is described under that role, so it is the
+  # target role's own policy that decides whether the check works there.
+  statement {
+    sid       = "DescribeTargetTables"
+    actions   = ["dynamodb:DescribeTable"]
+    resources = ["arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/*"]
   }
 }
 

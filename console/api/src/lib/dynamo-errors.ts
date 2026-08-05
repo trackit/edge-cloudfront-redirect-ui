@@ -27,14 +27,19 @@ const UNREACHABLE = new Set([
   "ResourceNotFoundException",
 ]);
 
-const nameOf = (err: unknown): string =>
+/**
+ * The SDK's error name, which is what every check here matches on. Exported
+ * because a caller that swallows a failure still has to be able to say which one
+ * it swallowed.
+ */
+export const errorName = (err: unknown): string =>
   typeof err === "object" && err !== null && "name" in err
     ? String((err as { name: unknown }).name)
     : "";
 
 /** True for the conditional write that failed its `attribute_exists` guard. */
 export const isConditionalCheckFailed = (err: unknown): boolean =>
-  nameOf(err) === "ConditionalCheckFailedException";
+  errorName(err) === "ConditionalCheckFailedException";
 
 /**
  * True when DynamoDB says the table itself is not there. Distinct from the
@@ -43,7 +48,7 @@ export const isConditionalCheckFailed = (err: unknown): boolean =>
  * are not, so `verify-table.ts` has to tell them apart.
  */
 export const isResourceNotFound = (err: unknown): boolean =>
-  nameOf(err) === "ResourceNotFoundException";
+  errorName(err) === "ResourceNotFoundException";
 
 /**
  * Maps a DynamoDB/STS failure to the error a client should see: a 502 naming the
@@ -55,7 +60,7 @@ export const toTargetError = (
   err: unknown,
   target: ResolvedTarget,
 ): unknown => {
-  if (!UNREACHABLE.has(nameOf(err))) return err;
+  if (!UNREACHABLE.has(errorName(err))) return err;
 
   const via = target.roleArn
     ? `assuming ${target.roleArn}`
@@ -64,6 +69,6 @@ export const toTargetError = (
   return new ApiError(
     502,
     "TARGET_UNREACHABLE",
-    `Cannot reach table "${target.tableName}" in ${target.region} ${via}: ${nameOf(err)}. The target is registered but the API has no access to it — check the role's trust and permissions policies, or the table's IAM grant.`,
+    `Cannot reach table "${target.tableName}" in ${target.region} ${via}: ${errorName(err)}. The target is registered but the API has no access to it — check the role's trust and permissions policies, or the table's IAM grant.`,
   );
 };

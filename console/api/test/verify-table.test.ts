@@ -1,4 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 
 /**
  * `assertTableExists` itself. The targets suite stubs this seam out, so nothing
@@ -32,6 +40,13 @@ const verify = (over: Record<string, unknown> = {}) =>
 const awsError = (name: string): Error =>
   Object.assign(new Error(name), { name });
 
+/**
+ * Half these tests take the branch that warns, so the spy is here rather than
+ * per-test: unsilenced it puts four lines of expected stderr in every run, which
+ * is how a real warning stops being noticed.
+ */
+let warn: MockInstance<typeof console.warn>;
+
 // No `vi.resetModules()` here, unlike the repository suites: it would load
 // errors.js a second time, and the ApiError thrown through the fresh copy fails
 // `toBeInstanceOf` against the one imported above.
@@ -39,7 +54,10 @@ beforeEach(() => {
   send.mockReset();
   docClient.mockClear();
   send.mockResolvedValue({ Table: { TableName: "rules-prod" } });
+  warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
+
+afterEach(() => warn.mockRestore());
 
 describe("assertTableExists", () => {
   it("describes the table it was given", async () => {
@@ -95,5 +113,25 @@ describe("assertTableExists", () => {
     // say the table is absent, so none of them may block registration — they
     // surface later as 502 TARGET_UNREACHABLE.
     await expect(verify()).resolves.toBeUndefined();
+  });
+
+  it("logs which failure it swallowed", async () => {
+    send.mockRejectedValue(awsError("AccessDeniedException"));
+
+    await verify();
+
+    // Allowing the registration looks identical to the table being there, so
+    // this line is the only way to notice the check has stopped running — which
+    // is what an AccessDenied here means, one lost grant away.
+    expect(warn).toHaveBeenCalledOnce();
+    const [message] = warn.mock.calls[0] as [string];
+    expect(message).toContain("rules-prod");
+    expect(message).toContain("AccessDeniedException");
+  });
+
+  it("says nothing when the table is there", async () => {
+    await verify();
+
+    expect(warn).not.toHaveBeenCalled();
   });
 });

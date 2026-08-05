@@ -387,6 +387,34 @@ describe("targets API", () => {
     ]);
   });
 
+  it("PUT /targets/:id does not re-check a table the update leaves alone", async () => {
+    const created = await create();
+    // The table has gone missing since it was registered — dropped, or renamed
+    // out from under the entry. Renaming the target is how an operator labels
+    // that, so it has to keep working; only the delete would remain otherwise.
+    missingTables = ["rules-prod"];
+    verified = [];
+
+    const res = await handler(
+      event("PUT", `/targets/${created.id}`, { ...input, name: "Prod (dead)" }),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(verified).toEqual([]);
+  });
+
+  it("PUT /targets/:id re-checks when only the role changes", async () => {
+    const created = await create();
+    verified = [];
+
+    // Same name and region, different role: cross-account, that can be a
+    // different table, so it is a retarget and gets checked.
+    const roleArn = "arn:aws:iam::111111111111:role/edgeroute-target-prod";
+    await handler(
+      event("PUT", `/targets/${created.id}`, { ...input, roleArn }),
+    );
+    expect(verified).toEqual([{ ...input, roleArn }]);
+  });
+
   it("PUT /targets/:id 400s when repointed at a table that does not exist", async () => {
     const created = await create();
     missingTables = ["rules-typo"];

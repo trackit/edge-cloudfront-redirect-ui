@@ -10,9 +10,10 @@ Node 22 Lambda that runs the request router in `console/api/src`.
 - **`aws_apigatewayv2_api` + integration + `$default` route + stage** — an HTTP
   API with a catch-all route; the Lambda's own router dispatches every path.
 - **`aws_iam_role`** — execution role: CloudWatch Logs, read/write on the targets
-  registry table, and — both off by default — `sts:AssumeRole` on
-  `assumable_role_arns` plus item-level DynamoDB access (and `DescribeTable`) on
-  `target_table_arns`
+  registry table, `dynamodb:DescribeTable` on every table in the account (see
+  [Checking a table exists](#checking-a-table-exists)), and — both off by
+  default — `sts:AssumeRole` on `assumable_role_arns` plus item-level DynamoDB
+  access on `target_table_arns`
   (see [Reaching a target's table](#reaching-a-targets-table)).
 - **`aws_cloudwatch_log_group`** — `/aws/lambda/<function_name>`.
 - **`aws_dynamodb_table` (targets registry)** — the control-plane's own state
@@ -58,13 +59,9 @@ assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
 Each target's role needs a trust policy admitting this Lambda's execution role and
 a permissions policy covering its own rules table.
 
-That permissions policy should include **`dynamodb:DescribeTable`** alongside the
-item-level actions. Registering a target describes its table first, so a mistyped
-name is refused with a 400 instead of being stored as a second entry that only
-fails on the first rules request. Without the grant nothing breaks — the check
-cannot tell "no such table" from "no access", and deliberately allows the
-registration rather than blocking a target whose IAM has not been applied yet —
-but you lose the typo check for targets behind that role.
+That permissions policy should also include **`dynamodb:DescribeTable`**, for the
+reason in the next section — and on a resource pattern wide enough to cover a
+name that was typed wrong, not just the one table that should exist.
 
 Both variables are validated, and the rules are the same for each: the **account
 must be literal**, and the role or table name must be literal apart from an
@@ -91,6 +88,37 @@ above, not cross-account support: the scope doc puts cross-account under "not in
 the 30 days", and nothing here has been exercised against a second account. What
 the field does buy is that adding it later, after ER-301 generates a typed client
 from these `additionalProperties: false` schemas, would be a breaking change.
+
+## Checking a table exists
+
+Registering a target describes its table first, so a mistyped name is refused
+with a 400 instead of being stored as a second entry that only fails on the first
+rules request. DynamoDB table names are case-sensitive, so `Edgeroute-rules` is
+not a duplicate of `edgeroute-rules` — nothing else catches it.
+
+Only a table AWS positively reports as absent is refused. Any other failure means
+the API could not determine anything, and the registration is **allowed**:
+targets are registered at runtime while IAM is granted at apply time, so a target
+that is unreachable at registration is normal and must not be blocked. Those
+still surface later as a 502 `TARGET_UNREACHABLE`.
+
+That is why the module grants `dynamodb:DescribeTable` on **every table in the
+account** (`arn:<partition>:dynamodb:*:<account>:table/*`) rather than on
+`target_table_arns`. IAM answers a denied call before DynamoDB can say whether
+the table is there, so a grant scoped to the tables that are _supposed_ to exist
+denies exactly the mistyped names the check exists to catch — each one arriving
+as "cannot tell" and being allowed through. The check would be silently off.
+It is read-only metadata, no item data and no mutation, and it is unconditional
+because a fresh deployment has no `target_table_arns` yet.
+
+The same logic applies to a target with a `roleArn`, whose table is described
+under **that** role: if its policy names the table exactly, a typo reads as
+`AccessDenied` and the check is inert for that target. Widen the resource pattern
+there to get it back.
+
+When the check cannot run, the Lambda logs
+`console-api: could not verify table … — registering it unchecked`. A steady
+stream of those in CloudWatch means the typo check is not doing anything.
 
 ## Region validation
 

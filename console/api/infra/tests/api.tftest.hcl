@@ -10,6 +10,20 @@ mock_provider "aws" {
       json = "{}"
     }
   }
+
+  # Pinned, unlike the rest of the mocks: these two are interpolated into a
+  # policy resource this suite asserts on by value.
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "123456789012"
+    }
+  }
+
+  mock_data "aws_partition" {
+    defaults = {
+      partition = "aws"
+    }
+  }
 }
 
 run "lambda_runtime_and_handler" {
@@ -207,9 +221,11 @@ run "assume_role_grant_adds_nothing_else" {
   # The registry statement's own resources can't be asserted here — they hold the
   # provider-computed table ARN, which is unknown under a mocked plan. What is
   # knowable is the statement count: enabling the grant must add exactly one
-  # statement and not a third, broader one.
+  # statement and not a further, broader one. Three, because DescribeTargetTables
+  # is unconditional — it is asserted on its own in
+  # describe_table_is_granted_across_the_account.
   assert {
-    condition     = length(data.aws_iam_policy_document.registry.statement) == 2
+    condition     = length(data.aws_iam_policy_document.registry.statement) == 3
     error_message = "enabling assumable_role_arns must add exactly one statement"
   }
 
@@ -409,8 +425,7 @@ run "target_table_arns_grants_the_listed_tables" {
     error_message = "rules-table access must be scoped to exactly target_table_arns"
   }
 
-  # Item-level actions, plus the read-only DescribeTable the registration check
-  # needs — never DeleteTable, which criterion 6 forbids.
+  # Item-level actions only — never DeleteTable, which criterion 6 forbids.
   assert {
     condition = alltrue([
       for s in data.aws_iam_policy_document.registry.statement :
@@ -434,15 +449,49 @@ run "target_table_arns_grants_the_listed_tables" {
           "dynamodb:PutItem",    # create, replace, and the move's Put leg
           "dynamodb:UpdateItem", # the disabled toggle
           "dynamodb:DeleteItem", # delete, and the move's Delete leg
-          # Registering a target. Dropping this one is silent: the check treats
-          # AccessDenied as "cannot tell" and lets the registration through, so
-          # mistyped tables start being accepted again with nothing in the logs.
-          "dynamodb:DescribeTable",
         ] : contains(s.actions, action)
       ])
       if s.sid == "TargetRulesTables"
     ])
     error_message = "the rules-table grant must cover every DynamoDB call the rule routes make"
+  }
+}
+
+# The registration check's grant. Separate from TargetRulesTables and never
+# scoped to it: the names it has to answer for are the ones that were typed
+# wrong, which by definition are not in the list of tables that should exist.
+run "describe_table_is_granted_across_the_account" {
+  command = plan
+
+  # No target_table_arns and no assumable_role_arns — a fresh deployment, where
+  # the typo check still has to work.
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if s.sid == "DescribeTargetTables"
+    ]) == 1
+    error_message = "the registration check needs exactly one DescribeTargetTables statement, unconditionally"
+  }
+
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s.resources == toset(["arn:aws:dynamodb:*:123456789012:table/*"])
+      if s.sid == "DescribeTargetTables"
+    ])
+    error_message = "DescribeTable must cover every table in this account and region, or a mistyped name reads as AccessDenied and is allowed through"
+  }
+
+  # The wildcard resource is why this is asserted as an exact set rather than a
+  # `contains`: DescribeTable is read-only metadata and safe account-wide, and
+  # nothing else may be added here without narrowing the resource first.
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s.actions == toset(["dynamodb:DescribeTable"])
+      if s.sid == "DescribeTargetTables"
+    ])
+    error_message = "the account-wide statement must grant DescribeTable and nothing else"
   }
 }
 

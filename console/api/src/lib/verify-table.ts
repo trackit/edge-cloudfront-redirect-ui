@@ -1,6 +1,6 @@
 import { DescribeTableCommand } from "@aws-sdk/client-dynamodb";
 import { docClient } from "./dynamo.js";
-import { isResourceNotFound } from "./dynamo-errors.js";
+import { errorName, isResourceNotFound } from "./dynamo-errors.js";
 import { ApiError } from "./errors.js";
 
 /** Where a table is, which is all `DescribeTable` needs to reach it. */
@@ -33,6 +33,17 @@ export type TableVerifier = (table: TableLocation) => Promise<void>;
  *
  * So this closes the case where AWS positively says "no such table", and leaves
  * "cannot tell" alone.
+ *
+ * Which means the grant decides how much of this actually works, because IAM
+ * answers a denied `DescribeTable` before DynamoDB ever says whether the table
+ * is there. The module therefore grants it account-wide (`table/*`, see the
+ * `DescribeTargetTables` statement) rather than over `target_table_arns` — a
+ * grant scoped to the tables that should exist denies precisely the mistyped
+ * names, which arrive here as `AccessDenied` and are allowed through. For a
+ * target with a `roleArn` the same is true of the *target* role's policy, which
+ * this module does not write: if it names its table exactly, a typo reads as
+ * "cannot tell" and the check is inert for that target. The warning below is
+ * what makes that visible.
  */
 export const assertTableExists: TableVerifier = async (table) => {
   try {
@@ -40,7 +51,17 @@ export const assertTableExists: TableVerifier = async (table) => {
       new DescribeTableCommand({ TableName: table.tableName }),
     );
   } catch (err) {
-    if (!isResourceNotFound(err)) return;
+    if (!isResourceNotFound(err)) {
+      // The only trace that the check did not run. Allowing the registration is
+      // correct here, but it is indistinguishable from a table that exists —
+      // so a policy that lost `dynamodb:DescribeTable` would otherwise turn the
+      // check off with no symptom at all, which is how it went missing to begin
+      // with. AccessDenied on every registration is the line to grep for.
+      console.warn(
+        `console-api: could not verify table "${table.tableName}" in ${table.region}: ${errorName(err) || "unknown error"} — registering it unchecked`,
+      );
+      return;
+    }
 
     throw new ApiError(400, "VALIDATION_ERROR", "Target failed validation", [
       {
