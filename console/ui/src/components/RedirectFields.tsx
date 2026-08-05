@@ -1,3 +1,4 @@
+import PriorityField from "./PriorityField";
 import Toggle from "./Toggle";
 import { convertRedirectUrl } from "../ruleDraft";
 import type { RedirectDraft } from "../ruleDraft";
@@ -10,45 +11,44 @@ interface Props {
 }
 
 const STATUS_CODES = [
-  {
-    value: 301 as const,
-    label: "301 — Permanent",
-    hint: "Browsers and search engines cache it. Use for a move that is final.",
-  },
-  {
-    value: 302 as const,
-    label: "302 — Temporary",
-    hint: "Not cached as permanent. Use while the move may be reverted.",
-  },
+  { value: 301 as const, label: "301 — Moved Permanently" },
+  { value: 302 as const, label: "302 — Found (temporary)" },
 ];
 
 /** The redirect-specific half of the rule editor: what to answer, and with what. */
 export default function RedirectFields({ draft, host, onChange }: Props) {
-  const selected = STATUS_CODES.find((code) => code.value === draft.statusCode);
-
   return (
-    <>
-      <div className="field">
-        <label htmlFor="statusCode">Status code</label>
-        <select
-          id="statusCode"
-          className="select"
-          value={draft.statusCode}
-          onChange={(event) =>
-            onChange({ statusCode: Number(event.target.value) as 301 | 302 })
-          }
-        >
-          {STATUS_CODES.map((code) => (
-            <option key={code.value} value={code.value}>
-              {code.label}
-            </option>
-          ))}
-        </select>
-        {selected !== undefined && <p className="hint">{selected.hint}</p>}
+    <fieldset className="editor-section">
+      <legend>Destination</legend>
+
+      <div className="field-row">
+        <div className="field">
+          <label htmlFor="statusCode">Status code</label>
+          <select
+            id="statusCode"
+            className="select"
+            value={draft.statusCode}
+            onChange={(event) =>
+              onChange({ statusCode: Number(event.target.value) as 301 | 302 })
+            }
+          >
+            {STATUS_CODES.map((code) => (
+              <option key={code.value} value={code.value}>
+                {code.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <PriorityField
+          kind="redirect"
+          value={draft.priority}
+          onChange={(priority) => onChange({ priority })}
+        />
       </div>
 
       <div className="field">
-        <label htmlFor="redirectURL">Redirect to</label>
+        <label htmlFor="redirectURL">Redirect URL</label>
         <input
           id="redirectURL"
           className="input mono"
@@ -58,16 +58,11 @@ export default function RedirectFields({ draft, host, onChange }: Props) {
           value={draft.redirectURL}
           onChange={(event) => onChange({ redirectURL: event.target.value })}
         />
-        <p className="hint">
-          {draft.relative
-            ? "A path on this same host, starting with /."
-            : "A full address, including https://. It may point at another host."}
-        </p>
       </div>
 
       <Toggle
         label="Relative URL"
-        description="Stay on this host and give only the path"
+        description="Redirect to a path on the same host instead of an absolute URL."
         checked={draft.relative}
         onChange={(relative) =>
           // Rewrites the value as well as the flag: the two forms describe the
@@ -80,11 +75,11 @@ export default function RedirectFields({ draft, host, onChange }: Props) {
       />
 
       <Toggle
-        label="Keep the query string"
-        description="Carry ?a=1 from the incoming request over to the destination"
+        label="Keep incoming query string"
+        description="Append the visitor's original ?query to the redirect target."
         checked={draft.keepQueryString}
         onChange={(keepQueryString) => onChange({ keepQueryString })}
       />
-    </>
+    </fieldset>
   );
 }

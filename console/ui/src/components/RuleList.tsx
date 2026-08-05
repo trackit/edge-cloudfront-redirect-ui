@@ -128,16 +128,16 @@ export default function RuleList({
             </button>
           ))}
         </div>
-        <span className="rules-order">
-          ordered by priority · lower runs first
-        </span>
+        <span className="rules-order">Sorted by priority · lower = higher</span>
       </div>
 
       {showRedirects && (
         <RuleGroup
           title="Redirects"
+          kind="redirect"
           phase="viewer-request"
           rules={grouped.redirects}
+          onCreate={onCreate}
           onEdit={onEdit}
           onToggle={onToggle}
           onDelete={onDelete}
@@ -148,8 +148,10 @@ export default function RuleList({
       {showRewrites && (
         <RuleGroup
           title="Rewrites"
+          kind="rewrite"
           phase="origin-request"
           rules={grouped.rewrites}
+          onCreate={onCreate}
           onEdit={onEdit}
           onToggle={onToggle}
           onDelete={onDelete}
@@ -162,16 +164,20 @@ export default function RuleList({
 
 function RuleGroup({
   title,
+  kind,
   phase,
   rules,
+  onCreate,
   onEdit,
   onToggle,
   onDelete,
   busy,
 }: {
   title: string;
+  kind: "redirect" | "rewrite";
   phase: string;
   rules: Rule[];
+  onCreate: (kind: "redirect" | "rewrite") => void;
   onEdit: (rule: Rule) => void;
   onToggle: (rule: Rule) => void;
   onDelete: (rule: Rule) => void;
@@ -186,6 +192,15 @@ function RuleGroup({
             why the two lists have independent priorities, and why a rewrite only
             fires on a cache miss. */}
         <span className="phase-chip mono">{phase}</span>
+
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm rule-group-add"
+          onClick={() => onCreate(kind)}
+        >
+          <IconPlus size={15} />
+          Create {kind}
+        </button>
       </header>
 
       <ul className="rule-cards">

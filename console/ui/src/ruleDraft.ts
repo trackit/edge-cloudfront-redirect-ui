@@ -34,6 +34,12 @@ type PriorityDraft = string;
 export interface RedirectDraft {
   kind: "redirect";
   priority: PriorityDraft;
+  /**
+   * Carried through the editor rather than left to the toggle in the list.
+   * `PUT` replaces the whole item, so a draft without it would send an enabled
+   * rule back over a disabled one and quietly put it into service.
+   */
+  disabled: boolean;
   statusCode: 301 | 302;
   redirectURL: string;
   /**
@@ -52,6 +58,8 @@ export type OriginKind = "none" | "s3" | "custom";
 export interface RewriteDraft {
   kind: "rewrite";
   priority: PriorityDraft;
+  /** Same reason as on a redirect: `PUT` replaces, so the flag must round-trip. */
+  disabled: boolean;
   originKind: OriginKind;
   s3: S3Draft;
   custom: CustomDraft;
@@ -74,7 +82,13 @@ export interface CustomDraft {
   protocol: CustomOrigin["protocol"];
   readTimeout: string;
   keepaliveTimeout: string;
-  sslProtocols: string[];
+  /**
+   * Comma-separated, not an array. The schema wants a list, but a field being
+   * typed into passes through states a list cannot hold — a trailing comma, a
+   * half-written `TLSv1.` — so it is split once on save, like the numbers above
+   * are parsed once on save.
+   */
+  sslProtocols: string;
 }
 
 export type RuleDraft = RedirectDraft | RewriteDraft;
@@ -90,8 +104,15 @@ const CUSTOM_DEFAULTS: CustomDraft = {
   protocol: "https-only",
   readTimeout: "30",
   keepaliveTimeout: "5",
-  sslProtocols: ["TLSv1.2"],
+  sslProtocols: "TLSv1.2",
 };
+
+/** The list the schema wants, out of the comma-separated field. */
+const splitSslProtocols = (value: string): string[] =>
+  value
+    .split(",")
+    .map((protocol) => protocol.trim())
+    .filter((protocol) => protocol !== "");
 
 const S3_DEFAULTS: S3Draft = {
   authMethod: "origin-access-identity",
@@ -105,6 +126,7 @@ const ABSOLUTE_URL = /^https?:\/\//i;
 export const emptyRedirect = (): RedirectDraft => ({
   kind: "redirect",
   priority: "",
+  disabled: false,
   statusCode: 301,
   redirectURL: "",
   relative: false,
@@ -115,6 +137,7 @@ export const emptyRedirect = (): RedirectDraft => ({
 export const emptyRewrite = (): RewriteDraft => ({
   kind: "rewrite",
   priority: "",
+  disabled: false,
   originKind: "none",
   s3: S3_DEFAULTS,
   custom: CUSTOM_DEFAULTS,
@@ -131,11 +154,13 @@ export const emptyRewrite = (): RewriteDraft => ({
  */
 export const draftFromRule = (rule: Rule): RuleDraft => {
   const priority = String(priorityOf(rule.sk));
+  const disabled = rule.disabled === true;
 
   if (isRedirect(rule)) {
     return {
       kind: "redirect",
       priority,
+      disabled,
       statusCode: rule.statusCode,
       redirectURL: rule.redirectURL,
       relative: !ABSOLUTE_URL.test(rule.redirectURL),
@@ -151,6 +176,7 @@ export const draftFromRule = (rule: Rule): RuleDraft => {
   return {
     kind: "rewrite",
     priority,
+    disabled,
     originKind:
       s3 !== undefined ? "s3" : custom !== undefined ? "custom" : "none",
     // The unused branch keeps its defaults, so switching origin kind in the
@@ -174,7 +200,7 @@ export const draftFromRule = (rule: Rule): RuleDraft => {
             protocol: custom.protocol,
             readTimeout: String(custom.readTimeout),
             keepaliveTimeout: String(custom.keepaliveTimeout),
-            sslProtocols: [...custom.sslProtocols],
+            sslProtocols: custom.sslProtocols.join(", "),
           },
     pathAndQS: forward.pathAndQS ?? "",
     keepQueryString: forward.useIncomingQueryString === true,
@@ -331,10 +357,10 @@ export const validateDraft = (
         });
       }
     }
-    if (draft.custom.sslProtocols.length === 0) {
+    if (splitSslProtocols(draft.custom.sslProtocols).length === 0) {
       details.push({
         path: "/forwardSettings/origin/custom/sslProtocols",
-        message: "pick at least one TLS version",
+        message: "must name at least one TLS version, such as TLSv1.2",
       });
     }
   }
@@ -357,6 +383,10 @@ export const validateDraft = (
 export const toRuleInput = (draft: RuleDraft): RuleInput => {
   const priority = Number(draft.priority);
   const matches = draft.matches.map(cleanMatch);
+  // Sent only when set. An enabled rule carries no flag in the table, and the
+  // schema makes it optional, so `false` would add a field the edge reads as
+  // the default it already assumes.
+  const disabled = draft.disabled ? { disabled: true } : {};
 
   if (draft.kind === "redirect") {
     return {
@@ -366,6 +396,7 @@ export const toRuleInput = (draft: RuleDraft): RuleInput => {
       redirectURL: draft.redirectURL.trim(),
       useIncomingQueryString: draft.keepQueryString,
       matches,
+      ...disabled,
     };
   }
 
@@ -393,7 +424,7 @@ export const toRuleInput = (draft: RuleDraft): RuleInput => {
               protocol: draft.custom.protocol,
               readTimeout: Number(draft.custom.readTimeout),
               keepaliveTimeout: Number(draft.custom.keepaliveTimeout),
-              sslProtocols: draft.custom.sslProtocols,
+              sslProtocols: splitSslProtocols(draft.custom.sslProtocols),
               customHeaders: {},
             },
           }
@@ -405,6 +436,7 @@ export const toRuleInput = (draft: RuleDraft): RuleInput => {
     type: "frMatchRule",
     priority,
     matches,
+    ...disabled,
     forwardSettings: {
       ...(origin === undefined ? {} : { origin }),
       // Omitted rather than sent empty: an empty `pathAndQS` means "keep the

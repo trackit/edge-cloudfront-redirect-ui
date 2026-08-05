@@ -101,3 +101,14 @@ export const isRewrite = (rule: Rule): rule is RewriteRule =>
 /** The numeric priority encoded in a sort key — `REDIRECT#00100` → `100`. */
 export const priorityOf = (sk: string): number =>
   Number.parseInt(sk.split("#")[1] ?? "", 10);
+
+/**
+ * The inverse — `("redirect", 100)` → `REDIRECT#00100`.
+ *
+ * The server derives the key on write and the client never sends one, so this
+ * exists only to show the user where a priority will land. Duplicating the
+ * five-digit padding is the point: seeing the key is what makes it obvious that
+ * changing a priority moves the rule rather than editing it in place.
+ */
+export const sortKeyFor = (kind: "redirect" | "rewrite", priority: number) =>
+  `${kind === "redirect" ? "REDIRECT" : "REWRITE"}#${String(priority).padStart(5, "0")}`;

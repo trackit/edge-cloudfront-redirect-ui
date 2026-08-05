@@ -1,14 +1,14 @@
 import { useState } from "react";
 import Drawer from "./Drawer";
 import MatchConditions from "./MatchConditions";
+import PriorityField from "./PriorityField";
 import RedirectFields from "./RedirectFields";
 import RewriteFields from "./RewriteFields";
+import Toggle from "./Toggle";
 import { ApiError } from "../api";
 import type { MatchCondition, Rule, RuleInput, ValidationDetail } from "../api";
 import { asApiError } from "../rules";
 import {
-  PRIORITY_MAX,
-  PRIORITY_MIN,
   draftFromRule,
   emptyRedirect,
   emptyRewrite,
@@ -16,7 +16,6 @@ import {
   validateDraft,
 } from "../ruleDraft";
 import type { RedirectDraft, RuleDraft, RewriteDraft } from "../ruleDraft";
-import { IconClock } from "./icons";
 
 interface Props {
   host: string;
@@ -96,36 +95,39 @@ export default function RuleEditor({
 
   const kindLabel = draft.kind === "redirect" ? "redirect" : "rewrite";
 
+  // What the rule does, in the words the list uses: a status code for a
+  // redirect, and for a rewrite whether it moves the origin or only the path.
+  const summary =
+    draft.kind === "redirect"
+      ? `${draft.statusCode} redirect`
+      : draft.originKind === "none"
+        ? "path rewrite"
+        : "origin rewrite";
+
   return (
     <Drawer
       title={editing ? `Edit ${kindLabel}` : `New ${kindLabel}`}
-      subtitle={`on ${host}`}
+      subtitle={`${host} · ${summary}`}
       onClose={onClose}
       footer={
-        <>
-          <p className="modal-note">
-            <IconClock size={14} />
-            Saved rules reach the edge in about a minute.
-          </p>
-          <div className="modal-actions">
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={onClose}
-              disabled={saving}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              form="rule-editor"
-              className="btn btn-primary"
-              disabled={saving}
-            >
-              {saving ? "Saving…" : editing ? "Save changes" : "Create rule"}
-            </button>
-          </div>
-        </>
+        <div className="modal-actions">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={onClose}
+            disabled={saving}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            form="rule-editor"
+            className="btn btn-primary"
+            disabled={saving}
+          >
+            {saving ? "Saving…" : editing ? "Save changes" : "Create rule"}
+          </button>
+        </div>
       }
     >
       {/*
@@ -158,25 +160,6 @@ export default function RuleEditor({
           </div>
         )}
 
-        <div className="field">
-          <label htmlFor="priority">Priority</label>
-          <input
-            id="priority"
-            className="input mono"
-            type="number"
-            min={PRIORITY_MIN}
-            max={PRIORITY_MAX}
-            placeholder="100"
-            value={draft.priority}
-            onChange={(event) => patch({ priority: event.target.value })}
-          />
-          <p className="hint">
-            Lower runs first. Unique among this host&apos;s {kindLabel}s,
-            because it is part of the rule&apos;s key — changing it here moves
-            the rule. Leave gaps (100, 200, 300) so one can be inserted later.
-          </p>
-        </div>
-
         {draft.kind === "redirect" ? (
           <RedirectFields
             draft={draft as RedirectDraft}
@@ -190,6 +173,30 @@ export default function RuleEditor({
         <fieldset className="editor-section">
           <legend>Match conditions</legend>
           <MatchConditions matches={draft.matches} onChange={setMatches} />
+        </fieldset>
+
+        {/* A redirect carries its priority next to its status code, where the
+            two halves of "which rule answers first" sit together. A rewrite has
+            no such pairing, so it lands here instead. */}
+        <fieldset className="editor-section">
+          <legend>
+            {draft.kind === "redirect" ? "Status" : "Priority & status"}
+          </legend>
+
+          {draft.kind === "rewrite" && (
+            <PriorityField
+              kind="rewrite"
+              value={draft.priority}
+              onChange={(priority) => patch({ priority })}
+            />
+          )}
+
+          <Toggle
+            label="Disabled"
+            description="Disabled rules are skipped at the edge, and keep their priority."
+            checked={draft.disabled}
+            onChange={(disabled) => patch({ disabled })}
+          />
         </fieldset>
       </form>
     </Drawer>

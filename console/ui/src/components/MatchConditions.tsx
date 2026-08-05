@@ -49,15 +49,11 @@ export default function MatchConditions({ matches, onChange }: Props) {
 
   return (
     <div className="matches">
-      {matches.length === 0 ? (
+      {matches.length === 0 && (
         <p className="matches-empty" role="status">
           No conditions, so this rule would fire on <strong>every</strong>{" "}
           request to this host. Add at least one unless that is really what you
           want.
-        </p>
-      ) : (
-        <p className="matches-intro">
-          All conditions must hold for the rule to fire.
         </p>
       )}
 
@@ -68,17 +64,24 @@ export default function MatchConditions({ matches, onChange }: Props) {
           row exists. Keying on the value would remount a field on every
           keystroke and lose the caret.
         */
-        <fieldset className="match" key={at}>
-          <legend className="match-legend">Condition {at + 1}</legend>
-
-          <button
-            type="button"
-            className="icon-btn is-danger match-remove"
-            onClick={() => remove(at)}
-            aria-label={`Remove condition ${at + 1}`}
-          >
-            <IconTrash size={15} />
-          </button>
+        <fieldset
+          className="match"
+          key={at}
+          aria-labelledby={`match-title-${at}`}
+        >
+          <div className="match-head">
+            <span className="match-legend" id={`match-title-${at}`}>
+              Condition {at + 1}
+            </span>
+            <button
+              type="button"
+              className="icon-btn is-danger match-remove"
+              onClick={() => remove(at)}
+              aria-label={`Remove condition ${at + 1}`}
+            >
+              <IconTrash size={15} />
+            </button>
+          </div>
 
           <div className="match-grid">
             <div className="field">
@@ -187,7 +190,7 @@ export default function MatchConditions({ matches, onChange }: Props) {
 
       <button
         type="button"
-        className="btn btn-ghost btn-sm"
+        className="add-match"
         onClick={() => onChange([...matches, emptyMatch()])}
       >
         <IconPlus size={15} />
