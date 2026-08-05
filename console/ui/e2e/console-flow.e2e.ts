@@ -40,8 +40,10 @@ test("a stored distribution goes straight to the console", async ({ page }) => {
   });
   await page.goto("/console");
 
+  // The chip carries everything the bar knows about the connected environment,
+  // and outlives the console body's placeholder copy.
   await expect(chip(page)).toContainText(prod.distributionId);
-  await expect(page.getByText(`target ${prod.targetId}`)).toBeVisible();
+  await expect(chip(page)).toContainText(prod.tableName);
 });
 
 test("a corrupt entry does not cost the user the rest of the list", async ({

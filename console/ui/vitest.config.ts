@@ -7,7 +7,10 @@ export default defineConfig({
   test: {
     // Playwright owns e2e/. Without this, vitest collects those files, fails to
     // resolve the runner's fixtures, and reports it as a broken unit suite.
-    exclude: ["e2e/**", "node_modules/**", "dist/**"],
+    // This replaces vitest's defaults rather than adding to them, so the
+    // node_modules pattern has to be restated — and with `**/` in front, since
+    // a bare `node_modules/**` only anchors at the project root.
+    exclude: ["e2e/**", "**/node_modules/**", "**/dist/**"],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],

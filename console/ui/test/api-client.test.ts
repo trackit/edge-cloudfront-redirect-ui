@@ -102,78 +102,106 @@ describe("createApiClient — routes", () => {
   // The route table is what is under test here, not the rule body.
   const ruleInput = {} as Parameters<ApiClient["rules"]["create"]>[2];
 
-  const routes: [string, (c: ApiClient) => Promise<unknown>, string, string][] =
-    [
-      ["health", (c) => c.health(), "GET", "/api/health"],
-      ["targets.list", (c) => c.targets.list(), "GET", "/api/targets"],
-      [
-        "targets.create",
-        (c) => c.targets.create(targetInput),
-        "POST",
-        "/api/targets",
-      ],
-      ["targets.get", (c) => c.targets.get("t-1"), "GET", "/api/targets/t-1"],
-      [
-        "targets.update",
-        (c) => c.targets.update("t-1", targetInput),
-        "PUT",
-        "/api/targets/t-1",
-      ],
-      [
-        "targets.remove",
-        (c) => c.targets.remove("t-1"),
-        "DELETE",
-        "/api/targets/t-1",
-      ],
-      [
-        "rules.list",
-        (c) => c.rules.list("t-1", "www"),
-        "GET",
-        "/api/targets/t-1/hosts/www/rules",
-      ],
-      [
-        "rules.create",
-        (c) => c.rules.create("t-1", "www", ruleInput),
-        "POST",
-        "/api/targets/t-1/hosts/www/rules",
-      ],
-      [
-        "rules.get",
-        (c) => c.rules.get("t-1", "www", "REDIRECT#00100"),
-        "GET",
-        "/api/targets/t-1/hosts/www/rules/REDIRECT%2300100",
-      ],
-      [
-        "rules.put",
-        (c) => c.rules.put("t-1", "www", "REDIRECT#00100", ruleInput),
-        "PUT",
-        "/api/targets/t-1/hosts/www/rules/REDIRECT%2300100",
-      ],
-      [
-        "rules.toggle",
-        (c) => c.rules.toggle("t-1", "www", "REDIRECT#00100", true),
-        "PATCH",
-        "/api/targets/t-1/hosts/www/rules/REDIRECT%2300100",
-      ],
-      [
-        "rules.remove",
-        (c) => c.rules.remove("t-1", "www", "REDIRECT#00100"),
-        "DELETE",
-        "/api/targets/t-1/hosts/www/rules/REDIRECT%2300100",
-      ],
-    ];
+  const RULE_PATH = "/api/targets/t-1/hosts/www/rules";
+  const RULE = `${RULE_PATH}/REDIRECT%2300100`;
+
+  // Object cases, not tuples: `$method $url` puts the route in the test name, so
+  // a CI failure reads "rules.toggle issues PATCH /api/…" rather than a
+  // positional `%s` that interpolates the callback's source.
+  const routes: {
+    name: string;
+    method: string;
+    url: string;
+    call: (c: ApiClient) => Promise<unknown>;
+  }[] = [
+    {
+      name: "health",
+      method: "GET",
+      url: "/api/health",
+      call: (c) => c.health(),
+    },
+    {
+      name: "targets.list",
+      method: "GET",
+      url: "/api/targets",
+      call: (c) => c.targets.list(),
+    },
+    {
+      name: "targets.create",
+      method: "POST",
+      url: "/api/targets",
+      call: (c) => c.targets.create(targetInput),
+    },
+    {
+      name: "targets.get",
+      method: "GET",
+      url: "/api/targets/t-1",
+      call: (c) => c.targets.get("t-1"),
+    },
+    {
+      name: "targets.update",
+      method: "PUT",
+      url: "/api/targets/t-1",
+      call: (c) => c.targets.update("t-1", targetInput),
+    },
+    {
+      name: "targets.remove",
+      method: "DELETE",
+      url: "/api/targets/t-1",
+      call: (c) => c.targets.remove("t-1"),
+    },
+    {
+      name: "rules.list",
+      method: "GET",
+      url: RULE_PATH,
+      call: (c) => c.rules.list("t-1", "www"),
+    },
+    {
+      name: "rules.create",
+      method: "POST",
+      url: RULE_PATH,
+      call: (c) => c.rules.create("t-1", "www", ruleInput),
+    },
+    {
+      name: "rules.get",
+      method: "GET",
+      url: RULE,
+      call: (c) => c.rules.get("t-1", "www", "REDIRECT#00100"),
+    },
+    {
+      name: "rules.put",
+      method: "PUT",
+      url: RULE,
+      call: (c) => c.rules.put("t-1", "www", "REDIRECT#00100", ruleInput),
+    },
+    {
+      name: "rules.toggle",
+      method: "PATCH",
+      url: RULE,
+      call: (c) => c.rules.toggle("t-1", "www", "REDIRECT#00100", true),
+    },
+    {
+      name: "rules.remove",
+      method: "DELETE",
+      url: RULE,
+      call: (c) => c.rules.remove("t-1", "www", "REDIRECT#00100"),
+    },
+  ];
 
   // Each method is a one-line wrapper, which is exactly why they are worth
   // pinning: nothing else would notice `toggle` sending PUT (a full replace that
   // clears every field the body omits) instead of PATCH.
-  it.each(routes)("%s issues %s %s", async (_name, call, method, url) => {
-    const { calls, fetch } = stubFetch();
+  it.each(routes)(
+    "$name issues $method $url",
+    async ({ call, method, url }) => {
+      const { calls, fetch } = stubFetch();
 
-    await call(client(fetch));
+      await call(client(fetch));
 
-    expect(calls[0].init.method).toBe(method);
-    expect(calls[0].url).toBe(url);
-  });
+      expect(calls[0].init.method).toBe(method);
+      expect(calls[0].url).toBe(url);
+    },
+  );
 
   it("sends only the disabled flag when toggling", async () => {
     const { calls, fetch } = stubFetch();

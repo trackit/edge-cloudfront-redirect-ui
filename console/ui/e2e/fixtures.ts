@@ -21,7 +21,10 @@ export const errorBody = (
 export interface ApiStub {
   /** Every request the page made, in order. */
   calls: { method: string; url: string; body: unknown }[];
-  /** Answers the next `POST /targets` with this instead of the default 201. */
+  /**
+   * Answers every subsequent `POST /targets` with this instead of the default
+   * 201 — it is not consumed, so a spec that submits twice gets it twice.
+   */
   createReply: (reply: { status: number; body: unknown }) => void;
   /** What `GET /targets` returns. */
   setTargets: (targets: unknown[]) => void;
@@ -169,11 +172,22 @@ export const panel = (page: Page) =>
 export const readStorage = (page: Page, key = STORAGE_KEY) =>
   page.evaluate((k) => window.localStorage.getItem(k), key);
 
-/** `api` is set up per test so no spec can forget to stub the network. */
+/**
+ * `api` is `auto` so no spec can forget to stub the network.
+ *
+ * Not merely declared: Playwright builds fixtures lazily, so without this a spec
+ * that never destructures `api` installs no route at all and its requests fall
+ * through to Vite's `/api` proxy — reaching whatever happens to be listening on
+ * port 3000. Nothing fetches after load today, which is exactly why that would
+ * go unnoticed until the rules UI does.
+ */
 export const test = base.extend<{ api: ApiStub }>({
-  api: async ({ page }, use) => {
-    await use(await stubApi(page));
-  },
+  api: [
+    async ({ page }, use) => {
+      await use(await stubApi(page));
+    },
+    { auto: true },
+  ],
 });
 
 export { expect };

@@ -136,7 +136,13 @@ export interface Stored {
   current: string | null;
 }
 
-export const EMPTY: Stored = { distributions: [], current: null };
+// Frozen because it is both the "nothing stored" result and the hook's initial
+// state, so every empty console shares this one object — an accidental write
+// through any of them would change what the next reader sees.
+export const EMPTY: Stored = Object.freeze({
+  distributions: [],
+  current: null,
+});
 
 /**
  * Each entry is validated on its own, and an invalid one is dropped rather than

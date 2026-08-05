@@ -153,9 +153,14 @@ describe("reduceConnect", () => {
 
   it("does not mutate the previous state", () => {
     const prev: Stored = { distributions: [dist()], current: "E1" };
+    // Snapshot, not just a length: an in-place edit of the existing entry keeps
+    // the count and would slip past a `toHaveLength`. React renders from the
+    // previous state, so a reducer that writes into it is a stale-render bug.
+    const before = structuredClone(prev);
+
     reduceConnect(prev, dist({ distributionId: "E2" }));
 
-    expect(prev.distributions).toHaveLength(1);
+    expect(prev).toEqual(before);
   });
 });
 

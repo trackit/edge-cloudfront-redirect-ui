@@ -64,10 +64,10 @@ test("closes on an outside press", async ({ page }) => {
   await chip(page).click();
   await expect(panel(page)).toBeVisible();
 
-  // A real mousedown on the page behind it. The listener is bound to `mousedown`
-  // rather than `click` on purpose: a drag that starts outside and releases on
-  // the panel would otherwise read as a click inside and leave it open.
-  await page.getByRole("heading", { name: "No rules yet" }).click();
+  // Anywhere outside the panel will do, so this takes the landmark rather than
+  // the copy inside it — the console body is documented as being replaced by the
+  // console skeleton, and this test does not care what it says.
+  await page.getByRole("main").click();
 
   await expect(panel(page)).toBeHidden();
 });

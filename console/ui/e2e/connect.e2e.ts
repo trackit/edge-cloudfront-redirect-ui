@@ -1,4 +1,4 @@
-import { errorBody, expect, readStorage, test } from "./fixtures";
+import { chip, errorBody, expect, readStorage, test } from "./fixtures";
 
 /**
  * The connect screen: the only way a distribution comes to exist.
@@ -66,9 +66,10 @@ test("connects, lands on the console, and remembers it", async ({
   await fill(page, "E1AAAAAAAAAAAA", "rules-prod");
   await page.getByRole("button", { name: "Connect", exact: true }).click();
 
-  await expect(
-    page.getByRole("heading", { name: "No rules yet" }),
-  ).toBeVisible();
+  // The chip only exists once something is connected, so it is the signal that
+  // the console replaced the form — and unlike the body's copy, it is not
+  // slated for replacement by the console skeleton.
+  await expect(chip(page)).toContainText("E1AAAAAAAAAAAA");
 
   // The distribution ID doubles as the target's name, and the region comes from
   // the select's default — this is the whole body the API is sent.
@@ -143,6 +144,24 @@ test("names the failure when the API cannot be reached", async ({
   );
 });
 
+test("says the API is unreachable when the request never completes", async ({
+  page,
+}) => {
+  // Offline, DNS, TLS, or a refused CORS preflight: `fetch` rejects and there is
+  // no status at all. The client turns that into NETWORK_ERROR, and this is the
+  // only test that renders what the screen then says.
+  await page.route(
+    (url) => url.pathname === "/api/targets",
+    (route) => route.abort("connectionrefused"),
+  );
+
+  await fill(page, "E1AAAAAAAAAAAA", "rules-prod");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+
+  await expect(page.getByRole("alert")).toContainText("Cannot reach the API");
+  expect(await readStorage(page)).toBeNull();
+});
+
 test("survives a response that is not the API's envelope", async ({ page }) => {
   // API Gateway's own error page, or a proxy in front of it. The screen has to
   // say something rather than crash on `body.error.code`.
@@ -187,8 +206,13 @@ test("reuses an existing target when the table is already registered", async ({
   await page.getByRole("button", { name: "Connect", exact: true }).click();
 
   // A 409 is a success for what the user asked for: point me at this table.
-  await expect(
-    page.getByRole("heading", { name: "No rules yet" }),
-  ).toBeVisible();
-  await expect(page.getByText("target t-existing")).toBeVisible();
+  await expect(chip(page)).toContainText("E1AAAAAAAAAAAA");
+
+  // The id of the target that was already there, not a new one — read from
+  // storage rather than off the console body, which the console skeleton
+  // replaces. This is the whole point of the reuse path.
+  const stored = JSON.parse((await readStorage(page)) ?? "null") as {
+    distributions: { targetId: string }[];
+  };
+  expect(stored.distributions[0].targetId).toBe("t-existing");
 });
