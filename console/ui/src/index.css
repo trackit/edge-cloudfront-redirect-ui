@@ -512,6 +512,17 @@ button {
 .oa-back-home:hover {
   color: var(--ink);
 }
+/* Same affordance as the link above, but a button — cancelling an edit returns
+   to the console in place, it does not navigate. */
+.oa-back-btn {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
 
 /* right main */
 .onboard-main {
@@ -583,31 +594,194 @@ button {
 .console-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  /* The chip reads as "EdgeRoute, pointed at this environment", so it sits next
+     to the brand rather than at the far end of the bar. Anything added later
+     that belongs to the page — not to the connection — gets pushed right with
+     `margin-left: auto`. */
+  justify-content: flex-start;
   gap: 16px;
   flex-wrap: wrap;
   padding: 18px 28px;
   border-bottom: 1px solid var(--line);
 }
-.console-conn {
+/* ---------- connected environment chip + its panel ---------- */
+
+/* Anchor for the absolutely positioned panel below. */
+.dist-switch {
+  position: relative;
+}
+
+.dist-chip {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
-  font-size: 13px;
+  /* Translucent white rather than a --navy step: the bar sits on a gradient, so
+     a fixed colour would band against it. */
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  color: var(--ink);
+  text-align: left;
+  /* A distribution ID or ARN can be long; the two lines inside ellipsize rather
+     than pushing the bar wider. min-width:0 is what lets them. */
+  max-width: 300px;
+  min-width: 0;
+  transition:
+    background 0.15s ease,
+    border 0.15s ease;
+}
+.dist-chip:hover {
+  background: rgba(255, 255, 255, 0.11);
+}
+.dist-chip:focus-visible {
+  outline: none;
+  border-color: var(--orange);
+  box-shadow: 0 0 0 3px var(--orange-glow);
+}
+
+.dist-ico {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--orange-glow);
+  color: var(--orange);
+  flex-shrink: 0;
+}
+
+.dist-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  min-width: 0;
+}
+.dist-id {
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dist-table {
+  font-size: 11px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dist-caret {
+  display: grid;
+  place-items: center;
+  margin-left: 4px;
+  color: var(--ink-dim);
+  transition: transform 0.15s ease;
+}
+.dist-caret.is-open {
+  transform: rotate(180deg);
+}
+.dist-chip:hover .dist-caret {
   color: var(--ink-soft);
 }
-.console-conn-sep {
+
+.dist-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  /* Left-aligned under the chip, which sits at the start of the bar. The panel
+     is wider than the chip, so it grows to the right into open space. */
+  left: 0;
+  min-width: 280px;
+  background: var(--navy-700);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  z-index: 40;
+}
+.dist-panel-head {
+  margin: 0;
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--ink-dim);
 }
-.console-conn .btn-ghost {
-  color: var(--ink-soft);
-  border-color: var(--line);
-  margin-left: 6px;
-}
-.console-conn .btn-ghost:hover {
-  background: rgba(255, 255, 255, 0.06);
+
+.dist-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--ink);
+  text-align: left;
+}
+.dist-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.dist-row:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--orange-glow);
+}
+/* The selected row keeps its tint on hover, so hovering a neighbour cannot make
+   that one look selected instead. */
+.dist-row.is-current,
+.dist-row.is-current:hover {
+  background: var(--orange-glow);
+}
+.dist-row-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+  flex: 1;
+  min-width: 0;
+}
+.dist-row-mark {
+  color: var(--orange);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.dist-panel-foot {
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+.dist-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+.dist-action:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.dist-action:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 0 2px var(--orange-glow);
+}
+.dist-action svg {
+  color: var(--ink-dim);
+  flex-shrink: 0;
+}
+.dist-action:hover svg {
+  color: var(--orange);
 }
 .console-empty {
   flex: 1;
