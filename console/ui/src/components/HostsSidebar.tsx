@@ -53,6 +53,10 @@ export default function HostsSidebar({
       </div>
 
       <ul className="hosts-list">
+        {/* Says the rail is empty rather than broken. The main area explains
+            what a host is; this only has to account for the blank space. */}
+        {hosts.length === 0 && <li className="hosts-empty">No hosts yet</li>}
+
         {hosts.map((host) => {
           const active = host.host === current;
 

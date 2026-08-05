@@ -890,6 +890,13 @@ button {
   padding: 0;
   list-style: none;
 }
+/* Placeholder row while the target has no hosts. Muted and non-interactive —
+   the add button above it is the thing to reach for. */
+.hosts-empty {
+  padding: 8px 10px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
 /* The link and its delete button are siblings, so the row is what lays them out
    and what hover applies to. */
 .hosts-row {

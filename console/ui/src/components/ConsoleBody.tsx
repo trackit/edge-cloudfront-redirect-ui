@@ -104,26 +104,37 @@ export default function ConsoleBody({ distribution }: Props) {
 
   const { hosts } = state;
 
-  // The sidebar's own add button is not on screen in this state, so the empty
-  // view has to carry one — otherwise a target with no hosts has no way to gain
-  // its first.
+  // The rail stays put with no hosts. It is where adding a host lives, and a
+  // control that moves to the middle of the screen for the empty case and back
+  // again once there is one host teaches the user nothing they can reuse. The
+  // primary button below is a second way to the same modal, not the only one.
   if (hosts.length === 0) {
     return (
-      <main className="console-note">
-        <h1>No hosts yet</h1>
-        <p>
-          A host is a domain your distribution serves. Add one to start writing
-          redirect and rewrite rules for it.
-        </p>
-        <button
-          className="btn btn-primary"
-          type="button"
-          onClick={() => setAdding(true)}
-        >
-          Add a host
-        </button>
+      <div className="console-body">
+        <HostsSidebar
+          hosts={hosts}
+          current={null}
+          onAdd={() => setAdding(true)}
+          onDelete={setDeleting}
+        />
+
+        <main className="console-note">
+          <h1>No hosts yet</h1>
+          <p>
+            A host is a domain your distribution serves. Add one to start
+            writing redirect and rewrite rules for it.
+          </p>
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={() => setAdding(true)}
+          >
+            Add a host
+          </button>
+        </main>
+
         {modal}
-      </main>
+      </div>
     );
   }
 
