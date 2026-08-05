@@ -7,6 +7,7 @@ import {
   getTargetsRepository,
   type Target,
 } from "../lib/targets-repository.js";
+import { getTableVerifier } from "../lib/verify-table.js";
 
 const notFound = (id: string): ApiError =>
   ApiError.notFound(`No target with id "${id}"`);
@@ -69,6 +70,14 @@ const identifiesSameTable = (a: TableIdentity, b: TableIdentity): boolean => {
   return accountA === accountB;
 };
 
+/** True when an update points the entry at a table other than the one it had. */
+const retargets = (current: TableIdentity, input: TableIdentity): boolean =>
+  current.region !== input.region ||
+  current.tableName !== input.tableName ||
+  // A different role can see a different table of the same name, so this is part
+  // of *which* table the entry points at, not just how it is reached.
+  current.roleArn !== input.roleArn;
+
 /**
  * Read-then-write, so two simultaneous creates can still both succeed. The read
  * is a Scan and therefore eventually consistent, so a genuine double-submit
@@ -102,8 +111,15 @@ const assertTableNotRegistered = async (
   }
 };
 
+/**
+ * Existence before uniqueness: "there is no such table" is a fact about the
+ * input alone, and it is the more useful of the two answers when a nonexistent
+ * table is *also* already registered — which is exactly the state the missing
+ * check used to produce. Costs one DescribeTable on the duplicate path.
+ */
 export const createTarget = async (req: ApiRequest): Promise<ApiResponse> => {
   const input = validateTarget(req.body);
+  await getTableVerifier()(input);
   await assertTableNotRegistered(input);
 
   const target: Target = { id: randomUUID(), ...input };
@@ -152,7 +168,15 @@ export const updateTarget = async (req: ApiRequest): Promise<ApiResponse> => {
   const { id } = req.params;
   const input = validateTarget(withoutMatchingId(req.body, id));
   const repo = getTargetsRepository();
-  if (!(await repo.get(id))) throw notFound(id);
+  const current = await repo.get(id);
+  if (!current) throw notFound(id);
+
+  // An update can retarget an entry at a different table, so it can introduce
+  // the same typo a create can. One that leaves the table alone must not be
+  // checked: a rename is how an operator labels a target whose table has since
+  // been deleted, and re-verifying would refuse the edit and leave them with an
+  // entry they can only delete.
+  if (retargets(current, input)) await getTableVerifier()(input);
   await assertTableNotRegistered(input, id);
 
   const target: Target = { id, ...input };

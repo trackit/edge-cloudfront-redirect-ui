@@ -426,7 +426,13 @@ components:
         tableName:
           type: string
           pattern: "^[a-zA-Z0-9_.-]{3,255}$"
-          description: DynamoDB rules table the Lambda@Edge reads for this target.
+          description: >-
+            DynamoDB rules table the Lambda@Edge reads for this target. Checked
+            for existence when the target is registered: a table AWS reports as
+            absent is a 400 with a `/tableName` detail, since table names are
+            case-sensitive and a typo would otherwise register as a second,
+            broken target. A table the API merely cannot reach yet is accepted —
+            IAM is granted at apply time, after registration.
         roleArn:
           type: string
           pattern: "^arn:aws[a-z-]*:iam::\\d{12}:role/.+$"

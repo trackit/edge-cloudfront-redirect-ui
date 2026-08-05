@@ -6,9 +6,13 @@ const clients = new Map<string, DynamoDBDocumentClient>();
 
 /**
  * Credential provider that assumes a target's role. Returned as a function so
- * the SDK calls it lazily and refreshes on `expiration` — registering a target
- * never assumes its role, so a misconfigured role only fails when that target's
- * rules are actually touched.
+ * the SDK calls it lazily and refreshes on `expiration`.
+ *
+ * Registering a target does now reach for the role — `verify-table.ts` describes
+ * the table under it — but a role that cannot be assumed still does not fail the
+ * registration: that verifier treats every failure other than "no such table" as
+ * inconclusive and allows it. So a misconfigured role continues to surface when
+ * the target's rules are touched, as a 502.
  */
 const assumeRole = (roleArn: string, region: string) => async () => {
   const sts = new STSClient({ region });

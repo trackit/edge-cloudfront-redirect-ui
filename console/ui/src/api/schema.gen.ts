@@ -157,7 +157,7 @@ export interface components {
       name: string;
       /** @description AWS region of the target's DynamoDB table. This pattern checks format only — the server also checks the region is one it allows, so a well-formed value can still be rejected (e.g. us-east-11). The allowed set is deployment-specific (ALLOWED_REGIONS), so it is not published here as an enum. */
       region: string;
-      /** @description DynamoDB rules table the Lambda@Edge reads for this target. */
+      /** @description DynamoDB rules table the Lambda@Edge reads for this target. Checked for existence when the target is registered: a table AWS reports as absent is a 400 with a `/tableName` detail, since table names are case-sensitive and a typo would otherwise register as a second, broken target. A table the API merely cannot reach yet is accepted — IAM is granted at apply time, after registration. */
       tableName: string;
       /** @description Optional IAM role the API assumes to read and write this target's rules table. Omit to use the API's own execution role, which only reaches tables its policy already covers. Required in practice for a target registered after deploy, or one in another account. */
       roleArn?: string;
