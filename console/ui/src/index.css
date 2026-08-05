@@ -974,11 +974,25 @@ button {
 .host-view {
   padding: 26px 28px;
 }
+/* Title on the left, the two create buttons on the right. Wraps rather than
+   shrinks: a long hostname keeps its own line and the buttons drop below it. */
 .host-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+}
+.host-title {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-bottom: 22px;
+  min-width: 0;
+}
+.host-actions {
+  display: flex;
+  gap: 8px;
 }
 .host-name {
   margin: 0;
@@ -995,12 +1009,6 @@ button {
   font-size: 12.5px;
   color: var(--text-dim);
 }
-.console-note-inline {
-  margin: 0;
-  font-size: 13.5px;
-  color: var(--text-soft);
-}
-
 /* --- loading, empty and failed, before there is a host to show --- */
 
 .console-note {
@@ -1248,4 +1256,566 @@ button {
 .modal-foot .btn-ghost:hover {
   background: var(--surface-3);
   color: var(--text);
+}
+
+/* ============================================================
+   RULES PANEL — a host's redirects and rewrites.
+   Sits in .host-view, under the host title.
+   ============================================================ */
+
+/* ER-306. Amber rather than red: it is a fact about the system, not a failure. */
+.propagation {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 207, 92, 0.5);
+  background: rgba(255, 207, 92, 0.14);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: #7a5a10;
+}
+.propagation svg {
+  flex-shrink: 0;
+}
+
+/* --- toolbar --- */
+
+.rules-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.rules-order {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.seg {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.seg button {
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.seg button:hover {
+  color: var(--text);
+}
+.seg button.is-active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+/* --- one group: redirects or rewrites --- */
+
+.rule-group {
+  margin-bottom: 26px;
+}
+.rule-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.rule-group-head h3 {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-soft);
+}
+.count-chip {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-soft);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.phase-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* --- a rule --- */
+
+.rule-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rule-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+/* A disabled rule is dimmed but stays readable — it keeps its priority and is
+   still part of the sequence, so it must not look deleted. */
+.rule-card.is-disabled {
+  background: var(--surface-2);
+  opacity: 0.72;
+}
+.rule-card.is-busy {
+  opacity: 0.55;
+}
+.rule-prio {
+  display: grid;
+  place-items: center;
+  min-width: 42px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-soft);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+}
+.rule-body {
+  min-width: 0;
+}
+.rule-badges {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 7px;
+}
+.rule-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin: 0;
+  font-size: 13.5px;
+}
+.rule-from {
+  color: var(--text);
+  font-weight: 600;
+}
+.rule-arrow {
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+}
+.rule-to {
+  color: var(--blue-600);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.rule-cond {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* --- no rules, and loading --- */
+
+.rules-empty {
+  padding: 56px 20px;
+  text-align: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.rules-empty h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+.rules-empty p {
+  margin: 0 auto;
+  max-width: 420px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+.rules-empty-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+/* Placeholder rows while a host's rules load, sized like a real card so the
+   panel does not jump when they arrive. */
+.skeleton {
+  height: 78px;
+  margin-bottom: 10px;
+  border-radius: var(--radius);
+  background: linear-gradient(
+    90deg,
+    var(--surface-2),
+    var(--surface-3),
+    var(--surface-2)
+  );
+  background-size: 200% 100%;
+  animation: skeleton 1.2s ease-in-out infinite;
+}
+@keyframes skeleton {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+
+/* ============================================================
+   Controls shared by the rule list and the editor.
+   ============================================================ */
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.icon-btn:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 1px;
+}
+.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.icon-btn.is-danger:hover {
+  background: var(--red-glow);
+  border-color: rgba(255, 107, 107, 0.45);
+  color: var(--red);
+}
+
+/* Track + knob. `role="switch"` is on the button, so nothing here conveys state
+   on its own — the knob position is the visual half of aria-checked. */
+.switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-3);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border 0.15s ease;
+}
+.switch.is-on {
+  background: var(--green);
+  border-color: var(--green);
+}
+.switch:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+.switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(16, 32, 60, 0.3);
+  transition: transform 0.15s ease;
+}
+.switch.is-on .switch-knob {
+  transform: translateX(18px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .switch,
+  .switch-knob {
+    transition: none;
+  }
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 0;
+  border-top: 1px solid var(--border);
+}
+.toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.toggle-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.toggle-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+/* A two-state chip. `aria-pressed` carries the state; this is its appearance. */
+.flag {
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.flag:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.flag.is-on {
+  background: var(--orange-glow);
+  border-color: var(--orange);
+  color: var(--orange-600);
+}
+.flag:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 1px;
+}
+
+/* Visible to a screen reader, not on screen. Used where an icon-only control
+   already has a visible label elsewhere in its row. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Validation failures, whether raised by the form or returned by the API — both
+   arrive as `{ path, message }`, so one block renders both. */
+.form-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 107, 107, 0.45);
+  background: var(--red-glow);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.form-error strong {
+  color: #b3251f;
+}
+.form-error ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+.form-error li {
+  margin-top: 2px;
+}
+
+/* ============================================================
+   RULE EDITOR — an overlay panel rather than a <dialog>.
+   The host dialogs above are native <dialog>s and keep the .modal
+   rules as written; the editor reuses the head/body/foot but is
+   taller, wider and scrolls, so it overrides them under
+   .modal-panel rather than editing shared rules underneath.
+   ============================================================ */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 17, 32, 0.6);
+  backdrop-filter: blur(2px);
+}
+.modal-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 100%);
+  max-height: min(88vh, 900px);
+  overflow: hidden;
+}
+.modal-panel:focus {
+  outline: none;
+}
+/* The only scrolling region, so the heading and the actions stay put while a
+   long form moves. */
+.modal-panel .modal-body {
+  display: block;
+  padding: 20px 22px;
+  overflow-y: auto;
+}
+.modal-panel .modal-foot {
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 14px 22px;
+}
+.modal-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+
+/* --- the form's sections --- */
+
+.editor-section,
+.origin,
+.ssl {
+  margin: 18px 0 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.editor-section > legend,
+.origin > legend,
+.ssl > legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-soft);
+}
+.origin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.ssl-flags {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+/* --- match conditions --- */
+
+.matches-intro,
+.matches-empty {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.matches-empty {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 207, 92, 0.5);
+  background: rgba(255, 207, 92, 0.14);
+  border-radius: var(--radius-sm);
+  color: #7a5a10;
+}
+.match {
+  position: relative;
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.match-legend {
+  padding: 0 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+.match-remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+}
+.match-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.4fr;
+  gap: 10px;
+}
+@media (max-width: 560px) {
+  .match-grid,
+  .origin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.match .field {
+  margin-bottom: 0;
+}
+.match-flags {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 12px;
 }
