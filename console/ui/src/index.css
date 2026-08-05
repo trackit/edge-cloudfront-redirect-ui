@@ -1674,46 +1674,72 @@ button {
 }
 
 /* ============================================================
-   RULE EDITOR — an overlay panel rather than a <dialog>.
+   RULE EDITOR — a right-side drawer rather than a <dialog>.
    The host dialogs above are native <dialog>s and keep the .modal
-   rules as written; the editor reuses the head/body/foot but is
-   taller, wider and scrolls, so it overrides them under
-   .modal-panel rather than editing shared rules underneath.
+   rules as written; the editor reuses their head/body/foot chrome
+   but runs the full height of the viewport and scrolls, so it
+   overrides them under .drawer rather than editing the shared
+   rules underneath.
    ============================================================ */
 
-.modal-backdrop {
+.drawer-overlay {
   position: fixed;
   inset: 0;
   z-index: 100;
-  display: grid;
-  place-items: center;
-  padding: 24px;
+  display: flex;
+  justify-content: flex-end;
   background: rgba(10, 17, 32, 0.6);
   backdrop-filter: blur(2px);
+  animation: drawer-fade 0.15s ease;
 }
-.modal-panel {
+/* Carries the surface itself: the panel drops .modal, whose rounded corners
+   and 440px width belong to a centred dialog. */
+.drawer {
   display: flex;
   flex-direction: column;
-  width: min(620px, 100%);
-  max-height: min(88vh, 900px);
-  overflow: hidden;
+  width: min(560px, 100%);
+  height: 100%;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  animation: drawer-slide 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.modal-panel:focus {
+.drawer:focus {
   outline: none;
 }
 /* The only scrolling region, so the heading and the actions stay put while a
    long form moves. */
-.modal-panel .modal-body {
+.drawer .modal-body {
   display: block;
   padding: 20px 22px;
   overflow-y: auto;
 }
-.modal-panel .modal-foot {
+.drawer .modal-foot {
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
   gap: 16px;
   padding: 14px 22px;
+  /* The drawer meets the viewport edges, so the dialog's rounded bottom would
+     leave two gaps in the corner. */
+  border-radius: 0;
+}
+@keyframes drawer-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes drawer-slide {
+  from {
+    transform: translateX(24px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drawer-overlay,
+  .drawer {
+    animation: none;
+  }
 }
 .modal-note {
   display: flex;

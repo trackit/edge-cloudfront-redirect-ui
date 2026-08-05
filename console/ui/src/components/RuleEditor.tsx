@@ -1,5 +1,5 @@
 import { useState } from "react";
-import Modal from "./Modal";
+import Drawer from "./Drawer";
 import MatchConditions from "./MatchConditions";
 import RedirectFields from "./RedirectFields";
 import RewriteFields from "./RewriteFields";
@@ -97,7 +97,7 @@ export default function RuleEditor({
   const kindLabel = draft.kind === "redirect" ? "redirect" : "rewrite";
 
   return (
-    <Modal
+    <Drawer
       title={editing ? `Edit ${kindLabel}` : `New ${kindLabel}`}
       subtitle={`on ${host}`}
       onClose={onClose}
@@ -192,7 +192,7 @@ export default function RuleEditor({
           <MatchConditions matches={draft.matches} onChange={setMatches} />
         </fieldset>
       </form>
-    </Modal>
+    </Drawer>
   );
 }
 

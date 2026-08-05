@@ -15,20 +15,25 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
- * The dialog shell the rule editor sits in.
+ * The right-side drawer the rule editor sits in.
  *
- * A dialog is the one place where getting focus wrong is not a detail: content
- * stays in the DOM behind it, so without a trap Tab walks into a form the user
- * cannot see and edits it blind. This does the four things that makes it a real
- * dialog — labelled by its own heading, focus moved in on open and returned on
- * close, Tab cycling inside, Escape closing.
+ * A drawer rather than a centred dialog because the editor is a long form —
+ * origin, forwarded path, match conditions, priority — and full viewport height
+ * fits more of it without scrolling, while leaving the rule list visible beside
+ * it so the priority being edited can be read against its neighbours.
+ *
+ * It is still a dialog in every way that matters, and getting focus wrong here
+ * is not a detail: content stays in the DOM behind it, so without a trap Tab
+ * walks into a form the user cannot see and edits it blind. Hence the four
+ * things that make it real — labelled by its own heading, focus moved in on
+ * open and returned on close, Tab cycling inside, Escape closing.
  *
  * Rendered inline rather than through a portal. `.console` is a plain flow
  * container with no `transform` or `filter`, so a fixed overlay inside it is
  * positioned against the viewport exactly as one at the document root would be,
  * and a portal would buy nothing but a second render tree.
  */
-export default function Modal({
+export default function Drawer({
   title,
   subtitle,
   onClose,
@@ -90,19 +95,18 @@ export default function Modal({
 
   return (
     <div
-      className="modal-backdrop"
-      // The backdrop closes on click, but only when it is itself the target —
-      // a drag that starts inside the panel and releases on the backdrop would
+      className="drawer-overlay"
+      // The overlay closes on click, but only when it is itself the target —
+      // a drag that starts inside the panel and releases on the overlay would
       // otherwise discard the form.
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      {/* `modal` for the shared chrome, `modal-panel` for what a scrolling
-          overlay needs on top of it — the host dialogs are native <dialog>s and
-          share the first without wanting the second. */}
+      {/* `drawer` carries the panel; the `modal-*` classes inside are the chrome
+          shared with the host dialogs, which are native <dialog>s. */}
       <div
-        className="modal modal-panel"
+        className="drawer"
         ref={panelRef}
         role="dialog"
         aria-modal="true"
