@@ -51,6 +51,32 @@ jobs:
       - run: npm test
       - run: npm run openapi:lint -w console/api
 
+  e2e:
+    name: Console E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Chromium only. These assert on this app's own focus handling, storage
+      # and event order, not on anything that differs between engines, so more
+      # browsers would re-prove the same assertions at triple the minutes.
+      - run: npx playwright install --with-deps chromium
+        working-directory: console/ui
+      # Runs against `vite dev` with every /api call stubbed in the page — no
+      # console API, no AWS, no DynamoDB table.
+      - run: npm run test:e2e --workspace console/ui
+      # Traces and screenshots for whatever failed; useless when it passes.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: console/ui/playwright-report/
+          retention-days: 7
+
   terraform:
     name: Terraform (fmt + validate + test)
     runs-on: ubuntu-latest

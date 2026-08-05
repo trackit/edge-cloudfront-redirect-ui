@@ -5,6 +5,9 @@ import { defineConfig, coverageConfigDefaults } from "vitest/config";
 // flow tests that do are phase 2 (Playwright), per the testing ticket.
 export default defineConfig({
   test: {
+    // Playwright owns e2e/. Without this, vitest collects those files, fails to
+    // resolve the runner's fixtures, and reports it as a broken unit suite.
+    exclude: ["e2e/**", "node_modules/**", "dist/**"],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
