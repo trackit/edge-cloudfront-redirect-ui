@@ -451,6 +451,34 @@ describe("a host outlives its rules however it came to exist", () => {
     ]);
   });
 
+  it("repairs a host whose rules predate the marker, by adding it again", async () => {
+    /*
+      Rules already in a real table were written before a create left a marker,
+      so their hosts still vanish with the last of them. Adding the host is the
+      documented way back, and it has to actually work: the host reads as
+      existing, so the 409 stands — but the marker is written on the way out,
+      and that is what the caller is really after.
+    */
+    seed(rule("www.example.com", "REDIRECT#00100"));
+
+    const res = await handler(
+      event("POST", "/targets/t1/hosts", { host: "www.example.com" }),
+    );
+    expect(res.statusCode).toBe(409);
+
+    const gone = await handler(
+      event(
+        "DELETE",
+        "/targets/t1/hosts/www.example.com/rules/REDIRECT%2300100",
+      ),
+    );
+    expect(gone.statusCode).toBe(204);
+
+    expect(await listed()).toEqual([
+      { host: "www.example.com", redirects: 0, rewrites: 0 },
+    ]);
+  });
+
   it("still takes the host away when the host itself is deleted", async () => {
     // The marker must not turn a deleted host into one that cannot be removed.
     seed();

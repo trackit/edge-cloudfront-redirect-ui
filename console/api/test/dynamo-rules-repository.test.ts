@@ -264,11 +264,17 @@ describe("createHost", () => {
 
   it("refuses a host that already holds a rule", async () => {
     // The probe is what catches this: a condition on the marker's own key
-    // cannot see the host's rules, and would write a marker beside them.
-    send.mockResolvedValueOnce({ Items: [{ pk: HOST }] });
+    // cannot see the host's rules, and would report the host as newly created.
+    send
+      .mockResolvedValueOnce({ Items: [{ pk: HOST }] })
+      .mockResolvedValueOnce({});
 
     expect(await (await repository()).createHost(HOST)).toBe(false);
-    expect(send).toHaveBeenCalledTimes(1);
+
+    // The Put that follows is the marker repair, not a create — it writes the
+    // marker beside the rules deliberately, and the refusal stands regardless.
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(call(1).name).toBe("PutCommand");
   });
 
   it("refuses when the conditional Put loses the race", async () => {
@@ -288,6 +294,37 @@ describe("createHost", () => {
       status: 502,
       code: "TARGET_UNREACHABLE",
     });
+  });
+
+  it("repairs a missing marker on the host it refuses", async () => {
+    // The repair path for a host with rules and no marker: every rule written
+    // before `create` started leaving one. Without this the 409 is a dead end —
+    // the host reads as existing so it cannot be added, yet it still disappears
+    // with its last rule, and the only way back is to delete it and write every
+    // rule again.
+    send
+      .mockResolvedValueOnce({ Items: [{ pk: HOST }] })
+      .mockResolvedValueOnce({});
+
+    expect(await (await repository()).createHost(HOST)).toBe(false);
+
+    expect(call(1)).toMatchObject({
+      name: "PutCommand",
+      input: {
+        Item: { pk: HOST, sk: "HOST" },
+        ConditionExpression: "attribute_not_exists(pk)",
+      },
+    });
+  });
+
+  it("still refuses a host whose marker is already there", async () => {
+    // The repair is conditional, so a host that needs none is refused without
+    // its marker being rewritten.
+    send
+      .mockResolvedValueOnce({ Items: [{ pk: HOST }] })
+      .mockRejectedValueOnce(awsError("ConditionalCheckFailedException"));
+
+    expect(await (await repository()).createHost(HOST)).toBe(false);
   });
 });
 
@@ -581,6 +618,10 @@ describe("create", () => {
     // here would report a failure for a write that happened. A missing marker
     // costs only the empty-host case, which is the behaviour that existed
     // before markers did.
+    //
+    // Spied only to keep the warning out of the suite's output — that it is
+    // warned about at all is the test below.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     send
       .mockResolvedValueOnce({})
       .mockRejectedValueOnce(
@@ -590,6 +631,41 @@ describe("create", () => {
     expect(await (await repository()).create(rule("REDIRECT#00100"))).toBe(
       true,
     );
+    warn.mockRestore();
+  });
+
+  it("warns when the marker write fails for a real reason", async () => {
+    // Swallowed, but not silently: this is the one path that lets the invariant
+    // decay, and a host that quietly stops outliving its rules is not something
+    // the console can report.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    send
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(
+        awsError("ProvisionedThroughputExceededException"),
+      );
+
+    await (await repository()).create(rule("REDIRECT#00100"));
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(HOST),
+      expect.anything(),
+    );
+    warn.mockRestore();
+  });
+
+  it("says nothing when the marker was simply already there", async () => {
+    // The expected outcome of every create after the first. Logging it would
+    // put a line in the console's logs for each rule anyone ever writes.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    send
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(awsError("ConditionalCheckFailedException"));
+
+    await (await repository()).create(rule("REDIRECT#00100"));
+
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 

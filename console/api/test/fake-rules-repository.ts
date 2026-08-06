@@ -46,9 +46,12 @@ export class FakeRulesRepository implements RulesRepository {
 
   // "Exists" means anything under the partition — a rule or an earlier marker —
   // not just the marker's own key, matching the two-step check in the real one.
+  //
+  // The marker is written either way, like the real one: refusing the duplicate
+  // is what the caller sees, and repairing a host that has rules but no marker
+  // is what the refused call is still good for.
   createHost(host: string): Promise<boolean> {
     const exists = [...this.items.values()].some((item) => item.pk === host);
-    if (exists) return Promise.resolve(false);
 
     // Cast because the marker carries no `type`: it is not a rule, and the fake
     // stores it exactly as the real repository writes it.
@@ -56,7 +59,7 @@ export class FakeRulesRepository implements RulesRepository {
       pk: host,
       sk: HOST_MARKER_SK,
     } as RuleItem);
-    return Promise.resolve(true);
+    return Promise.resolve(!exists);
   }
 
   // All of them at once — the real one deletes in batches and can fail part-way,

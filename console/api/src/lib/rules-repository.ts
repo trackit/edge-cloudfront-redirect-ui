@@ -34,8 +34,10 @@ export interface RuleItem {
  * One host in a target's table, with how many rules of each kind it holds.
  *
  * A host is not a stored entity — it is the partition key of its rule items — so
- * a host exists exactly as long as it has at least one rule, and one with none
- * cannot be listed because there is nothing in the table to list.
+ * it needs something in that partition to be listed at all. A host with rules is
+ * listed from them; a host with none is listed from its marker item, which both
+ * `createHost` and a rule's `create` leave behind. Only a partition holding
+ * nothing at all is absent.
  */
 export interface HostSummary {
   host: string;
@@ -87,10 +89,11 @@ const UNPROCESSED_BACKOFF_MS = 50;
  * milliseconds and fail for the one reason. Exponential so the later attempts
  * wait long enough to be worth making.
  *
- * Jittered because a delete is many batches and a fixed schedule marches them
- * all back to the table together, rebuilding the burst that caused the
- * throttling. Half the cap rather than AWS's full jitter: a delay drawn near
- * zero is the no-backoff case again for that batch.
+ * Jittered because the batches contending for the partition are the ones in
+ * *other* invocations — this delete runs its own strictly in sequence — and a
+ * fixed schedule marches all of them back to the table together, rebuilding the
+ * burst that caused the throttling. Half the cap rather than AWS's full jitter:
+ * a delay drawn near zero is the no-backoff case again for that batch.
  */
 const backoffFor = (attempt: number): number =>
   Math.round(
@@ -142,7 +145,11 @@ export type MoveOutcome =
 export interface RulesRepository {
   /** Every rule for a host, ascending `sk` (type, then priority). */
   listByHost(host: string): Promise<RuleItem[]>;
-  /** Every host holding at least one rule, with per-kind counts. Unordered. */
+  /**
+   * Every host with anything under its partition — rules, a marker, or both —
+   * with per-kind counts. A host that has never held either is not there.
+   * Unordered.
+   */
   listHosts(): Promise<HostSummary[]>;
   /**
    * Creates a host that has no rules yet. `false` when the host already exists —
@@ -292,9 +299,19 @@ export class DynamoRulesRepository implements RulesRepository {
    * the same empty host at once. A host that gained its first *rule* between the
    * probe and the Put still gets a marker — harmless, since `listHosts` folds
    * the partition into one entry and `deleteHost` takes the whole thing.
+   *
+   * An existing host is still refused, but its marker is ensured on the way out.
+   * That is the repair path for a host with rules and no marker — every rule
+   * written before `create` started leaving one, and any host whose marker write
+   * failed. Without it the 409 is a dead end: the host reads as existing, so it
+   * cannot be added, yet it still disappears when its last rule goes, and the
+   * only way back is to delete the host and write every rule again.
    */
   async createHost(host: string): Promise<boolean> {
-    if (await this.hostExists(host)) return false;
+    if (await this.hostExists(host)) {
+      await this.ensureHostMarker(host);
+      return false;
+    }
 
     // Its own Put rather than `putIf`: the marker carries no `type`, because it
     // is not a rule and must not read as a malformed one to anything that walks
@@ -485,7 +502,9 @@ export class DynamoRulesRepository implements RulesRepository {
    * degrades to the old behaviour rather than to anything incorrect.
    *
    * Rules written before this existed carry no marker, so their hosts still
-   * vanish with the last of them. Adding the host again is the way back.
+   * vanish with the last of them until something repairs one. Adding the host
+   * again does exactly that — see `createHost`, which ensures the marker even
+   * as it refuses the duplicate.
    */
   private async ensureHostMarker(host: string): Promise<void> {
     try {
@@ -498,9 +517,18 @@ export class DynamoRulesRepository implements RulesRepository {
           ConditionExpression: "attribute_not_exists(pk)",
         }),
       );
-    } catch {
-      // Deliberately swallowed — see above. Includes the expected
-      // ConditionalCheckFailed for every create after the first.
+    } catch (err) {
+      // The marker already being there is not a failure — it is what every
+      // create after the first sees, and the condition exists to produce it.
+      if (isConditionalCheckFailed(err)) return;
+
+      // Anything else is swallowed, for the reason above, but not silently: this
+      // is the one path that lets the invariant decay, and a host that quietly
+      // stops outliving its rules is not something the console can report.
+      console.warn(
+        `could not write the host marker for "${host}" on "${this.target.tableName}"`,
+        err,
+      );
     }
   }
 

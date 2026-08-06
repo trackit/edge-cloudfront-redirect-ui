@@ -46,12 +46,13 @@ export const createHost = async (req: ApiRequest): Promise<ApiResponse> => {
 };
 
 /**
- * Removes a host by removing every rule under it — there is nothing else to it.
+ * Removes a host by emptying its partition — every rule under it, and the marker
+ * that lets it exist without any.
  *
- * A host with no rules is a 404 rather than a 204: the two are the same state
- * (nothing stored under that partition key), and answering 204 would tell the
- * console it just deleted something that was never there, hiding a typo'd or
- * already-deleted host behind a success.
+ * A host nothing is stored under at all is a 404 rather than a 204: answering
+ * 204 would tell the console it just deleted something that was never there,
+ * hiding a typo'd or already-deleted host behind a success. A host with a marker
+ * and no rules is *not* that case — it exists, and deleting it is a 204.
  *
  * Unlike `deleteTarget`, this destroys data. The target's table survives; its
  * rules for this host do not.
@@ -62,7 +63,7 @@ export const deleteHost = async (req: ApiRequest): Promise<ApiResponse> => {
 
   const deleted = await getRulesRepository(target).deleteHost(host);
   if (deleted === 0) {
-    throw ApiError.notFound(`No rules for host "${host}" in this target`);
+    throw ApiError.notFound(`No such host "${host}" in this target`);
   }
 
   return json(204, undefined);
