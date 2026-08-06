@@ -1,4 +1,5 @@
 import { expect, test as base, type Page, type Route } from "@playwright/test";
+import type { Stored } from "../src/distribution";
 import type { Distribution } from "../src/types";
 
 /**
@@ -141,10 +142,10 @@ const seedOnce = (page: Page, key: string, value: unknown) =>
     [key, JSON.stringify(value)] as const,
   );
 
-export const seedStorage = async (
-  page: Page,
-  value: { distributions: Distribution[]; current: string | null },
-): Promise<void> => {
+// `Stored` itself rather than a hand-written copy of its fields: the copy was
+// mutable where the real type is readonly, so it had already stopped accepting
+// the values the app produces, and a spec seeding one would not compile.
+export const seedStorage = async (page: Page, value: Stored): Promise<void> => {
   await seedOnce(page, STORAGE_KEY, value);
 };
 

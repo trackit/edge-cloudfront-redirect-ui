@@ -22,12 +22,18 @@ const STORAGE_KEY = "edgeroute.distributions";
  */
 const LEGACY_STORAGE_KEY = "edgeroute.distribution";
 
-/** Prefills the connect form. Nothing is sent until the user connects. */
-export const SAMPLE_DISTRIBUTION: DistributionDraft = {
+/**
+ * Prefills the connect form. Nothing is sent until the user connects.
+ *
+ * Frozen for the same reason `EMPTY` is: the connect screen hands this straight
+ * to `useState`, so it is the live draft rather than a copy of one, and two
+ * sessions that reach for the sample share the one object.
+ */
+export const SAMPLE_DISTRIBUTION: DistributionDraft = Object.freeze({
   distributionId: "E2QWERTY123456",
   tableName: "edgeroute-rules",
   region: "us-east-1",
-};
+});
 
 export const emptyDistribution = (): DistributionDraft => ({
   distributionId: "",
@@ -133,8 +139,13 @@ const parse = (raw: string | null): Distribution | null => {
  *
  * Readonly throughout because every change here replaces the whole value: a
  * reducer that wrote into the previous state instead of returning a new one
- * would leave React with an unchanged reference and no re-render. The compiler
- * holds that, so it is not left to review.
+ * would leave React with an unchanged reference and no re-render.
+ *
+ * The compiler refuses the ways that mistake actually gets made — writing to a
+ * field, or reshaping the list. It is not a proof: TypeScript ignores readonly
+ * modifiers when checking assignability, so an entry copied into a mutable
+ * annotation can still be written through. That takes saying so explicitly,
+ * which is the point at which review can see it.
  */
 export interface Stored {
   readonly distributions: readonly Distribution[];
