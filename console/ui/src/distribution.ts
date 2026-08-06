@@ -306,6 +306,24 @@ export function useDistributions() {
     setStored((prev) => reduceSelect(prev, distributionId));
   }, []);
 
+  /**
+   * Forgets the selected distribution in this browser. Does not delete the
+   * target from the API's registry — that is shared state. If others remain,
+   * the first one becomes current; if none do, the console returns to connect.
+   */
+  const disconnectCurrent = useCallback(() => {
+    setStored((prev) => {
+      if (prev.current === null) return prev;
+      const next = prev.distributions.filter(
+        (entry) => entry.distributionId !== prev.current,
+      );
+      return {
+        distributions: next,
+        current: next[0]?.distributionId ?? null,
+      };
+    });
+  }, []);
+
   useEffect(() => {
     try {
       if (stored.distributions.length === 0) {
@@ -321,5 +339,12 @@ export function useDistributions() {
     }
   }, [stored]);
 
-  return { distributions, current, connect, replaceCurrent, select };
+  return {
+    distributions,
+    current,
+    connect,
+    replaceCurrent,
+    select,
+    disconnectCurrent,
+  };
 }
