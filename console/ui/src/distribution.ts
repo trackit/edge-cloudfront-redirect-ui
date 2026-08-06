@@ -130,17 +130,24 @@ const parse = (raw: string | null): Distribution | null => {
  *
  * Not an index, either — the list is rewritten on every change, and an index
  * would silently point at a different entry after one is replaced.
+ *
+ * Readonly throughout because every change here replaces the whole value: a
+ * reducer that wrote into the previous state instead of returning a new one
+ * would leave React with an unchanged reference and no re-render. The compiler
+ * holds that, so it is not left to review.
  */
 export interface Stored {
-  distributions: Distribution[];
-  current: string | null;
+  readonly distributions: readonly Distribution[];
+  readonly current: string | null;
 }
 
-// Frozen because it is both the "nothing stored" result and the hook's initial
-// state, so every empty console shares this one object — an accidental write
-// through any of them would change what the next reader sees.
+// Both the "nothing stored" result and the hook's initial state, so every empty
+// console shares this one object — an accidental write through any of them would
+// change what the next reader sees. `Stored` being readonly is what rules that
+// out; the freeze is the runtime backstop, and it covers the array too because
+// `Object.freeze` is shallow and the array is the field everything spreads from.
 export const EMPTY: Stored = Object.freeze({
-  distributions: [],
+  distributions: Object.freeze([]),
   current: null,
 });
 

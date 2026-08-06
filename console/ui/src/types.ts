@@ -11,16 +11,21 @@
  * properly is still open.
  *
  * Everything that reads or writes this goes through `distribution.ts`.
+ *
+ * Readonly because a connected distribution is only ever replaced, never edited
+ * in place: it is React state, so a field written through an existing entry
+ * would leave the reference unchanged and the console showing the old value.
+ * Editing settings produces a new entry — see `reduceReplaceCurrent`.
  */
 export interface Distribution {
   /** Server-assigned target id. The `targetId` in every rules route. */
-  targetId: string;
+  readonly targetId: string;
   /** CloudFront distribution ID or ARN. Client-side only. */
-  distributionId: string;
+  readonly distributionId: string;
   /** DynamoDB table holding this distribution's redirect/rewrite rules. */
-  tableName: string;
+  readonly tableName: string;
   /** Region the table lives in. */
-  region: string;
+  readonly region: string;
 }
 
 /** What the connect form collects, before the API assigns a `targetId`. */

@@ -9,7 +9,7 @@ import {
 } from "./icons";
 
 interface Props {
-  distributions: Distribution[];
+  distributions: readonly Distribution[];
   current: Distribution;
   onSelect: (distributionId: string) => void;
   onAddDistribution: () => void;

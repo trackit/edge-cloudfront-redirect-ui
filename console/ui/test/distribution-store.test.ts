@@ -31,6 +31,26 @@ const dist = (over: Partial<Distribution> = {}): Distribution => ({
 const stored = (distributions: Distribution[], current: string | null) =>
   JSON.stringify({ distributions, current });
 
+describe("EMPTY", () => {
+  /**
+   * One object is shared by every empty console — each `parseStored` failure
+   * path and the hook's initial state all return this exact value, so a write
+   * through any of them is a write for all the others. `Stored` being readonly
+   * is the real guard; these pin the runtime backstop, including the array,
+   * which a plain `Object.freeze` on the object would leave writable.
+   */
+  it("cannot be written through", () => {
+    expect(() => (EMPTY.distributions as Distribution[]).push(dist())).toThrow(
+      TypeError,
+    );
+    expect(() => {
+      (EMPTY as { current: string | null }).current = "E1";
+    }).toThrow(TypeError);
+
+    expect(EMPTY).toEqual({ distributions: [], current: null });
+  });
+});
+
 describe("parseStored", () => {
   it("reads back what the hook wrote", () => {
     const a = dist();
