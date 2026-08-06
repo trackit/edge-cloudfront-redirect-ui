@@ -131,8 +131,7 @@ const assertKeysAgree = (input: {
   // normalized to the stored key, so a body naming the very same host in another
   // case is agreement, not a mismatch. Only a *different* host is an error. The
   // stored `pk` always comes from the path either way.
-  const bodyPk =
-    typeof input.pk === "string" ? hostKey(input.pk) : (input.pk as unknown);
+  const bodyPk = typeof input.pk === "string" ? hostKey(input.pk) : input.pk;
 
   if (input.pk !== undefined && bodyPk !== input.host) {
     mismatched.push({

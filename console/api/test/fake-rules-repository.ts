@@ -78,11 +78,18 @@ export class FakeRulesRepository implements RulesRepository {
     return Promise.resolve(this.items.delete(this.key(host, sk)));
   }
 
+  // Leaves the host marker behind too, like the real one: a fake that skipped it
+  // would let a test pass on the asymmetry where a host created by writing a
+  // rule vanishes with that rule while an explicitly added one stays.
   create(item: RuleItem): Promise<boolean> {
     const key = this.key(item.pk, item.sk);
     if (this.items.has(key)) return Promise.resolve(false);
 
     this.items.set(key, item);
+    this.items.set(this.key(item.pk, HOST_MARKER_SK), {
+      pk: item.pk,
+      sk: HOST_MARKER_SK,
+    } as RuleItem);
     return Promise.resolve(true);
   }
 

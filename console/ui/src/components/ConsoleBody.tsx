@@ -29,8 +29,15 @@ export default function ConsoleBody({ distribution }: Props) {
   const navigate = useNavigate();
 
   // Decoded by React Router, so this is the host itself, not its URL spelling.
+  //
+  // Lowercased for the same reason the API normalizes `:host`: a host's identity
+  // is case-insensitive, and this value is matched against the list, printed as
+  // the title, and compared against the host a delete just removed. Links from
+  // the sidebar already carry the server's spelling, but a typed or shared
+  // `/console/hosts/WWW.Example.com` would otherwise match nothing and claim a
+  // host that plainly exists is not there.
   const { host } = useParams<{ host: string }>();
-  const current = host ?? null;
+  const current = host?.toLowerCase() ?? null;
 
   /*
     Reload rather than push the new host into the list here: the counts come from

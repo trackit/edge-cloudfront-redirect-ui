@@ -394,6 +394,78 @@ describe("DELETE /targets/:targetId/hosts/:host", () => {
   });
 });
 
+describe("a host outlives its rules however it came to exist", () => {
+  /*
+    A host is only ever a rule's partition key, so without a marker it exists
+    exactly as long as it has rules. `createHost` writes one — which used to mean
+    the sidebar kept a host added through the console and dropped one that first
+    appeared because somebody wrote a rule for it, two hosts in the same state
+    behaving differently for a reason nobody can see from the console.
+
+    Creating a rule now leaves the marker too, so these two arrive at the same
+    place.
+  */
+  const listed = async () =>
+    parse((await handler(event("GET", "/targets/t1/hosts"))).body);
+
+  /** A complete rule body — this suite is about the host, not about validation. */
+  const ruleInput = {
+    priority: 100,
+    type: "erMatchRule",
+    statusCode: 301,
+    redirectURL: "https://www.example.com/moved",
+    matches: [
+      { matchType: "path", matchOperator: "equals", matchValue: "/old" },
+    ],
+  };
+
+  it("keeps a host reached by writing a rule, once that rule is deleted", async () => {
+    seed();
+
+    const created = await handler(
+      event("POST", "/targets/t1/hosts/www.example.com/rules", ruleInput),
+    );
+    expect(created.statusCode).toBe(201);
+
+    const gone = await handler(
+      event(
+        "DELETE",
+        "/targets/t1/hosts/www.example.com/rules/REDIRECT%2300100",
+      ),
+    );
+    expect(gone.statusCode).toBe(204);
+
+    expect(await listed()).toEqual([
+      { host: "www.example.com", redirects: 0, rewrites: 0 },
+    ]);
+  });
+
+  it("matches what an explicitly added host does", async () => {
+    seed();
+    await handler(
+      event("POST", "/targets/t1/hosts", { host: "www.example.com" }),
+    );
+
+    expect(await listed()).toEqual([
+      { host: "www.example.com", redirects: 0, rewrites: 0 },
+    ]);
+  });
+
+  it("still takes the host away when the host itself is deleted", async () => {
+    // The marker must not turn a deleted host into one that cannot be removed.
+    seed();
+    await handler(
+      event("POST", "/targets/t1/hosts/www.example.com/rules", ruleInput),
+    );
+
+    const res = await handler(
+      event("DELETE", "/targets/t1/hosts/www.example.com"),
+    );
+    expect(res.statusCode).toBe(204);
+    expect(await listed()).toEqual([]);
+  });
+});
+
 describe("summarizeHosts", () => {
   it("counts disabled rules like any other", async () => {
     // The projection reads pk and sk only, so `disabled` is not even fetched —

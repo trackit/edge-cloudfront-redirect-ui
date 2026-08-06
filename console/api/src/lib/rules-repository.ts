@@ -75,6 +75,31 @@ const BATCH_LIMIT = 25;
  */
 const UNPROCESSED_ATTEMPTS = 5;
 
+/** First wait between re-sends; each later one doubles it. */
+const UNPROCESSED_BACKOFF_MS = 50;
+
+/**
+ * How long to wait before re-sending the items DynamoDB declined.
+ *
+ * Items come back unprocessed *because* the table is throttling, so re-sending
+ * immediately puts the same request to the same hot partition before anything
+ * it is waiting on can have changed — five back-to-back attempts are spent in
+ * milliseconds and fail for the one reason. Exponential so the later attempts
+ * wait long enough to be worth making.
+ *
+ * Jittered because a delete is many batches and a fixed schedule marches them
+ * all back to the table together, rebuilding the burst that caused the
+ * throttling. Half the cap rather than AWS's full jitter: a delay drawn near
+ * zero is the no-backoff case again for that batch.
+ */
+const backoffFor = (attempt: number): number =>
+  Math.round(
+    UNPROCESSED_BACKOFF_MS * 2 ** attempt * (0.5 + Math.random() * 0.5),
+  );
+
+const sleepFor = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
  * Folds projected keys into one entry per host. Exported so the in-memory fake
  * counts the same way the real repository does rather than reimplementing it.
@@ -126,14 +151,19 @@ export interface RulesRepository {
    */
   createHost(host: string): Promise<boolean>;
   /**
-   * Deletes every rule under a host. Returns how many were removed — 0 means the
-   * host had none, which is the caller's 404, a host being exactly its rules.
+   * Deletes everything under a host. Returns how many *items* went, which is the
+   * rules plus the host marker if one was there — only ever compared against 0,
+   * where it means the host held nothing at all and is the caller's 404.
    */
   deleteHost(host: string): Promise<number>;
   get(host: string, sk: string): Promise<RuleItem | null>;
   /** `false` when there was no such rule — the caller turns that into a 404. */
   delete(host: string, sk: string): Promise<boolean>;
-  /** `false` when that key is already taken — never overwrites. */
+  /**
+   * `false` when that key is already taken — never overwrites. A successful
+   * create also ensures the host's marker, so a host reached this way survives
+   * the deletion of its last rule exactly as one added through `createHost` does.
+   */
   create(item: RuleItem): Promise<boolean>;
   /** `false` when there was no rule at that key — replace, never insert. */
   replace(item: RuleItem): Promise<boolean>;
@@ -164,7 +194,16 @@ export interface RulesRepository {
 export class DynamoRulesRepository implements RulesRepository {
   private readonly client: DynamoDBDocumentClient;
 
-  constructor(private readonly target: ResolvedTarget) {
+  /**
+   * `sleep` is the backoff seam. Injected rather than reached for directly so a
+   * test covering the unprocessed-items retry can assert the delays without
+   * spending them — the alternative is a suite that really waits out five
+   * doubling timeouts, or fake timers threaded through an async retry loop.
+   */
+  constructor(
+    private readonly target: ResolvedTarget,
+    private readonly sleep: (ms: number) => Promise<void> = sleepFor,
+  ) {
     this.client = docClient(target.region, target.roleArn);
   }
 
@@ -356,6 +395,10 @@ export class DynamoRulesRepository implements RulesRepository {
     let pending = keys.map((Key) => ({ DeleteRequest: { Key } }));
 
     for (let attempt = 0; attempt < UNPROCESSED_ATTEMPTS; attempt += 1) {
+      // Between attempts only: nothing is owed before the first, and waiting
+      // after the last would delay the throw by a backoff nobody uses.
+      if (attempt > 0) await this.sleep(backoffFor(attempt - 1));
+
       const out = await this.send(() =>
         this.client.send(
           new BatchWriteCommand({
@@ -420,7 +463,45 @@ export class DynamoRulesRepository implements RulesRepository {
   // priority — a plain Put would silently replace it, and the author would see
   // their new rule while the old one simply vanished.
   async create(item: RuleItem): Promise<boolean> {
-    return this.putIf(item, "attribute_not_exists(pk)");
+    const created = await this.putIf(item, "attribute_not_exists(pk)");
+    if (created) await this.ensureHostMarker(item.pk);
+    return created;
+  }
+
+  /**
+   * Writes the host marker unless it is already there.
+   *
+   * So that a host outlives its rules however it came to exist. Without this the
+   * marker is only ever written by `createHost`, and two hosts in the same state
+   * behave differently: one added through the console keeps its place in the
+   * sidebar when its last rule goes, while one that first appeared as a rule's
+   * partition key disappears at that moment. Which of the two a user is looking
+   * at is not something they can see.
+   *
+   * After the rule, and never allowed to fail the create: the rule is what the
+   * caller asked for, and a 500 here would report a failure for a write that
+   * happened. A marker that did not get written costs only the empty-host case —
+   * `listHosts` reports the host from its rules regardless — so losing one
+   * degrades to the old behaviour rather than to anything incorrect.
+   *
+   * Rules written before this existed carry no marker, so their hosts still
+   * vanish with the last of them. Adding the host again is the way back.
+   */
+  private async ensureHostMarker(host: string): Promise<void> {
+    try {
+      await this.client.send(
+        new PutCommand({
+          TableName: this.target.tableName,
+          Item: { pk: host, sk: HOST_MARKER_SK },
+          // The marker's own key, so this writes once and every later create
+          // through the same host is refused here rather than rewriting it.
+          ConditionExpression: "attribute_not_exists(pk)",
+        }),
+      );
+    } catch {
+      // Deliberately swallowed — see above. Includes the expected
+      // ConditionalCheckFailed for every create after the first.
+    }
   }
 
   // The mirror image: PUT replaces the addressed rule and never inserts one, so
