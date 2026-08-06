@@ -1850,6 +1850,11 @@ button {
   padding-bottom: 18px;
   border-bottom: 1px solid var(--border);
 }
+/* Match conditions already ends on the dashed Add button — keep the closing
+   rule tight under it, like the non-banded rewrite case. */
+.editor-section.is-banded:has(> .matches) {
+  padding-bottom: 6px;
+}
 .editor-section.is-banded > legend {
   width: 100%;
   padding-top: 12px;
@@ -1954,9 +1959,15 @@ button {
 /* --- match conditions --- */
 
 .matches {
-  /* Separates the conditions from Priority & status below. */
+  /* Separates the conditions from Priority & status below. On a redirect the
+     Match conditions section is itself `is-banded`, so that section owns the
+     closing rule and this one stays quiet to avoid a double line. */
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
+}
+.editor-section.is-banded > .matches {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 .matches-empty {
   margin: 0 0 12px;

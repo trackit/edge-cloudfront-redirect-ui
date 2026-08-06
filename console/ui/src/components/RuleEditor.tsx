@@ -170,7 +170,9 @@ export default function RuleEditor({
           <RewriteFields draft={draft as RewriteDraft} onChange={patch} />
         )}
 
-        <fieldset className="editor-section">
+        <fieldset
+          className={`editor-section${draft.kind === "redirect" ? " is-banded" : ""}`}
+        >
           <legend>Match conditions</legend>
           <MatchConditions matches={draft.matches} onChange={setMatches} />
         </fieldset>
