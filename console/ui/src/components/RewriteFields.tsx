@@ -1,10 +1,12 @@
 import Toggle from "./Toggle";
 import { IconInfo } from "./icons";
+import { SSL_PROTOCOLS } from "../ruleDraft";
 import type {
   CustomDraft,
   OriginKind,
   RewriteDraft,
   S3Draft,
+  SslProtocol,
 } from "../ruleDraft";
 
 interface Props {
@@ -271,15 +273,26 @@ export default function RewriteFields({ draft, onChange }: Props) {
 
               <div className="field">
                 <label htmlFor="custom-ssl">SSL protocols</label>
-                <input
+                <select
                   id="custom-ssl"
                   className="input mono"
-                  placeholder="TLSv1.2"
                   value={draft.custom.sslProtocols}
                   onChange={(event) =>
-                    patchCustom({ sslProtocols: event.target.value })
+                    patchCustom({
+                      sslProtocols: event.target.value as SslProtocol,
+                    })
                   }
-                />
+                >
+                  {SSL_PROTOCOLS.map((protocol) => (
+                    <option key={protocol} value={protocol}>
+                      {protocol === "TLSv1"
+                        ? "TLS 1.0 (deprecated)"
+                        : protocol === "TLSv1.1"
+                          ? "TLS 1.1 (deprecated)"
+                          : "TLS 1.2"}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
           </>

@@ -75,6 +75,14 @@ export interface S3Draft {
   path: string;
 }
 
+/**
+ * CloudFront's allowed origin SSL protocols, strongest first. SSLv3 is omitted
+ * on purpose — too broken to offer in the console. TLSv1.3 is not a valid value
+ * for a custom origin's `sslProtocols` in CloudFront.
+ */
+export const SSL_PROTOCOLS = ["TLSv1.2", "TLSv1.1", "TLSv1"] as const;
+export type SslProtocol = (typeof SSL_PROTOCOLS)[number];
+
 export interface CustomDraft {
   domainName: string;
   path: string;
@@ -83,12 +91,11 @@ export interface CustomDraft {
   readTimeout: string;
   keepaliveTimeout: string;
   /**
-   * Comma-separated, not an array. The schema wants a list, but a field being
-   * typed into passes through states a list cannot hold — a trailing comma, a
-   * half-written `TLSv1.` — so it is split once on save, like the numbers above
-   * are parsed once on save.
+   * One CloudFront-allowed TLS version. The schema stores an array; the editor
+   * offers a single choice and wraps it on save. Free text is gone so a typo
+   * cannot reach the edge.
    */
-  sslProtocols: string;
+  sslProtocols: SslProtocol;
 }
 
 export type RuleDraft = RedirectDraft | RewriteDraft;
@@ -107,12 +114,16 @@ const CUSTOM_DEFAULTS: CustomDraft = {
   sslProtocols: "TLSv1.2",
 };
 
-/** The list the schema wants, out of the comma-separated field. */
-const splitSslProtocols = (value: string): string[] =>
-  value
-    .split(",")
-    .map((protocol) => protocol.trim())
-    .filter((protocol) => protocol !== "");
+const isSslProtocol = (value: string): value is SslProtocol =>
+  (SSL_PROTOCOLS as readonly string[]).includes(value);
+
+/** Prefer the strongest listed protocol when reloading a stored array. */
+const pickSslProtocol = (protocols: string[]): SslProtocol => {
+  for (const preferred of SSL_PROTOCOLS) {
+    if (protocols.includes(preferred)) return preferred;
+  }
+  return "TLSv1.2";
+};
 
 const S3_DEFAULTS: S3Draft = {
   authMethod: "origin-access-identity",
@@ -204,7 +215,7 @@ export const draftFromRule = (rule: Rule): RuleDraft => {
             protocol: custom.protocol,
             readTimeout: String(custom.readTimeout),
             keepaliveTimeout: String(custom.keepaliveTimeout),
-            sslProtocols: custom.sslProtocols.join(", "),
+            sslProtocols: pickSslProtocol(custom.sslProtocols),
           },
     pathAndQS: forward.pathAndQS ?? "",
     keepQueryString: forward.useIncomingQueryString === true,
@@ -361,10 +372,10 @@ export const validateDraft = (
         });
       }
     }
-    if (splitSslProtocols(draft.custom.sslProtocols).length === 0) {
+    if (!isSslProtocol(draft.custom.sslProtocols)) {
       details.push({
         path: "/forwardSettings/origin/custom/sslProtocols",
-        message: "must name at least one TLS version, such as TLSv1.2",
+        message: "must be TLSv1.2, TLSv1.1, or TLSv1",
       });
     }
   }
@@ -428,7 +439,7 @@ export const toRuleInput = (draft: RuleDraft): RuleInput => {
               protocol: draft.custom.protocol,
               readTimeout: Number(draft.custom.readTimeout),
               keepaliveTimeout: Number(draft.custom.keepaliveTimeout),
-              sslProtocols: splitSslProtocols(draft.custom.sslProtocols),
+              sslProtocols: [draft.custom.sslProtocols],
               customHeaders: {},
             },
           }
