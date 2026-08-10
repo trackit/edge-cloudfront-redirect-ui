@@ -124,7 +124,7 @@ export interface paths {
      * Delete a host and all of its rules.
      * @description Destructive. A host is the partition key of its rules and nothing else, so removing it means removing every redirect and rewrite stored under it. The target and its DynamoDB table are untouched.
      *
-     *     A host with no rules is a 404, not a 204 — the two are the same stored state, and reporting success would hide a mistyped or already-deleted host.
+     *     A host nothing is stored under at all is a 404, not a 204 — reporting success would hide a mistyped or already-deleted host. A host that exists with no rules is not that case: it is deleted like any other, and answers 204.
      *
      *     Not atomic: the rules are removed in batches of 25, so a failure part-way leaves the host with fewer rules rather than none. Repeat the request to finish the job.
      */
@@ -157,6 +157,8 @@ export interface paths {
      * @description The server owns both keys: `pk` is the host from the path and `sk` is `TYPE#priority` with the priority zero-padded. Never overwrites — a priority already taken for that host and rule type is a 409.
      *
      *     The response body's `sk` is the created rule's id. It contains a `#`, so addressing the rule afterwards means percent-encoding it: `…/rules/REDIRECT%2300100`.
+     *
+     *     Creating a rule for a host that does not exist yet brings the host into existence, exactly as `POST /hosts` would: the host keeps its place in the list afterwards even if every rule under it is deleted, and takes an explicit `DELETE /hosts/{host}` to remove.
      */
     post: operations["createRule"];
     delete?: never;
