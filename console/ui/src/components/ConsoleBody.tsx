@@ -3,7 +3,7 @@ import { Navigate, useNavigate, useParams } from "react-router-dom";
 import AddHostModal from "./AddHostModal";
 import DeleteHostDialog from "./DeleteHostDialog";
 import HostsSidebar from "./HostsSidebar";
-import { useHosts } from "../hosts";
+import { resolveHostView, useHosts } from "../hosts";
 import { CONSOLE_PATH, hostPath } from "../hostRoutes";
 import type { HostSummary } from "../api";
 import type { Distribution } from "../types";
@@ -110,12 +110,13 @@ export default function ConsoleBody({ distribution }: Props) {
   }
 
   const { hosts } = state;
+  const view = resolveHostView(hosts, current);
 
   // The rail stays put with no hosts. It is where adding a host lives, and a
   // control that moves to the middle of the screen for the empty case and back
   // again once there is one host teaches the user nothing they can reuse. The
   // primary button below is a second way to the same modal, not the only one.
-  if (hosts.length === 0) {
+  if (view.kind === "empty") {
     return (
       <div className="console-body">
         <HostsSidebar
@@ -148,24 +149,24 @@ export default function ConsoleBody({ distribution }: Props) {
   // Land on a host rather than an empty right-hand pane. `replace` so the
   // hostless URL does not sit in history, where Back would bounce off it
   // straight back to the host just left.
-  if (current === null) {
-    return <Navigate to={hostPath(hosts[0].host)} replace />;
+  if (view.kind === "redirect") {
+    return <Navigate to={hostPath(view.to)} replace />;
   }
 
-  const known = hosts.some((h) => h.host === current);
+  const { host: shown, known } = view;
 
   return (
     <div className="console-body">
       <HostsSidebar
         hosts={hosts}
-        current={current}
+        current={shown}
         onAdd={() => setAdding(true)}
         onDelete={setDeleting}
       />
 
       <main className="host-view">
         <header className="host-head">
-          <h1 className="host-name mono">{current}</h1>
+          <h1 className="host-name mono">{shown}</h1>
           <p className="host-sub mono">
             {distribution.distributionId} · {distribution.tableName}
           </p>
@@ -181,8 +182,8 @@ export default function ConsoleBody({ distribution }: Props) {
           <div className="console-error" role="alert">
             <strong>No such host</strong>
             <span>
-              “{current}” is not in this target. It may have been deleted, or
-              the link may point at another distribution.
+              “{shown}” is not in this target. It may have been deleted, or the
+              link may point at another distribution.
             </span>
           </div>
         )}
