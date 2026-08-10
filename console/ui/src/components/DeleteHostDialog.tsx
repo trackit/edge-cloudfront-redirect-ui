@@ -49,6 +49,10 @@ export default function DeleteHostDialog({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
 
+  // Opened on mount, and the element's own `close` event is deliberately not
+  // wired to `onClose` — see the longer note in AddHostModal, which this
+  // mirrors: `close()` raises that event from the effect cleanup too, which
+  // would read as the user dismissing a dialog that had only just opened.
   useEffect(() => {
     const element = dialog.current;
     element?.showModal();
@@ -91,9 +95,13 @@ export default function DeleteHostDialog({
     <dialog
       ref={dialog}
       className="modal"
-      onClose={onClose}
+      // Escape, which unlike `close` is only ever the user.
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
       onClick={(e) => {
-        if (e.target === dialog.current) dialog.current?.close();
+        if (e.target === dialog.current) onClose();
       }}
       aria-labelledby="delete-host-title"
     >
@@ -106,7 +114,7 @@ export default function DeleteHostDialog({
           <button
             className="modal-x"
             type="button"
-            onClick={() => dialog.current?.close()}
+            onClick={onClose}
             aria-label="Close"
           >
             <IconClose size={16} />
@@ -143,7 +151,7 @@ export default function DeleteHostDialog({
             className="btn btn-ghost"
             type="button"
             disabled={pending}
-            onClick={() => dialog.current?.close()}
+            onClick={onClose}
           >
             Cancel
           </button>

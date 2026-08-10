@@ -52,8 +52,22 @@ export default function AddHostModal({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
 
-  // `showModal()` is what makes it modal — rendering the element alone leaves it
-  // hidden. Opening once on mount, since the component only exists while open.
+  /*
+    `showModal()` is what makes it modal — rendering the element alone leaves it
+    hidden. Opening once on mount, since the component only exists while open.
+
+    The element's own `close` event is deliberately *not* wired to `onClose`.
+    Whether this dialog exists is the parent's state, and `close()` fires that
+    event however it was reached — including from this cleanup. React re-runs
+    effects on mount in development, so the cleanup's `close()` would tell the
+    parent the user had dismissed a dialog that had only just opened, and it
+    would vanish on the frame it appeared. A flag guarding the handler does not
+    help: `close` is queued rather than dispatched synchronously, so it lands
+    after the flag has been cleared for the remount.
+
+    So every genuine dismissal calls `onClose` itself — the two buttons, the
+    backdrop, and `onCancel` for Escape, which only fires for the user.
+  */
   useEffect(() => {
     const element = dialog.current;
     element?.showModal();
@@ -100,13 +114,18 @@ export default function AddHostModal({
     <dialog
       ref={dialog}
       className="modal"
-      // Fires for Escape as well as `close()`, so this is the single exit.
-      onClose={onClose}
+      // Escape, and only ever the user — unlike `close`, which `close()` raises
+      // too. `preventDefault` so the parent's unmount is what removes the dialog,
+      // rather than the browser closing it first and leaving a frame of nothing.
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
       // A click landing on the dialog element itself is a click on the backdrop:
       // anything inside is over a child. Matches the dismiss-by-clicking-away
       // people expect from an overlay.
       onClick={(e) => {
-        if (e.target === dialog.current) dialog.current?.close();
+        if (e.target === dialog.current) onClose();
       }}
       aria-labelledby="add-host-title"
     >
@@ -121,7 +140,7 @@ export default function AddHostModal({
           <button
             className="modal-x"
             type="button"
-            onClick={() => dialog.current?.close()}
+            onClick={onClose}
             aria-label="Close"
           >
             <IconClose size={16} />
@@ -177,7 +196,7 @@ export default function AddHostModal({
             className="btn btn-ghost"
             type="button"
             disabled={pending}
-            onClick={() => dialog.current?.close()}
+            onClick={onClose}
           >
             Cancel
           </button>
