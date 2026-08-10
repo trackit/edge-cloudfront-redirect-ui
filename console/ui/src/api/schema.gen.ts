@@ -160,7 +160,9 @@ export interface paths {
      *
      *     The response body's `sk` is the created rule's id. It contains a `#`, so addressing the rule afterwards means percent-encoding it: `…/rules/REDIRECT%2300100`.
      *
-     *     Creating a rule for a host that does not exist yet brings the host into existence, exactly as `POST /hosts` would: the host keeps its place in the list afterwards even if every rule under it is deleted, and takes an explicit `DELETE /hosts/{host}` to remove.
+     *     Creating a rule for a host that does not exist yet brings the host into existence, as `POST /hosts` would: the host keeps its place in the list afterwards even if every rule under it is deleted, and takes an explicit `DELETE /hosts/{host}` to remove.
+     *
+     *     That part is best effort, and deliberately so. The marker is written after the rule, in its own request, and a failure there is logged rather than returned — the rule is what was asked for and it is already stored, so a 500 would report a failure for a write that happened. A host whose marker was lost that way behaves as hosts did before markers existed: still listed while it has rules, gone when the last one is deleted. Adding the host repairs it — see `HostConflict`.
      */
     post: operations["createRule"];
     delete?: never;
