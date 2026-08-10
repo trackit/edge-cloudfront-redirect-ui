@@ -48,6 +48,7 @@ export default function AddHostModal({
   client = api,
 }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const field = useRef<HTMLInputElement>(null);
   const [host, setHost] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
@@ -71,6 +72,19 @@ export default function AddHostModal({
   useEffect(() => {
     const element = dialog.current;
     element?.showModal();
+
+    /*
+      Focused here rather than with `autoFocus` on the input, which does nothing:
+      React does not emit the `autofocus` attribute, and `showModal()` runs after
+      mount anyway, so the dialog's own focusing steps had already picked the first
+      focusable child — the close button.
+
+      That is not a cosmetic difference. Focus on a button means Enter activates
+      it, so opening this and pressing Enter dismissed the dialog instead of
+      submitting it, and anything typed went nowhere until the field was clicked.
+    */
+    field.current?.focus();
+
     return () => element?.close();
   }, []);
 
@@ -167,7 +181,10 @@ export default function AddHostModal({
             <label htmlFor="host">Host name</label>
             <div className="input-icon">
               <IconGlobe size={15} />
+              {/* Focused from the open effect above, not with `autoFocus` — see
+                  the note there for why that attribute never took effect. */}
               <input
+                ref={field}
                 id="host"
                 className="input mono"
                 placeholder="shop.example.com"
@@ -176,8 +193,6 @@ export default function AddHostModal({
                 autoComplete="off"
                 autoCapitalize="none"
                 spellCheck={false}
-                // The one field, so it is where the caret belongs on open.
-                autoFocus
               />
             </div>
             <div className="hint">

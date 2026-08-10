@@ -339,6 +339,36 @@ test.describe("dismissing the add-host modal", () => {
   }
 });
 
+test("the add-host modal opens with the caret in its field", async ({
+  page,
+  api,
+}) => {
+  /*
+    Focus on open decides what Enter does. With it on the close button — where the
+    dialog's own focusing steps put it, because `autoFocus` never applied — opening
+    this and pressing Enter dismissed the dialog instead of submitting it, and
+    typing went nowhere until the field was clicked.
+
+    So this types without clicking first, and submits with the keyboard only.
+  */
+  api.setHosts(await seed(page, [www]));
+  await gotoConsole(page);
+
+  await page
+    .getByRole("navigation", { name: "Hosts" })
+    .getByRole("button", { name: "Add a host" })
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+
+  await page.keyboard.type("shop.example.com");
+  await expect(page.getByLabel("Host name")).toHaveValue("shop.example.com");
+
+  api.setHosts([shop, www]);
+  await page.keyboard.press("Enter");
+
+  await expect(page).toHaveURL("/console/hosts/shop.example.com");
+});
+
 test("dismissing the delete dialog keeps the host and restores focus", async ({
   page,
   api,
