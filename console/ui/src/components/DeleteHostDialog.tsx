@@ -59,6 +59,14 @@ export default function DeleteHostDialog({
     return () => element?.close();
   }, []);
 
+  // Closes the element before telling the parent, which is the order that returns
+  // focus to the row's delete button — see the note in AddHostModal. The cleanup
+  // above cannot do it: React detaches the node first, so focus falls to `<body>`.
+  const dismiss = () => {
+    dialog.current?.close();
+    onClose();
+  };
+
   const lost = rulesLost(host);
 
   const remove = async () => {
@@ -98,10 +106,10 @@ export default function DeleteHostDialog({
       // Escape, which unlike `close` is only ever the user.
       onCancel={(e) => {
         e.preventDefault();
-        onClose();
+        dismiss();
       }}
       onClick={(e) => {
-        if (e.target === dialog.current) onClose();
+        if (e.target === dialog.current) dismiss();
       }}
       aria-labelledby="delete-host-title"
     >
@@ -114,7 +122,7 @@ export default function DeleteHostDialog({
           <button
             className="modal-x"
             type="button"
-            onClick={onClose}
+            onClick={dismiss}
             aria-label="Close"
           >
             <IconClose size={16} />
@@ -151,7 +159,7 @@ export default function DeleteHostDialog({
             className="btn btn-ghost"
             type="button"
             disabled={pending}
-            onClick={onClose}
+            onClick={dismiss}
           >
             Cancel
           </button>

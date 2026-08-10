@@ -270,6 +270,91 @@ test("a failed load says so and can be retried", async ({ page, api }) => {
   await expect(row(page, "www.example.com")).toBeVisible();
 });
 
+/*
+  Dismissing either modal, four ways each.
+
+  Two things are asserted every time: that the parent was told (the dialog is
+  gone, and a second open still works), and that focus came back to the control
+  that opened it. The second is what a keyboard user notices — a dialog that
+  closes without handing focus back drops them at the top of the document — and
+  it depends on the *order* of `close()` and the parent's unmount, which is not
+  something a component test can see.
+
+  `chip.e2e.ts` holds the distribution panel to the same standard.
+*/
+const focusedLabel = (page: Page) =>
+  page.evaluate(
+    () =>
+      document.activeElement?.getAttribute("aria-label") ??
+      document.activeElement?.textContent?.trim() ??
+      document.activeElement?.tagName ??
+      "",
+  );
+
+test.describe("dismissing the add-host modal", () => {
+  const open = (page: Page) =>
+    page
+      .getByRole("navigation", { name: "Hosts" })
+      .getByRole("button", { name: "Add a host" })
+      .click();
+
+  test.beforeEach(async ({ page, api }) => {
+    api.setHosts(await seed(page, [www]));
+    await gotoConsole(page);
+  });
+
+  for (const [how, dismiss] of [
+    ["Escape", (page: Page) => page.keyboard.press("Escape")],
+    [
+      "the close button",
+      (page: Page) => page.getByRole("button", { name: "Close" }).click(),
+    ],
+    [
+      "Cancel",
+      (page: Page) => page.getByRole("button", { name: "Cancel" }).click(),
+    ],
+    [
+      "a click on the backdrop",
+      // The dialog element itself is the backdrop; its child is the form, so a
+      // click at the very top-left of the element lands outside it.
+      (page: Page) =>
+        page.getByRole("dialog").click({ position: { x: 2, y: 2 } }),
+    ],
+  ] as const) {
+    test(`closes on ${how} and gives focus back`, async ({ page }) => {
+      await open(page);
+      await expect(page.getByRole("dialog")).toBeVisible();
+
+      await dismiss(page);
+
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      expect(await focusedLabel(page)).toBe("Add a host");
+
+      // Nothing was added, and the button still works — a dismissal that left the
+      // parent believing the modal was open would make it dead for the session.
+      await expect(row(page, "www.example.com")).toBeVisible();
+      await open(page);
+      await expect(page.getByRole("dialog")).toBeVisible();
+    });
+  }
+});
+
+test("dismissing the delete dialog keeps the host and restores focus", async ({
+  page,
+  api,
+}) => {
+  api.setHosts(await seed(page, [www]));
+  await gotoConsole(page);
+
+  await page.getByRole("button", { name: "Delete www.example.com" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(await focusedLabel(page)).toBe("Delete www.example.com");
+  await expect(row(page, "www.example.com")).toBeVisible();
+});
+
 test("adding a host reloads the list and lands on it", async ({
   page,
   api,
