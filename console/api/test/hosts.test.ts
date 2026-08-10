@@ -327,16 +327,29 @@ describe("DELETE /targets/:targetId/hosts/:host", () => {
     ).toEqual([{ host: "shop.example.com", redirects: 1, rewrites: 1 }]);
   });
 
-  it("404s a host with no rules", async () => {
-    // Same stored state as a host that never existed, so it cannot report a
-    // success — that would hide a typo or a second click on the trash icon.
+  it("404s a host nothing is stored under", async () => {
+    /*
+      Nothing in the partition — not a rule, not a marker — so there is no host to
+      remove and reporting success would hide a typo or a second click on the
+      trash icon. Deliberately *not* "a host with no rules": one of those has a
+      marker, exists, and deletes with a 204, which the POST block above covers.
+
+      The message is asserted, not just the code. It is the whole point of the
+      wording: saying "no rules for host" would describe the case this is not, and
+      tell someone their host exists and is empty when it is not there at all.
+    */
     seed(rule("www.example.com", "REDIRECT#00100"));
 
     const res = await handler(
       event("DELETE", "/targets/t1/hosts/other.example.com"),
     );
     expect(res.statusCode).toBe(404);
-    expect(parse(res.body)).toMatchObject({ error: { code: "NOT_FOUND" } });
+    expect(parse(res.body)).toMatchObject({
+      error: {
+        code: "NOT_FOUND",
+        message: 'No such host "other.example.com" in this target',
+      },
+    });
   });
 
   it("404s the second delete of the same host", async () => {
