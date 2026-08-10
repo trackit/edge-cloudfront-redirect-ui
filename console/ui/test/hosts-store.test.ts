@@ -95,12 +95,31 @@ describe("resolveHostView", () => {
     ).toEqual({ kind: "host", host: "gone.example.com", known: false });
   });
 
-  it("matches exactly, leaving normalization to the caller", () => {
-    // `hostKey` is applied to the route param before this sees it. Lowercasing
-    // again here would hide a caller that forgot, and the API's stored host is
-    // already normalized, so a mismatch in case means a genuine mismatch.
+  it("expects the caller to have normalized the addressed host", () => {
+    // `hostKey` is applied to the route param before this sees it, so a `current`
+    // still carrying case is a caller that forgot rather than a host that differs.
+    // Lowercasing it here as well would hide that.
     expect(
       resolveHostView([host("www.example.com")], "WWW.Example.com"),
     ).toMatchObject({ known: false });
+  });
+
+  it("finds a host the table stored with case in it", () => {
+    // `listHosts` returns `pk` values straight out of the table, and anything
+    // written before the API lowercased its keys still carries the case it was
+    // stored with. Comparing those verbatim reported "No such host" for the only
+    // host a target had.
+    expect(
+      resolveHostView([host("WWW.Example.com")], "www.example.com"),
+    ).toEqual({ kind: "host", host: "www.example.com", known: true });
+  });
+
+  it("redirects to a normalized host, not the stored spelling", () => {
+    // The URL this lands on is what the membership test above then sees. Sending
+    // the raw key would arrive as a host the list appears not to contain.
+    expect(resolveHostView([host("WWW.Example.com")], null)).toEqual({
+      kind: "redirect",
+      to: "www.example.com",
+    });
   });
 });

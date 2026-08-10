@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "./api";
 import type { ApiClient, HostSummary } from "./api";
+import { hostKey } from "./hostRoutes";
 
 /**
  * The host list for a target, and how it is loaded.
@@ -42,8 +43,12 @@ export const toHostsError = (error: unknown): ApiError =>
  * is not in the list are three different answers, and the order they are tested
  * in is the whole of the behaviour. Reachable without a DOM this way.
  *
- * `current` is compared as given — the caller lowercases the route param, since
- * a host's identity is case-insensitive and the API stores it normalized.
+ * `current` is compared as given: the caller normalizes the route param, which is
+ * the one host that arrives from outside the app. The list's own entries are
+ * normalized here instead of being trusted, because they are `pk` values read
+ * straight out of the table — anything written before the API lowercased its keys
+ * still carries the case it was stored with, and comparing those verbatim reports
+ * "No such host" for the only host a target has.
  */
 export type HostView =
   /** No hosts at all: the rail stays, the main area invites adding one. */
@@ -61,12 +66,15 @@ export const resolveHostView = (
   // Before the membership test, not after: with no host addressed there is
   // nothing to find in the list, and `hosts[0]` is only safe once the list is
   // known to be non-empty.
-  if (current === null) return { kind: "redirect", to: hosts[0].host };
+  // Normalized, so the URL this lands on is the one the membership test below
+  // will then agree with. Sending the raw key would bounce through the canonical
+  // redirect and arrive as a host the list appears not to contain.
+  if (current === null) return { kind: "redirect", to: hostKey(hosts[0].host) };
 
   return {
     kind: "host",
     host: current,
-    known: hosts.some((entry) => entry.host === current),
+    known: hosts.some((entry) => hostKey(entry.host) === current),
   };
 };
 
@@ -83,7 +91,23 @@ export function useHosts(targetId: string, client: ApiClient = api) {
   // must both run, and a flag flipped back and forth can coalesce into one.
   const [attempt, setAttempt] = useState(0);
 
-  const reload = useCallback(() => setAttempt((n) => n + 1), []);
+  /*
+    Drops the list as well as asking for a new one, in the same update.
+
+    The effect below also sets `loading`, but not until after the render that
+    `setAttempt` schedules — and a caller that reloads *and* navigates in one
+    handler gets that render first. It would decide where to go from a list it
+    has already been told is out of date: deleting the first host in the rail
+    navigated to the hostless URL, which redirected onto `hosts[0]` — the host
+    just deleted — and settled there reporting "No such host".
+
+    Nothing may route off this list once a reload is asked for, so the state that
+    says "unknown" has to arrive with the request.
+  */
+  const reload = useCallback(() => {
+    setState({ status: "loading" });
+    setAttempt((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     // Switching targets while a request is in flight would otherwise let the old

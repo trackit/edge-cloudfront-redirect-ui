@@ -151,6 +151,43 @@ test("a mixed-case address is corrected, not merely matched", async ({
   );
 });
 
+test("shows a host the table stored with case in it", async ({ page, api }) => {
+  // `listHosts` returns `pk` values straight from the table, and a row written
+  // before the API lowercased its keys still carries the case it was stored with.
+  // Compared verbatim, the console called the target's only host "No such host".
+  // Two hosts, so that failing to leave the deleted one is visible below rather
+  // than being covered by the empty view.
+  api.setHosts([host("WWW.Example.com", { redirects: 1 }), shop]);
+  await seedStorage(page, {
+    distributions: [prod],
+    current: prod.distributionId,
+  });
+
+  await gotoConsole(page);
+
+  await expect(page).toHaveURL("/console/hosts/www.example.com");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  // The row still reads as the table holds it, but it is the row being shown, and
+  // `aria-current` is the only thing that says so to a screen reader.
+  await expect(row(page, "WWW.Example.com")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+
+  // And the page leaves the host it was showing when that host is deleted, which
+  // needs the same comparison a third time — without it the console stays parked
+  // on the host it just removed and calls it "No such host".
+  await page.getByRole("button", { name: "Delete WWW.Example.com" }).click();
+  api.setHosts([shop]);
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Delete host" })
+    .click();
+
+  await expect(page).toHaveURL("/console/hosts/shop.example.com");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
 test("names a host that is not in the target rather than showing nothing", async ({
   page,
   api,
@@ -277,6 +314,32 @@ test("deleting the current host names its rules, then leaves it", async ({
   // rather than leaving the page on a host that no longer exists.
   await expect(page).toHaveURL("/console/hosts/shop.example.com");
   await expect(row(page, "www.example.com")).toHaveCount(0);
+});
+
+test("deleting the first host in the rail leaves it for the next one", async ({
+  page,
+  api,
+}) => {
+  /*
+    Position matters, which is why this is not covered by the case above deleting
+    `www`. Leaving the deleted host goes via the hostless URL so that "which host
+    now" is decided in one place — and that decision reads the list. Reloading
+    without dropping the old list first let it redirect onto `hosts[0]`, the host
+    just deleted, and settle there reporting "No such host".
+  */
+  api.setHosts(await seed(page, [assets, www]));
+  await gotoConsole(page);
+  await expect(page).toHaveURL("/console/hosts/assets.example.com");
+
+  await page.getByRole("button", { name: "Delete assets.example.com" }).click();
+  api.setHosts([www]);
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Delete host" })
+    .click();
+
+  await expect(page).toHaveURL("/console/hosts/www.example.com");
+  await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
 test("deleting another host does not move the page", async ({ page, api }) => {

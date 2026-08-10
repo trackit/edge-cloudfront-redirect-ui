@@ -63,7 +63,9 @@ export default function ConsoleBody({ distribution }: Props) {
   const deleted = (host: string) => {
     setDeleting(null);
     reload();
-    if (host === current) navigate(CONSOLE_PATH, { replace: true });
+    // Normalized: this arrives from the deleted entry's own `host`, which is a
+    // stored key rather than the value already put through `hostKey` above.
+    if (hostKey(host) === current) navigate(CONSOLE_PATH, { replace: true });
   };
 
   const modal = (

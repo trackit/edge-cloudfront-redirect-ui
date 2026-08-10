@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import type { HostSummary } from "../api";
-import { hostPath } from "../hostRoutes";
+import { hostKey, hostPath } from "../hostRoutes";
 import { IconPlus, IconTrash } from "./icons";
 
 interface Props {
@@ -58,7 +58,10 @@ export default function HostsSidebar({
         {hosts.length === 0 && <li className="hosts-empty">No hosts yet</li>}
 
         {hosts.map((host) => {
-          const active = host.host === current;
+          // Normalized on both sides for the same reason `resolveHostView` does
+          // it: `current` is already a key, and a `pk` stored before the API
+          // lowercased them would leave the row the page is showing unmarked.
+          const active = hostKey(host.host) === current;
 
           return (
             /* The delete button is a sibling of the link, never inside it: a
