@@ -149,7 +149,7 @@ test("settings edits the current entry in place", async ({ page, api }) => {
   await chip(page).click();
   await page.getByRole("button", { name: "Settings for current" }).click();
   await page.getByLabel("DynamoDB routing table").fill("rules-prod-v2");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
 
   await expect(chip(page)).toContainText("rules-prod-v2");
 

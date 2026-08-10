@@ -160,9 +160,7 @@ test("settings opens prefilled with the current distribution", async ({
   await chip(page).click();
   await page.getByRole("button", { name: "Settings for current" }).click();
 
-  await expect(
-    page.getByRole("heading", { name: "Distribution settings" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   await expect(page.getByLabel("CloudFront distribution")).toHaveValue(
     prod.distributionId,
   );
