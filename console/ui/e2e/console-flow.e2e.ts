@@ -2,6 +2,7 @@ import {
   chip,
   distribution,
   expect,
+  gotoConsole,
   readStorage,
   rows,
   seedLegacyStorage,
@@ -26,6 +27,8 @@ const staging = distribution({
 });
 
 test("an empty browser gets the connect screen", async ({ page }) => {
+  // Not `gotoConsole`: no environment is stored, so the console never renders
+  // and there are no hosts to load or fail to load.
   await page.goto("/console");
 
   await expect(
@@ -38,7 +41,7 @@ test("a stored distribution goes straight to the console", async ({ page }) => {
     distributions: [prod],
     current: prod.distributionId,
   });
-  await page.goto("/console");
+  await gotoConsole(page);
 
   // The chip carries everything the bar knows about the connected environment,
   // and outlives the console body's placeholder copy.
@@ -68,7 +71,7 @@ test("a corrupt entry does not cost the user the rest of the list", async ({
       }),
     );
   });
-  await page.goto("/console");
+  await gotoConsole(page);
 
   // Rendered, rather than being sent back to connect for someone else's bug.
   await expect(chip(page)).toContainText("E1AAAAAAAAAAAA");
@@ -78,7 +81,7 @@ test("a browser from before the switcher keeps its environment", async ({
   page,
 }) => {
   await seedLegacyStorage(page, prod);
-  await page.goto("/console");
+  await gotoConsole(page);
 
   await expect(chip(page)).toContainText(prod.distributionId);
 
@@ -108,7 +111,7 @@ test("adding a second distribution appends it and selects it", async ({
     distributions: [prod],
     current: prod.distributionId,
   });
-  await page.goto("/console");
+  await gotoConsole(page);
 
   await chip(page).click();
   await page.getByRole("button", { name: "Add distribution" }).click();
@@ -141,7 +144,7 @@ test("settings edits the current entry in place", async ({ page, api }) => {
     distributions: [prod, staging],
     current: prod.distributionId,
   });
-  await page.goto("/console");
+  await gotoConsole(page);
 
   await chip(page).click();
   await page.getByRole("button", { name: "Settings for current" }).click();
@@ -168,7 +171,7 @@ test("cancelling settings changes nothing", async ({ page }) => {
     distributions: [prod],
     current: prod.distributionId,
   });
-  await page.goto("/console");
+  await gotoConsole(page);
   const before = await readStorage(page);
 
   await chip(page).click();
@@ -185,7 +188,7 @@ test("the selection survives a reload", async ({ page }) => {
     distributions: [prod, staging],
     current: prod.distributionId,
   });
-  await page.goto("/console");
+  await gotoConsole(page);
 
   await chip(page).click();
   await rows(page).filter({ hasText: staging.distributionId }).click();

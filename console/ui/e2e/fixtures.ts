@@ -1,4 +1,5 @@
 import { expect, test as base, type Page, type Route } from "@playwright/test";
+import type { HostSummary } from "../src/api";
 import type { Stored } from "../src/distribution";
 import type { Distribution } from "../src/types";
 
@@ -29,6 +30,21 @@ export interface ApiStub {
   createReply: (reply: { status: number; body: unknown }) => void;
   /** What `GET /targets` returns. */
   setTargets: (targets: unknown[]) => void;
+  /**
+   * What `GET …/hosts` returns. The console fetches this on mount, so it is the
+   * state the page starts in rather than something a spec arranges afterwards.
+   */
+  setHosts: (hosts: HostSummary[]) => void;
+  /**
+   * Answers every subsequent `POST …/hosts` with this instead of the default
+   * 201. Same non-consuming behaviour as `createReply`.
+   */
+  createHostReply: (reply: { status: number; body: unknown }) => void;
+  /**
+   * Answers every subsequent `DELETE …/hosts/{host}` with this instead of the
+   * default 204.
+   */
+  deleteHostReply: (reply: { status: number; body: unknown }) => void;
 }
 
 const jsonOf = (route: Route): unknown => {
@@ -50,6 +66,9 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
   const calls: ApiStub["calls"] = [];
   let create: { status: number; body: unknown } | null = null;
   let targets: unknown[] = [];
+  let hosts: HostSummary[] = [];
+  let createHost: { status: number; body: unknown } | null = null;
+  let deleteHost: { status: number; body: unknown } | null = null;
 
   // A predicate, not the `**/api/**` glob that looks right: the app's own source
   // lives in `src/api/`, and in dev Vite serves those modules from URLs the glob
@@ -86,6 +105,54 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
         return;
       }
 
+      // A pattern rather than `endsWith`, because the host routes are two
+      // shapes: the collection ends in `/hosts`, and one host is a segment
+      // after it. `endsWith("/hosts")` would answer the collection and drop the
+      // item route into the 500 below.
+      if (HOSTS_COLLECTION.test(url.pathname)) {
+        if (method === "GET") {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(hosts),
+          });
+          return;
+        }
+
+        if (method === "POST") {
+          // The API lowercases what it stores and answers with the stored form,
+          // so the stub does too — a spec typing mixed case must see back what
+          // the real server would send, not what it typed.
+          const asked = (body as { host?: unknown })?.host;
+          const reply = createHost ?? {
+            status: 201,
+            body: {
+              host: typeof asked === "string" ? asked.toLowerCase() : asked,
+              redirects: 0,
+              rewrites: 0,
+            },
+          };
+          await route.fulfill({
+            status: reply.status,
+            contentType: "application/json",
+            body: JSON.stringify(reply.body),
+          });
+          return;
+        }
+      }
+
+      if (method === "DELETE" && HOSTS_ITEM.test(url.pathname)) {
+        const reply = deleteHost ?? { status: 204, body: null };
+        await route.fulfill({
+          status: reply.status,
+          contentType: "application/json",
+          // 204 carries no body, and fulfilling one with `"null"` would give the
+          // client a length to parse where the real server sends none.
+          body: reply.status === 204 ? "" : JSON.stringify(reply.body),
+        });
+        return;
+      }
+
       // Deliberately not a catch-all 200: an unexpected call should look like a
       // bug in the test, not like a passing assertion.
       await route.fulfill({
@@ -106,8 +173,53 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
     setTargets: (next) => {
       targets = next;
     },
+    setHosts: (next) => {
+      hosts = next;
+    },
+    createHostReply: (reply) => {
+      createHost = reply;
+    },
+    deleteHostReply: (reply) => {
+      deleteHost = reply;
+    },
   };
 };
+
+/**
+ * Opens the console and waits for it to have actually loaded.
+ *
+ * The console fetches its hosts on mount, so a route this file forgets to stub
+ * lands the page in the "Could not load the hosts" state — which no assertion
+ * about the chip or storage would notice. Every spec that renders the console
+ * would keep passing while exercising a console that is broken, which is the one
+ * thing the 500 fallthrough exists to prevent.
+ *
+ * The wait is load-bearing: the error arrives a tick after the loading state, so
+ * checking for an alert straight after `goto` finds none simply because nothing
+ * has answered yet.
+ */
+export const gotoConsole = async (page: Page): Promise<void> => {
+  await page.goto("/console");
+  await expect(page.getByText(/Loading hosts/)).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+};
+
+/** `…/targets/{id}/hosts`, the collection. */
+const HOSTS_COLLECTION = /\/hosts$/;
+
+/** `…/targets/{id}/hosts/{host}`, one host — but not its `/rules` below it. */
+const HOSTS_ITEM = /\/hosts\/[^/]+$/;
+
+/** A host row as `GET …/hosts` returns it. Counts default to an empty host. */
+export const host = (
+  name: string,
+  over: Partial<HostSummary> = {},
+): HostSummary => ({
+  host: name,
+  redirects: 0,
+  rewrites: 0,
+  ...over,
+});
 
 export const STORAGE_KEY = "edgeroute.distributions";
 export const LEGACY_STORAGE_KEY = "edgeroute.distribution";

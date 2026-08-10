@@ -2,6 +2,7 @@ import {
   chip,
   distribution,
   expect,
+  gotoConsole,
   panel,
   rows,
   seedStorage,
@@ -32,7 +33,7 @@ test.beforeEach(async ({ page }) => {
     distributions: [prod, staging],
     current: prod.distributionId,
   });
-  await page.goto("/console");
+  await gotoConsole(page);
 });
 
 test("announces its state and what it controls", async ({ page }) => {
