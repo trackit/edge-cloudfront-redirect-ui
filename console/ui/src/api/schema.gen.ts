@@ -81,10 +81,10 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * List the hosts that have rules.
-     * @description Every host in the target's table holding at least one rule, sorted by host name, with a count of each rule kind.
+     * List a target's hosts.
+     * @description Every host in the target's table, sorted by host name, with a count of each rule kind. Counts include disabled rules, and are zero for a host that holds none.
      *
-     *     A host is the DynamoDB partition key of its rules, not a stored entity of its own, so a host with no rules does not appear here — there is nothing in the table to report. Counts include disabled rules.
+     *     A host is the DynamoDB partition key of its rules rather than a stored entity of its own, so it needs something in that partition to be reported at all. A host with rules is listed from them; a host with none is listed from its marker item, which both `POST /hosts` and a rule create leave behind. Only a host nothing has ever been written under is absent.
      *
      *     Backed by a table Scan, so cost grows with the number of rules in the target, not the number of hosts.
      */
@@ -97,6 +97,8 @@ export interface paths {
      *     Writes a single marker item the edge never reads: the Lambda@Edge queries `begins_with(sk, "REDIRECT#" | "REWRITE#")`, and the marker's sort key begins with neither. It disappears with the host when the host is deleted, and is not addressable as a rule.
      *
      *     The host is stored lowercased — DNS is case-insensitive, a DynamoDB partition key is not.
+     *
+     *     A host that already exists is a 409, and that response still writes the marker if the host was missing one — see `HostConflict`. So repeating this request is how a host whose rules predate markers is repaired.
      */
     post: operations["createHost"];
     delete?: never;
@@ -251,7 +253,7 @@ export interface components {
       /** @description A hostname, not a URL — no scheme, port, path or trailing dot. This is the incoming domain rules apply to, and it becomes the DynamoDB partition key, so it is stored lowercased. */
       host: string;
     };
-    /** @description One host in a target's table and how many rules of each kind it holds. Named `HostSummary` rather than `Host` because there is no fuller host resource behind it — the host is its rules. */
+    /** @description One host in a target's table and how many rules of each kind it holds. Named `HostSummary` rather than `Host` because there is no fuller host resource behind it — a host is a partition key, its rules, and nothing else that can be fetched. */
     HostSummary: {
       /** @description The rule host — the DynamoDB partition key. */
       host: string;
@@ -486,7 +488,11 @@ export interface components {
         "application/json": components["schemas"]["Error"];
       };
     };
-    /** @description That host already exists in this target — either it holds rules, or it was created empty before. Nothing was written, and no existing rule was touched. */
+    /**
+     * @description That host already exists in this target — either it holds rules, or it was created empty before. No rule was touched.
+     *
+     *     One thing is written even so: if the host had rules but no marker, the marker is added. A host in that state is one whose rules were written before a rule create left a marker behind, and it would otherwise disappear from the list the moment its last rule went — with no way back, because it reads as existing and so cannot be added. Repeating the request is therefore how such a host is repaired, and the 409 still describes what happened: the host was already there.
+     */
     HostConflict: {
       headers: {
         [name: string]: unknown;
