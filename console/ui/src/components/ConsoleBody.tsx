@@ -4,7 +4,7 @@ import AddHostModal from "./AddHostModal";
 import DeleteHostDialog from "./DeleteHostDialog";
 import HostsSidebar from "./HostsSidebar";
 import { resolveHostView, useHosts } from "../hosts";
-import { CONSOLE_PATH, hostPath } from "../hostRoutes";
+import { CONSOLE_PATH, hostKey, hostPath } from "../hostRoutes";
 import type { HostSummary } from "../api";
 import type { Distribution } from "../types";
 
@@ -30,14 +30,13 @@ export default function ConsoleBody({ distribution }: Props) {
 
   // Decoded by React Router, so this is the host itself, not its URL spelling.
   //
-  // Lowercased for the same reason the API normalizes `:host`: a host's identity
-  // is case-insensitive, and this value is matched against the list, printed as
-  // the title, and compared against the host a delete just removed. Links from
-  // the sidebar already carry the server's spelling, but a typed or shared
+  // Normalized because this value is matched against the list, printed as the
+  // title, and compared against the host a delete just removed. Links from the
+  // sidebar already carry the server's spelling, but a typed or shared
   // `/console/hosts/WWW.Example.com` would otherwise match nothing and claim a
   // host that plainly exists is not there.
   const { host } = useParams<{ host: string }>();
-  const current = host?.toLowerCase() ?? null;
+  const current = host === undefined ? null : hostKey(host);
 
   /*
     Reload rather than push the new host into the list here: the counts come from
@@ -86,6 +85,22 @@ export default function ConsoleBody({ distribution }: Props) {
       )}
     </>
   );
+
+  /*
+    The address bar is the last place a host's spelling survives un-normalized:
+    everything below compares and renders `current`, so `/hosts/WWW.Example.com`
+    would work while showing one host under two names — the title lowercase, the
+    URL not, and a copied link differing from the one the sidebar produces.
+
+    Before the load, because this needs no data — and `replace` so Back leaves
+    the console rather than bouncing through the spelling just corrected.
+
+    This terminates: the redirect target is built from `current`, which is
+    already normalized, so the next render finds the two equal.
+  */
+  if (host !== undefined && host !== current) {
+    return <Navigate to={hostPath(current ?? host)} replace />;
+  }
 
   if (state.status === "loading") {
     return (

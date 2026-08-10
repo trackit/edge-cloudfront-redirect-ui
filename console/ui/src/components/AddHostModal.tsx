@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
 import type { ApiClient } from "../api";
+import { hostKey } from "../hostRoutes";
 import { IconClose, IconGlobe } from "./icons";
 
 interface Props {
@@ -78,7 +79,7 @@ export default function AddHostModal({
       // reloaded by the caller either way, so a host missing from a stale
       // sidebar appears rather than being reported as an error.
       if (caught instanceof ApiError && caught.code === "HOST_EXISTS") {
-        onAdded(trimmed.toLowerCase());
+        onAdded(hostKey(trimmed));
         return;
       }
 
