@@ -7,6 +7,12 @@ coverage/
 npm-debug.log*
 .npm/
 
+# --- Playwright (traces, screenshots, HTML report) ---
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
 # --- Lambda@Edge baked config (rendered by Terraform at package time) ---
 infra/lambda/src/edge-config.generated.ts
 

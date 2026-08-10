@@ -22,12 +22,18 @@ const STORAGE_KEY = "edgeroute.distributions";
  */
 const LEGACY_STORAGE_KEY = "edgeroute.distribution";
 
-/** Prefills the connect form. Nothing is sent until the user connects. */
-export const SAMPLE_DISTRIBUTION: DistributionDraft = {
+/**
+ * Prefills the connect form. Nothing is sent until the user connects.
+ *
+ * Frozen for the same reason `EMPTY` is: the connect screen hands this straight
+ * to `useState`, so it is the live draft rather than a copy of one, and two
+ * sessions that reach for the sample share the one object.
+ */
+export const SAMPLE_DISTRIBUTION: DistributionDraft = Object.freeze({
   distributionId: "E2QWERTY123456",
   tableName: "edgeroute-rules",
   region: "us-east-1",
-};
+});
 
 export const emptyDistribution = (): DistributionDraft => ({
   distributionId: "",
@@ -130,13 +136,31 @@ const parse = (raw: string | null): Distribution | null => {
  *
  * Not an index, either — the list is rewritten on every change, and an index
  * would silently point at a different entry after one is replaced.
+ *
+ * Readonly throughout because every change here replaces the whole value: a
+ * reducer that wrote into the previous state instead of returning a new one
+ * would leave React with an unchanged reference and no re-render.
+ *
+ * The compiler refuses the ways that mistake actually gets made — writing to a
+ * field, or reshaping the list. It is not a proof: TypeScript ignores readonly
+ * modifiers when checking assignability, so an entry copied into a mutable
+ * annotation can still be written through. That takes saying so explicitly,
+ * which is the point at which review can see it.
  */
-interface Stored {
-  distributions: Distribution[];
-  current: string | null;
+export interface Stored {
+  readonly distributions: readonly Distribution[];
+  readonly current: string | null;
 }
 
-const EMPTY: Stored = { distributions: [], current: null };
+// Both the "nothing stored" result and the hook's initial state, so every empty
+// console shares this one object — an accidental write through any of them would
+// change what the next reader sees. `Stored` being readonly is what rules that
+// out; the freeze is the runtime backstop, and it covers the array too because
+// `Object.freeze` is shallow and the array is the field everything spreads from.
+export const EMPTY: Stored = Object.freeze({
+  distributions: Object.freeze([]),
+  current: null,
+});
 
 /**
  * Each entry is validated on its own, and an invalid one is dropped rather than
@@ -146,7 +170,7 @@ const EMPTY: Stored = { distributions: [], current: null };
  * `current` is only kept if it names an entry that survived, so the selection can
  * never point at something that is not in the list.
  */
-const parseStored = (raw: string | null): Stored => {
+export const parseStored = (raw: string | null): Stored => {
   if (raw === null) return EMPTY;
 
   try {
@@ -172,17 +196,80 @@ const parseStored = (raw: string | null): Stored => {
   }
 };
 
+/**
+ * Promotes the single-distribution shape this module used to write into a
+ * one-entry list. Only consulted when the current key holds nothing, and never
+ * written back — see LEGACY_STORAGE_KEY.
+ */
+export const migrateLegacy = (raw: string | null): Stored => {
+  const legacy = parse(raw);
+  return legacy === null
+    ? EMPTY
+    : { distributions: [legacy], current: legacy.distributionId };
+};
+
+/**
+ * Adds a distribution and selects it. Re-connecting the same distribution ID
+ * replaces that entry rather than duplicating it — its table or region may have
+ * changed, and two rows naming one distribution is not something the menu could
+ * tell apart.
+ */
+export const reduceConnect = (prev: Stored, value: Distribution): Stored => ({
+  distributions: [
+    ...prev.distributions.filter(
+      (entry) => entry.distributionId !== value.distributionId,
+    ),
+    value,
+  ],
+  current: value.distributionId,
+});
+
+/**
+ * Swaps the selected distribution for an edited one, in place. Settings can
+ * change every field including the distribution ID, so this is a replace rather
+ * than an update — but it keeps the entry's position so the menu does not
+ * reorder under the user.
+ */
+export const reduceReplaceCurrent = (
+  prev: Stored,
+  value: Distribution,
+): Stored => {
+  const at = prev.distributions.findIndex(
+    (entry) => entry.distributionId === prev.current,
+  );
+  if (at === -1) {
+    return {
+      distributions: [...prev.distributions, value],
+      current: value.distributionId,
+    };
+  }
+
+  const next = [...prev.distributions];
+  next[at] = value;
+  // Renaming onto an ID another entry already holds would leave two rows the
+  // menu cannot tell apart, so the older one goes.
+  return {
+    distributions: next.filter(
+      (entry, i) => i === at || entry.distributionId !== value.distributionId,
+    ),
+    current: value.distributionId,
+  };
+};
+
+/** Switches the selection, and only to an entry that is actually in the list. */
+export const reduceSelect = (prev: Stored, distributionId: string): Stored =>
+  prev.distributions.some((entry) => entry.distributionId === distributionId)
+    ? { ...prev, current: distributionId }
+    : prev;
+
 const read = (): Stored => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw !== null) return parseStored(raw);
 
-    // Nothing under the current key: fall back to the single-distribution shape
-    // this module used to write, and promote it to a one-entry list.
-    const legacy = parse(localStorage.getItem(LEGACY_STORAGE_KEY));
-    return legacy === null
-      ? EMPTY
-      : { distributions: [legacy], current: legacy.distributionId };
+    // Nothing under the current key: fall back to the shape this module used to
+    // write before it held a list.
+    return migrateLegacy(localStorage.getItem(LEGACY_STORAGE_KEY));
   } catch {
     // Private-browsing modes throw on access rather than returning null.
     return EMPTY;
@@ -207,64 +294,16 @@ export function useDistributions() {
     distributions.find((entry) => entry.distributionId === stored.current) ??
     null;
 
-  /**
-   * Adds a distribution and selects it. Re-connecting the same distribution ID
-   * replaces that entry rather than duplicating it — its table or region may have
-   * changed, and two rows naming one distribution is not something the menu could
-   * tell apart.
-   */
   const connect = useCallback((value: Distribution) => {
-    setStored((prev) => ({
-      distributions: [
-        ...prev.distributions.filter(
-          (entry) => entry.distributionId !== value.distributionId,
-        ),
-        value,
-      ],
-      current: value.distributionId,
-    }));
+    setStored((prev) => reduceConnect(prev, value));
   }, []);
 
-  /**
-   * Swaps the selected distribution for an edited one, in place. Settings can
-   * change every field including the distribution ID, so this is a replace rather
-   * than an update — but it keeps the entry's position so the menu does not
-   * reorder under the user.
-   */
   const replaceCurrent = useCallback((value: Distribution) => {
-    setStored((prev) => {
-      const at = prev.distributions.findIndex(
-        (entry) => entry.distributionId === prev.current,
-      );
-      if (at === -1) {
-        return {
-          distributions: [...prev.distributions, value],
-          current: value.distributionId,
-        };
-      }
-
-      const next = [...prev.distributions];
-      next[at] = value;
-      // Renaming onto an ID another entry already holds would leave two rows the
-      // menu cannot tell apart, so the older one goes.
-      return {
-        distributions: next.filter(
-          (entry, i) =>
-            i === at || entry.distributionId !== value.distributionId,
-        ),
-        current: value.distributionId,
-      };
-    });
+    setStored((prev) => reduceReplaceCurrent(prev, value));
   }, []);
 
   const select = useCallback((distributionId: string) => {
-    setStored((prev) =>
-      prev.distributions.some(
-        (entry) => entry.distributionId === distributionId,
-      )
-        ? { ...prev, current: distributionId }
-        : prev,
-    );
+    setStored((prev) => reduceSelect(prev, distributionId));
   }, []);
 
   useEffect(() => {
