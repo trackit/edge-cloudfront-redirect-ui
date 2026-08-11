@@ -59,3 +59,22 @@ export const IconPlus = ({ size = 16 }: P) => (
     <path d="M12 5v14M5 12h14" />
   </svg>
 );
+
+export const IconClose = ({ size = 16 }: P) => (
+  <svg {...base(size)}>
+    <path d="M6 6l12 12M18 6L6 18" />
+  </svg>
+);
+
+export const IconTrash = ({ size = 16 }: P) => (
+  <svg {...base(size)}>
+    <path d="M4 7h16M10 7V5h4v2M6 7l1 13h10l1-13M10 11v6M14 11v6" />
+  </svg>
+);
+
+export const IconGlobe = ({ size = 16 }: P) => (
+  <svg {...base(size)}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M3 12h18M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18Z" />
+  </svg>
+);

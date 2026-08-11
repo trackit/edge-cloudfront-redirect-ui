@@ -3,6 +3,7 @@ import { ApiError } from "./errors.js";
 import { assertPriority, buildSk } from "./rule-keys.js";
 import type { RuleItem } from "./rules-repository.js";
 import { assertRuleType, validateRule } from "./validate.js";
+import { hostKey } from "./validate-host.js";
 
 /**
  * Turns a rule request into the item that goes to DynamoDB.
@@ -126,7 +127,13 @@ const assertKeysAgree = (input: {
 }): void => {
   const mismatched: { path: string; message: string }[] = [];
 
-  if (input.pk !== undefined && input.pk !== input.host) {
+  // Compared as a host, not as a string: the path's host has already been
+  // normalized to the stored key, so a body naming the very same host in another
+  // case is agreement, not a mismatch. Only a *different* host is an error. The
+  // stored `pk` always comes from the path either way.
+  const bodyPk = typeof input.pk === "string" ? hostKey(input.pk) : input.pk;
+
+  if (input.pk !== undefined && bodyPk !== input.host) {
     mismatched.push({
       path: "/pk",
       message: `must equal the host in the path ("${input.host}")`,

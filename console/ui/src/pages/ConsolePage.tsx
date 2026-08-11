@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Brand from "../components/Brand";
+import ConsoleBody from "../components/ConsoleBody";
 import DistributionChip from "../components/DistributionChip";
 import OnboardingScreen from "../components/OnboardingScreen";
 import { useDistributions } from "../distribution";
@@ -12,10 +13,10 @@ import { useDistributions } from "../distribution";
  */
 type Flow = null | "add" | "settings";
 
-/* Ticket: MVP - Front — Console + env configuration.
+/* Ticket: MVP - Front — Console - Display host.
    Nothing configured → the connect screen. Configured → the bar carries the
-   connected environment and the ones this browser knows about, and the empty
-   body below is what the console skeleton ticket replaces. */
+   connected environment and the ones this browser knows about, and the host
+   list and selected host sit below it. */
 export default function ConsolePage() {
   const { distributions, current, connect, replaceCurrent, select } =
     useDistributions();
@@ -71,17 +72,7 @@ export default function ConsolePage() {
         />
       </header>
 
-      <main className="console-empty">
-        <h1>No rules yet</h1>
-        {/* The id the rules routes are keyed on — worth showing while there is
-            no rules UI, since it is the only visible proof the table is
-            registered with the API. Goes when the console skeleton lands. */}
-        <p className="console-target mono">target {current.targetId}</p>
-        <p>
-          This distribution is connected. Browsing hosts and editing redirect
-          and rewrite rules arrives with the console skeleton.
-        </p>
-      </main>
+      <ConsoleBody distribution={current} />
     </div>
   );
 }

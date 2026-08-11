@@ -34,10 +34,20 @@ const rule = (sk: string): RuleItem => ({
   type: "erMatchRule",
 });
 
+/**
+ * Every backoff the repository asked for, in order. The sleep is stubbed rather
+ * than performed: the retry test below exhausts all five attempts, and waiting
+ * them out for real would cost the suite most of a second to learn nothing.
+ */
+let slept: number[] = [];
+
 const repository = async (coordinates = target) => {
   const { DynamoRulesRepository } =
     await import("../src/lib/rules-repository.js");
-  return new DynamoRulesRepository(coordinates);
+  return new DynamoRulesRepository(coordinates, (ms) => {
+    slept.push(ms);
+    return Promise.resolve();
+  });
 };
 
 /** The command name and input of the nth send() call. */
@@ -57,6 +67,7 @@ beforeEach(() => {
   vi.resetModules();
   send.mockReset();
   docClient.mockClear();
+  slept = [];
 });
 
 describe("reaching the target's table", () => {
@@ -125,6 +136,367 @@ describe("listByHost", () => {
     await (await repository()).listByHost(HOST);
 
     expect(call().input).not.toHaveProperty("ExclusiveStartKey");
+  });
+
+  it("drops the host marker, which shares the partition", async () => {
+    // The Query takes the whole partition — it cannot express "either rule
+    // prefix" as a key condition — so the marker comes back with the rules and
+    // would render as a rule with no type, priority or action.
+    send.mockResolvedValue({
+      Items: [{ pk: HOST, sk: "HOST" }, rule("REDIRECT#00100")],
+    });
+
+    expect(await (await repository()).listByHost(HOST)).toEqual([
+      rule("REDIRECT#00100"),
+    ]);
+  });
+});
+
+describe("listHosts", () => {
+  it("scans the table for keys only", async () => {
+    send.mockResolvedValue({
+      Items: [
+        { pk: HOST, sk: "REDIRECT#00100" },
+        { pk: HOST, sk: "REWRITE#00150" },
+      ],
+    });
+
+    const hosts = await (await repository()).listHosts();
+
+    expect(hosts).toEqual([{ host: HOST, redirects: 1, rewrites: 1 }]);
+    expect(call()).toMatchObject({
+      name: "ScanCommand",
+      input: {
+        TableName: "rules-prod",
+        // Without the projection every rule body is read to count it, and the
+        // 1 MB page limit counts bytes read.
+        ProjectionExpression: "pk, sk",
+      },
+    });
+  });
+
+  it("follows LastEvaluatedKey to the end", async () => {
+    // Stopping at the first page would silently hide whole hosts — the failure
+    // looks like a host that "does not exist" rather than an error.
+    send
+      .mockResolvedValueOnce({
+        Items: [{ pk: "a.example.com", sk: "REDIRECT#00100" }],
+        LastEvaluatedKey: { pk: "a.example.com", sk: "REDIRECT#00100" },
+      })
+      .mockResolvedValueOnce({
+        Items: [{ pk: "b.example.com", sk: "REWRITE#00100" }],
+      });
+
+    const hosts = await (await repository()).listHosts();
+
+    expect(hosts.map((h) => h.host)).toEqual([
+      "a.example.com",
+      "b.example.com",
+    ]);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(call(1).input).toMatchObject({
+      ExclusiveStartKey: { pk: "a.example.com", sk: "REDIRECT#00100" },
+    });
+  });
+
+  it("counts a host split across two pages once", async () => {
+    // The fold runs over every page together; per-page folding would report the
+    // same host twice.
+    send
+      .mockResolvedValueOnce({
+        Items: [{ pk: HOST, sk: "REDIRECT#00100" }],
+        LastEvaluatedKey: { pk: HOST, sk: "REDIRECT#00100" },
+      })
+      .mockResolvedValueOnce({ Items: [{ pk: HOST, sk: "REDIRECT#00200" }] });
+
+    expect(await (await repository()).listHosts()).toEqual([
+      { host: HOST, redirects: 2, rewrites: 0 },
+    ]);
+  });
+
+  it("sends no ExclusiveStartKey on the first page", async () => {
+    send.mockResolvedValue({ Items: [] });
+    await (await repository()).listHosts();
+
+    expect(call().input).not.toHaveProperty("ExclusiveStartKey");
+  });
+
+  it("is empty for an empty table", async () => {
+    send.mockResolvedValue({});
+    expect(await (await repository()).listHosts()).toEqual([]);
+  });
+});
+
+describe("createHost", () => {
+  it("probes the partition, then writes a marker conditionally", async () => {
+    send.mockResolvedValueOnce({ Items: [] }).mockResolvedValueOnce({});
+
+    expect(await (await repository()).createHost(HOST)).toBe(true);
+
+    expect(call()).toMatchObject({
+      name: "QueryCommand",
+      input: {
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": HOST },
+        // One item answers "does anything live here", and ConsistentRead so a
+        // host created moments ago cannot be created again.
+        Limit: 1,
+        ConsistentRead: true,
+      },
+    });
+    expect(call(1)).toMatchObject({
+      name: "PutCommand",
+      input: {
+        Item: { pk: HOST, sk: "HOST" },
+        ConditionExpression: "attribute_not_exists(pk)",
+      },
+    });
+  });
+
+  it("writes a marker carrying no rule type", async () => {
+    // It is not a rule. A `type` here would make it read as a malformed one to
+    // anything that walks the table.
+    send.mockResolvedValueOnce({ Items: [] }).mockResolvedValueOnce({});
+    await (await repository()).createHost(HOST);
+
+    expect(call(1).input["Item"]).toEqual({ pk: HOST, sk: "HOST" });
+  });
+
+  it("refuses a host that already holds a rule", async () => {
+    // The probe is what catches this: a condition on the marker's own key
+    // cannot see the host's rules, and would report the host as newly created.
+    send
+      .mockResolvedValueOnce({ Items: [{ pk: HOST }] })
+      .mockResolvedValueOnce({});
+
+    expect(await (await repository()).createHost(HOST)).toBe(false);
+
+    // The Put that follows is the marker repair, not a create — it writes the
+    // marker beside the rules deliberately, and the refusal stands regardless.
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(call(1).name).toBe("PutCommand");
+  });
+
+  it("refuses when the conditional Put loses the race", async () => {
+    // Two callers adding the same empty host: both probes come back empty, and
+    // the condition is what stops the second from overwriting the first.
+    send
+      .mockResolvedValueOnce({ Items: [] })
+      .mockRejectedValueOnce(awsError("ConditionalCheckFailedException"));
+
+    expect(await (await repository()).createHost(HOST)).toBe(false);
+  });
+
+  it("502s an unreachable target rather than a bare 500", async () => {
+    send.mockRejectedValue(awsError("ResourceNotFoundException"));
+
+    await expect((await repository()).createHost(HOST)).rejects.toMatchObject({
+      status: 502,
+      code: "TARGET_UNREACHABLE",
+    });
+  });
+
+  it("repairs a missing marker on the host it refuses", async () => {
+    // The repair path for a host with rules and no marker: every rule written
+    // before `create` started leaving one. Without this the 409 is a dead end —
+    // the host reads as existing so it cannot be added, yet it still disappears
+    // with its last rule, and the only way back is to delete it and write every
+    // rule again.
+    send
+      .mockResolvedValueOnce({ Items: [{ pk: HOST }] })
+      .mockResolvedValueOnce({});
+
+    expect(await (await repository()).createHost(HOST)).toBe(false);
+
+    expect(call(1)).toMatchObject({
+      name: "PutCommand",
+      input: {
+        Item: { pk: HOST, sk: "HOST" },
+        ConditionExpression: "attribute_not_exists(pk)",
+      },
+    });
+  });
+
+  it("still refuses a host whose marker is already there", async () => {
+    // The repair is conditional, so a host that needs none is refused without
+    // its marker being rewritten.
+    send
+      .mockResolvedValueOnce({ Items: [{ pk: HOST }] })
+      .mockRejectedValueOnce(awsError("ConditionalCheckFailedException"));
+
+    expect(await (await repository()).createHost(HOST)).toBe(false);
+  });
+});
+
+describe("deleteHost", () => {
+  /** A BatchWriteCommand's delete keys for the mocked table. */
+  const deletedKeys = (n: number) =>
+    (
+      call(n).input as unknown as {
+        RequestItems: Record<string, { DeleteRequest: { Key: RuleItem } }[]>;
+      }
+    ).RequestItems["rules-prod"].map((r) => r.DeleteRequest.Key.sk);
+
+  it("reads the host's keys consistently, then batch-deletes them", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          { pk: HOST, sk: "REDIRECT#00100" },
+          { pk: HOST, sk: "REWRITE#00150" },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    expect(await (await repository()).deleteHost(HOST)).toBe(2);
+
+    expect(call()).toMatchObject({
+      name: "QueryCommand",
+      input: {
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": HOST },
+        ProjectionExpression: "pk, sk",
+        // An eventually consistent read can miss a rule written moments ago,
+        // and skipping the newest rule is the one an author notices.
+        ConsistentRead: true,
+      },
+    });
+    expect(call(1).name).toBe("BatchWriteCommand");
+    expect(deletedKeys(1)).toEqual(["REDIRECT#00100", "REWRITE#00150"]);
+  });
+
+  it("writes nothing when the host has no rules", async () => {
+    // Otherwise this sends an empty BatchWriteItem, which DynamoDB rejects as a
+    // ValidationException — a 500 where the handler wants a plain 404.
+    send.mockResolvedValueOnce({ Items: [] });
+
+    expect(await (await repository()).deleteHost(HOST)).toBe(0);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("splits more than 25 rules across batches", async () => {
+    // BatchWriteItem's hard cap. A 26-item request is rejected outright.
+    const keys = Array.from({ length: 26 }, (_, i) => ({
+      pk: HOST,
+      sk: `REDIRECT#${String(i).padStart(5, "0")}`,
+    }));
+    send
+      .mockResolvedValueOnce({ Items: keys })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    expect(await (await repository()).deleteHost(HOST)).toBe(26);
+
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(deletedKeys(1)).toHaveLength(25);
+    expect(deletedKeys(2)).toHaveLength(1);
+  });
+
+  it("follows the key Query across pages", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [{ pk: HOST, sk: "REDIRECT#00100" }],
+        LastEvaluatedKey: { pk: HOST, sk: "REDIRECT#00100" },
+      })
+      .mockResolvedValueOnce({ Items: [{ pk: HOST, sk: "REDIRECT#00200" }] })
+      .mockResolvedValueOnce({});
+
+    expect(await (await repository()).deleteHost(HOST)).toBe(2);
+    expect(deletedKeys(2)).toEqual(["REDIRECT#00100", "REDIRECT#00200"]);
+  });
+
+  it("re-sends items DynamoDB left unprocessed", async () => {
+    // The dangerous case: BatchWriteItem answers 200 while declining part of the
+    // request, so the SDK's own retries never fire. Left alone, those rules
+    // survive a delete that reported success.
+    const unprocessed = [
+      { DeleteRequest: { Key: { pk: HOST, sk: "REWRITE#00150" } } },
+    ];
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          { pk: HOST, sk: "REDIRECT#00100" },
+          { pk: HOST, sk: "REWRITE#00150" },
+        ],
+      })
+      .mockResolvedValueOnce({
+        UnprocessedItems: { "rules-prod": unprocessed },
+      })
+      .mockResolvedValueOnce({});
+
+    expect(await (await repository()).deleteHost(HOST)).toBe(2);
+
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(deletedKeys(2)).toEqual(["REWRITE#00150"]);
+  });
+
+  it("waits before re-sending, and not at all when nothing was declined", async () => {
+    // Items come back unprocessed because the table is throttling, so a re-send
+    // with no wait asks the same hot partition the same question and is refused
+    // for the reason the first one was. Without this the five attempts are spent
+    // in microseconds and the retry is decoration.
+    send
+      .mockResolvedValueOnce({ Items: [{ pk: HOST, sk: "REDIRECT#00100" }] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValue({});
+
+    await (await repository()).deleteHost(HOST);
+    expect(slept).toEqual([]);
+  });
+
+  it("backs off exponentially, and spends no wait it cannot use", async () => {
+    send.mockResolvedValueOnce({ Items: [{ pk: HOST, sk: "REDIRECT#00100" }] });
+    send.mockResolvedValue({
+      UnprocessedItems: {
+        "rules-prod": [
+          { DeleteRequest: { Key: { pk: HOST, sk: "REDIRECT#00100" } } },
+        ],
+      },
+    });
+
+    await expect((await repository()).deleteHost(HOST)).rejects.toThrow(
+      /undeleted/,
+    );
+
+    // Five attempts, so four gaps: none before the first, and none after the
+    // last — a wait there only delays the error by a backoff nobody uses.
+    expect(slept).toHaveLength(4);
+
+    // Jittered, so the assertion is the band each delay is drawn from rather
+    // than a number: half the cap to the cap, doubling each time.
+    expect(slept[0]).toBeGreaterThanOrEqual(25);
+    expect(slept[0]).toBeLessThanOrEqual(50);
+    expect(slept[3]).toBeGreaterThanOrEqual(200);
+    expect(slept[3]).toBeLessThanOrEqual(400);
+
+    // The point of the exponent: later attempts wait long enough to be worth
+    // making. Compared pairwise because the bands touch at their edges.
+    expect(slept[3]).toBeGreaterThan(slept[0]);
+  });
+
+  it("gives up loudly when a batch never drains", async () => {
+    // Reporting 204 here would claim the host was removed while some of its
+    // rules are still live at the edge.
+    send.mockResolvedValueOnce({ Items: [{ pk: HOST, sk: "REDIRECT#00100" }] });
+    send.mockResolvedValue({
+      UnprocessedItems: {
+        "rules-prod": [
+          { DeleteRequest: { Key: { pk: HOST, sk: "REDIRECT#00100" } } },
+        ],
+      },
+    });
+
+    await expect((await repository()).deleteHost(HOST)).rejects.toThrow(
+      /undeleted/,
+    );
+  });
+
+  it("502s an unreachable target rather than a bare 500", async () => {
+    send.mockRejectedValue(awsError("AccessDeniedException"));
+
+    await expect((await repository()).deleteHost(HOST)).rejects.toMatchObject({
+      status: 502,
+      code: "TARGET_UNREACHABLE",
+    });
   });
 });
 
@@ -211,6 +583,89 @@ describe("create", () => {
     expect(await (await repository()).create(rule("REDIRECT#00100"))).toBe(
       false,
     );
+  });
+
+  it("leaves a host marker, so the host outlives the rule", async () => {
+    // Otherwise the marker is only ever written by createHost, and whether a
+    // host survives losing its last rule depends on how it came to exist: added
+    // through the console it stays, reached by writing a rule it disappears.
+    send.mockResolvedValue({});
+
+    await (await repository()).create(rule("REDIRECT#00100"));
+
+    expect(call(1)).toMatchObject({
+      name: "PutCommand",
+      input: {
+        Item: { pk: HOST, sk: "HOST" },
+        // The marker's own key: written once, refused thereafter rather than
+        // rewritten by every later create under the same host.
+        ConditionExpression: "attribute_not_exists(pk)",
+      },
+    });
+  });
+
+  it("writes no marker when the rule was refused", async () => {
+    send.mockRejectedValue(awsError("ConditionalCheckFailedException"));
+
+    await (await repository()).create(rule("REDIRECT#00100"));
+
+    // A create that changed nothing must not bring a host into existence.
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("still reports the rule created when the marker write fails", async () => {
+    // The rule is what the caller asked for and it is already written; a 500
+    // here would report a failure for a write that happened. A missing marker
+    // costs only the empty-host case, which is the behaviour that existed
+    // before markers did.
+    //
+    // Spied only to keep the warning out of the suite's output — that it is
+    // warned about at all is the test below.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    send
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(
+        awsError("ProvisionedThroughputExceededException"),
+      );
+
+    expect(await (await repository()).create(rule("REDIRECT#00100"))).toBe(
+      true,
+    );
+    warn.mockRestore();
+  });
+
+  it("warns when the marker write fails for a real reason", async () => {
+    // Swallowed, but not silently: this is the one path that lets the invariant
+    // decay, and a host that quietly stops outliving its rules is not something
+    // the console can report.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    send
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(
+        awsError("ProvisionedThroughputExceededException"),
+      );
+
+    await (await repository()).create(rule("REDIRECT#00100"));
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(HOST),
+      expect.anything(),
+    );
+    warn.mockRestore();
+  });
+
+  it("says nothing when the marker was simply already there", async () => {
+    // The expected outcome of every create after the first. Logging it would
+    // put a line in the console's logs for each rule anyone ever writes.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    send
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(awsError("ConditionalCheckFailedException"));
+
+    await (await repository()).create(rule("REDIRECT#00100"));
+
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 
@@ -399,6 +854,18 @@ describe("an unreachable target", () => {
     send.mockRejectedValue(awsError(name));
 
     await expect((await repository()).listByHost(HOST)).rejects.toMatchObject({
+      status: 502,
+      code: "TARGET_UNREACHABLE",
+    });
+  });
+
+  it("502s a listHosts scan too", async () => {
+    // Its own case because the mapping comes from routing every call through
+    // `send()`; a method reaching for `this.client` directly would skip it and
+    // surface a bare 500.
+    send.mockRejectedValue(awsError("ResourceNotFoundException"));
+
+    await expect((await repository()).listHosts()).rejects.toMatchObject({
       status: 502,
       code: "TARGET_UNREACHABLE",
     });

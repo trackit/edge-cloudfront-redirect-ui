@@ -70,6 +70,72 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/targets/{targetId}/hosts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        targetId: components["parameters"]["TargetId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * List a target's hosts.
+     * @description Every host in the target's table, sorted by host name, with a count of each rule kind. Counts include disabled rules, and are zero for a host that holds none.
+     *
+     *     A host is the DynamoDB partition key of its rules rather than a stored entity of its own, so it needs something in that partition to be reported at all. A host with rules is listed from them; a host with none is listed from its marker item, which both `POST /hosts` and a rule create leave behind. Only a host nothing has ever been written under is absent.
+     *
+     *     Backed by a table Scan, so cost grows with the number of rules in the target, not the number of hosts.
+     */
+    get: operations["listHosts"];
+    put?: never;
+    /**
+     * Create a host that has no rules yet.
+     * @description Makes a host exist before anything is stored under it, so the console can add one and still find it after a refresh. Without this a host is only the partition key of its rules, and one with none cannot be listed.
+     *
+     *     Writes a single marker item the edge never reads: the Lambda@Edge queries `begins_with(sk, "REDIRECT#" | "REWRITE#")`, and the marker's sort key begins with neither. It disappears with the host when the host is deleted, and is not addressable as a rule.
+     *
+     *     The host is stored lowercased — DNS is case-insensitive, a DynamoDB partition key is not.
+     *
+     *     A host that already exists is a 409, and that response still writes the marker if the host was missing one — see `HostConflict`. So repeating this request is how a host whose rules predate markers is repaired.
+     */
+    post: operations["createHost"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/targets/{targetId}/hosts/{host}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        targetId: components["parameters"]["TargetId"];
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
+        host: components["parameters"]["Host"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Delete a host and all of its rules.
+     * @description Destructive. A host is the partition key of its rules and nothing else, so removing it means removing every redirect and rewrite stored under it. The target and its DynamoDB table are untouched.
+     *
+     *     A host nothing is stored under at all is a 404, not a 204 — reporting success would hide a mistyped or already-deleted host. A host that exists with no rules is not that case: it is deleted like any other, and answers 204.
+     *
+     *     Not atomic: the rules are removed in batches of 25, so a failure part-way leaves the host with fewer rules rather than none. Repeat the request to finish the job.
+     */
+    delete: operations["deleteHost"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/targets/{targetId}/hosts/{host}/rules": {
     parameters: {
       query?: never;
@@ -77,7 +143,7 @@ export interface paths {
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
         targetId: components["parameters"]["TargetId"];
-        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. */
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
       };
       cookie?: never;
@@ -93,6 +159,10 @@ export interface paths {
      * @description The server owns both keys: `pk` is the host from the path and `sk` is `TYPE#priority` with the priority zero-padded. Never overwrites — a priority already taken for that host and rule type is a 409.
      *
      *     The response body's `sk` is the created rule's id. It contains a `#`, so addressing the rule afterwards means percent-encoding it: `…/rules/REDIRECT%2300100`.
+     *
+     *     Creating a rule for a host that does not exist yet brings the host into existence, as `POST /hosts` would: the host keeps its place in the list afterwards even if every rule under it is deleted, and takes an explicit `DELETE /hosts/{host}` to remove.
+     *
+     *     That part is best effort, and deliberately so. The marker is written after the rule, in its own request, and a failure there is logged rather than returned — the rule is what was asked for and it is already stored, so a 500 would report a failure for a write that happened. A host whose marker was lost that way behaves as hosts did before markers existed: still listed while it has rules, gone when the last one is deleted. Adding the host repairs it — see `HostConflict`.
      */
     post: operations["createRule"];
     delete?: never;
@@ -108,7 +178,7 @@ export interface paths {
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
         targetId: components["parameters"]["TargetId"];
-        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. */
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
         /** @description Sort key — TYPE#priority, e.g. REDIRECT#00100. */
         sk: components["parameters"]["Sk"];
@@ -180,6 +250,20 @@ export interface components {
       tableName: string;
       roleArn?: string;
     };
+    /** @description A host to create, before it has any rules. */
+    HostInput: {
+      /** @description A hostname, not a URL — no scheme, port, path or trailing dot. This is the incoming domain rules apply to, and it becomes the DynamoDB partition key, so it is stored lowercased. */
+      host: string;
+    };
+    /** @description One host in a target's table and how many rules of each kind it holds. Named `HostSummary` rather than `Host` because there is no fuller host resource behind it — a host is a partition key, its rules, and nothing else that can be fetched. */
+    HostSummary: {
+      /** @description The rule host — the DynamoDB partition key. */
+      host: string;
+      /** @description Rules with an `sk` under `REDIRECT#`, disabled ones included. */
+      redirects: number;
+      /** @description Rules with an `sk` under `REWRITE#`, disabled ones included. */
+      rewrites: number;
+    };
     /** @description A redirect or rewrite rule item, per the shared schemas. */
     Rule:
       | components["schemas"]["redirect-rule.schema"]
@@ -247,6 +331,7 @@ export interface components {
          */
         code:
           | "BAD_REQUEST"
+          | "HOST_EXISTS"
           | "INTERNAL"
           | "INVALID_JSON"
           | "METHOD_NOT_ALLOWED"
@@ -405,6 +490,19 @@ export interface components {
         "application/json": components["schemas"]["Error"];
       };
     };
+    /**
+     * @description That host already exists in this target — either it holds rules, or it was created empty before. No rule was touched.
+     *
+     *     One thing is written even so: if the host had rules but no marker, the marker is added. A host in that state is one whose rules were written before a rule create left a marker behind, and it would otherwise disappear from the list the moment its last rule went — with no way back, because it reads as existing and so cannot be added. Repeating the request is therefore how such a host is repaired, and the 409 still describes what happened: the host was already there.
+     */
+    HostConflict: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/json": components["schemas"]["Error"];
+      };
+    };
     /** @description That priority is already taken for this host and rule type. Priority is part of a rule's key, so two rules cannot share one. Nothing was written — on a move, neither the rule being moved nor the one already there. */
     RuleConflict: {
       headers: {
@@ -420,7 +518,7 @@ export interface components {
     TargetPathId: string;
     /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
     TargetId: string;
-    /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. */
+    /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
     Host: string;
     /** @description Sort key — TYPE#priority, e.g. REDIRECT#00100. */
     Sk: string;
@@ -589,6 +687,95 @@ export interface operations {
       500: components["responses"]["InternalError"];
     };
   };
+  listHosts: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        targetId: components["parameters"]["TargetId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The target's hosts. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HostSummary"][];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      404: components["responses"]["NotFound"];
+      405: components["responses"]["MethodNotAllowed"];
+      500: components["responses"]["InternalError"];
+      502: components["responses"]["TargetUnreachable"];
+    };
+  };
+  createHost: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        targetId: components["parameters"]["TargetId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["HostInput"];
+      };
+    };
+    responses: {
+      /** @description The created host, with both counts at zero. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HostSummary"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      404: components["responses"]["NotFound"];
+      405: components["responses"]["MethodNotAllowed"];
+      409: components["responses"]["HostConflict"];
+      500: components["responses"]["InternalError"];
+      502: components["responses"]["TargetUnreachable"];
+    };
+  };
+  deleteHost: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        targetId: components["parameters"]["TargetId"];
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
+        host: components["parameters"]["Host"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The host and all its rules were removed. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: components["responses"]["BadRequest"];
+      404: components["responses"]["NotFound"];
+      405: components["responses"]["MethodNotAllowed"];
+      500: components["responses"]["InternalError"];
+      502: components["responses"]["TargetUnreachable"];
+    };
+  };
   listRules: {
     parameters: {
       query?: never;
@@ -596,7 +783,7 @@ export interface operations {
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
         targetId: components["parameters"]["TargetId"];
-        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. */
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
       };
       cookie?: never;
@@ -626,7 +813,7 @@ export interface operations {
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
         targetId: components["parameters"]["TargetId"];
-        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. */
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
       };
       cookie?: never;
@@ -661,7 +848,7 @@ export interface operations {
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
         targetId: components["parameters"]["TargetId"];
-        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. */
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
         /** @description Sort key — TYPE#priority, e.g. REDIRECT#00100. */
         sk: components["parameters"]["Sk"];
@@ -693,7 +880,7 @@ export interface operations {
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
         targetId: components["parameters"]["TargetId"];
-        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. */
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
         /** @description Sort key — TYPE#priority, e.g. REDIRECT#00100. */
         sk: components["parameters"]["Sk"];
@@ -730,7 +917,7 @@ export interface operations {
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
         targetId: components["parameters"]["TargetId"];
-        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. */
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
         /** @description Sort key — TYPE#priority, e.g. REDIRECT#00100. */
         sk: components["parameters"]["Sk"];
@@ -760,7 +947,7 @@ export interface operations {
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
         targetId: components["parameters"]["TargetId"];
-        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. */
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
         /** @description Sort key — TYPE#priority, e.g. REDIRECT#00100. */
         sk: components["parameters"]["Sk"];

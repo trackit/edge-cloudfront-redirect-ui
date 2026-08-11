@@ -43,6 +43,7 @@ const parse = (body: string | undefined): unknown =>
 
 const KNOWN = "/targets/t1/hosts/www.example.com/rules";
 const UNKNOWN = "/targets/nope/hosts/www.example.com/rules";
+const UNKNOWN_HOSTS = "/targets/nope/hosts";
 
 beforeEach(() => {
   setTargetsRepository(new FakeTargetsRepository([target]));
@@ -56,6 +57,9 @@ afterEach(() => {
 
 describe("rule routes are scoped to a target", () => {
   const cases: [string, string][] = [
+    ["GET", UNKNOWN_HOSTS],
+    ["POST", UNKNOWN_HOSTS],
+    ["DELETE", `${UNKNOWN_HOSTS}/www.example.com`],
     ["GET", UNKNOWN],
     ["POST", UNKNOWN],
     ["GET", `${UNKNOWN}/REDIRECT%2300100`],

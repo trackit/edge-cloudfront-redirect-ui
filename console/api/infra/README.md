@@ -57,7 +57,10 @@ assumable_role_arns = ["arn:aws:iam::123456789012:role/edgeroute-target-*"]
 ```
 
 Each target's role needs a trust policy admitting this Lambda's execution role and
-a permissions policy covering its own rules table.
+a permissions policy covering its own rules table. Mirror the actions the
+execution role gets on `target_table_arns` — in particular
+**`dynamodb:BatchWriteItem`**, which deleting a host needs and which
+`dynamodb:DeleteItem` does not imply.
 
 That permissions policy should also include **`dynamodb:DescribeTable`**, for the
 reason in the next section — and on a resource pattern wide enough to cover a

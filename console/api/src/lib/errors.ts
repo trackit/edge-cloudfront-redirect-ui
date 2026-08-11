@@ -8,6 +8,7 @@ import type { ApiResponse } from "../context.js";
  */
 export const ERROR_CODES = [
   "BAD_REQUEST",
+  "HOST_EXISTS",
   "INTERNAL",
   "INVALID_JSON",
   "METHOD_NOT_ALLOWED",

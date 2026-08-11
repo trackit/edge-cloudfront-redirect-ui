@@ -161,6 +161,131 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
+  /targets/{targetId}/hosts:
+    parameters:
+      - $ref: "#/components/parameters/TargetId"
+    get:
+      operationId: listHosts
+      summary: List a target's hosts.
+      description: >-
+        Every host in the target's table, sorted by host name, with a count of
+        each rule kind. Counts include disabled rules, and are zero for a host
+        that holds none.
+
+
+        A host is the DynamoDB partition key of its rules rather than a stored
+        entity of its own, so it needs something in that partition to be reported
+        at all. A host with rules is listed from them; a host with none is listed
+        from its marker item, which both `POST /hosts` and a rule create leave
+        behind. Only a host nothing has ever been written under is absent.
+
+
+        Backed by a table Scan, so cost grows with the number of rules in the
+        target, not the number of hosts.
+      tags: [rules]
+      responses:
+        "200":
+          description: The target's hosts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HostSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
+    post:
+      operationId: createHost
+      summary: Create a host that has no rules yet.
+      description: >-
+        Makes a host exist before anything is stored under it, so the console can
+        add one and still find it after a refresh. Without this a host is only
+        the partition key of its rules, and one with none cannot be listed.
+
+
+        Writes a single marker item the edge never reads: the Lambda@Edge queries
+        `begins_with(sk, "REDIRECT#" | "REWRITE#")`, and the marker's sort key
+        begins with neither. It disappears with the host when the host is
+        deleted, and is not addressable as a rule.
+
+
+        The host is stored lowercased — DNS is case-insensitive, a DynamoDB
+        partition key is not.
+
+
+        A host that already exists is a 409, and that response still writes the
+        marker if the host was missing one — see `HostConflict`. So repeating this
+        request is how a host whose rules predate markers is repaired.
+      tags: [rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HostInput"
+      responses:
+        "201":
+          description: The created host, with both counts at zero.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/HostConflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
+  /targets/{targetId}/hosts/{host}:
+    parameters:
+      - $ref: "#/components/parameters/TargetId"
+      - $ref: "#/components/parameters/Host"
+    delete:
+      operationId: deleteHost
+      summary: Delete a host and all of its rules.
+      description: >-
+        Destructive. A host is the partition key of its rules and nothing else,
+        so removing it means removing every redirect and rewrite stored under it.
+        The target and its DynamoDB table are untouched.
+
+
+        A host nothing is stored under at all is a 404, not a 204 — reporting
+        success would hide a mistyped or already-deleted host. A host that exists
+        with no rules is not that case: it is deleted like any other, and answers
+        204.
+
+
+        Not atomic: the rules are removed in batches of 25, so a failure part-way
+        leaves the host with fewer rules rather than none. Repeat the request to
+        finish the job.
+      tags: [rules]
+      responses:
+        "204":
+          description: The host and all its rules were removed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
   /targets/{targetId}/hosts/{host}/rules:
     parameters:
       - $ref: "#/components/parameters/TargetId"
@@ -206,6 +331,21 @@ paths:
         The response body's `sk` is the created rule's id. It contains a `#`, so
         addressing the rule afterwards means percent-encoding it:
         `…/rules/REDIRECT%2300100`.
+
+
+        Creating a rule for a host that does not exist yet brings the host into
+        existence, as `POST /hosts` would: the host keeps its place in the list
+        afterwards even if every rule under it is deleted, and takes an explicit
+        `DELETE /hosts/{host}` to remove.
+
+
+        That part is best effort, and deliberately so. The marker is written after
+        the rule, in its own request, and a failure there is logged rather than
+        returned — the rule is what was asked for and it is already stored, so a
+        500 would report a failure for a write that happened. A host whose marker
+        was lost that way behaves as hosts did before markers existed: still
+        listed while it has rules, gone when the last one is deleted. Adding the
+        host repairs it — see `HostConflict`.
       tags: [rules]
       requestBody:
         required: true
@@ -381,7 +521,12 @@ components:
       name: host
       in: path
       required: true
-      description: Rule host — the DynamoDB partition key, e.g. www.example.com.
+      description: >-
+        Rule host — the DynamoDB partition key, e.g. www.example.com. Matched
+        case-insensitively: the value is lowercased before it is used as a key,
+        so `WWW.Example.com` and `www.example.com` address one host rather than
+        two partitions. Rules are therefore always stored under the lowercased
+        host, whichever case created them.
       schema:
         type: string
         minLength: 1
@@ -484,6 +629,41 @@ components:
           type: string
         roleArn:
           type: string
+    HostInput:
+      description: A host to create, before it has any rules.
+      type: object
+      additionalProperties: false
+      required: [host]
+      properties:
+        host:
+          type: string
+          maxLength: 253
+          pattern: "^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$"
+          description: >-
+            A hostname, not a URL — no scheme, port, path or trailing dot. This
+            is the incoming domain rules apply to, and it becomes the DynamoDB
+            partition key, so it is stored lowercased.
+    HostSummary:
+      description: >-
+        One host in a target's table and how many rules of each kind it holds.
+        Named `HostSummary` rather than `Host` because there is no fuller host
+        resource behind it — a host is a partition key, its rules, and nothing
+        else that can be fetched.
+      type: object
+      additionalProperties: false
+      required: [host, redirects, rewrites]
+      properties:
+        host:
+          type: string
+          description: The rule host — the DynamoDB partition key.
+        redirects:
+          type: integer
+          minimum: 0
+          description: Rules with an `sk` under `REDIRECT#`, disabled ones included.
+        rewrites:
+          type: integer
+          minimum: 0
+          description: Rules with an `sk` under `REWRITE#`, disabled ones included.
     Rule:
       description: A redirect or rewrite rule item, per the shared schemas.
       oneOf:
@@ -630,6 +810,7 @@ components:
                 the addressed resource does not exist within a known target.
               enum:
                 - BAD_REQUEST
+                - HOST_EXISTS
                 - INTERNAL
                 - INVALID_JSON
                 - METHOD_NOT_ALLOWED
@@ -697,6 +878,23 @@ components:
         problem, not a bad request: targets are registered at runtime while IAM
         is granted at apply time, and both grants are empty by default. See
         console/api/infra/README.md.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    HostConflict:
+      description: >-
+        That host already exists in this target — either it holds rules, or it
+        was created empty before. No rule was touched.
+
+
+        One thing is written even so: if the host had rules but no marker, the
+        marker is added. A host in that state is one whose rules were written
+        before a rule create left a marker behind, and it would otherwise
+        disappear from the list the moment its last rule went — with no way back,
+        because it reads as existing and so cannot be added. Repeating the request
+        is therefore how such a host is repaired, and the 409 still describes
+        what happened: the host was already there.
       content:
         application/json:
           schema:

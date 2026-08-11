@@ -28,6 +28,51 @@ describe("router", () => {
     });
   });
 
+  it("lowercases a host param and leaves the others alone", async () => {
+    // `host` is a DynamoDB partition key, so two cases of one DNS name would be
+    // two partitions. Normalizing here rather than per handler is what stops a
+    // later route reintroducing the split — `targetId` and `sk` are opaque
+    // server-generated strings and must survive exactly as sent.
+    const router = createRouter([
+      {
+        method: "GET",
+        pattern: "/targets/:targetId/hosts/:host/rules/:sk",
+        handler: (r) => ({ status: 200, body: r.params }),
+      },
+    ]);
+
+    const res = await router.handle(
+      req({
+        path: "/targets/T1-Ab/hosts/WWW.Example.COM/rules/REDIRECT%2300100",
+      }),
+    );
+
+    expect(res.body).toEqual({
+      targetId: "T1-Ab",
+      host: "www.example.com",
+      sk: "REDIRECT#00100",
+    });
+  });
+
+  it("normalizes a host after decoding it, not before", async () => {
+    // Percent-escapes are uppercase by convention (%2E, not %2e); lowercasing
+    // the raw segment first would leave the escape intact and produce a
+    // different string than decoding does.
+    const router = createRouter([
+      {
+        method: "GET",
+        pattern: "/hosts/:host",
+        handler: (r) => ({ status: 200, body: r.params }),
+      },
+    ]);
+
+    const res = await router.handle(
+      req({ path: "/hosts/WWW%2EEXAMPLE%2ECOM" }),
+    );
+
+    expect(res.body).toEqual({ host: "www.example.com" });
+  });
+
   it("extracts path params", async () => {
     const router = createRouter([
       {

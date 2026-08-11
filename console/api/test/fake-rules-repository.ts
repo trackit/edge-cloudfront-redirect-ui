@@ -1,7 +1,11 @@
-import type {
-  MoveOutcome,
-  RuleItem,
-  RulesRepository,
+import { isRuleSk } from "../src/lib/rule-keys.js";
+import {
+  HOST_MARKER_SK,
+  summarizeHosts,
+  type HostSummary,
+  type MoveOutcome,
+  type RuleItem,
+  type RulesRepository,
 } from "../src/lib/rules-repository.js";
 
 /**
@@ -23,9 +27,50 @@ export class FakeRulesRepository implements RulesRepository {
     return JSON.stringify([pk, sk]);
   }
 
+  // Skips the host marker exactly as the real one does — a partition holds more
+  // than rules, and a fake that returned it would hide the phantom row instead
+  // of catching it.
   listByHost(host: string): Promise<RuleItem[]> {
-    const rules = [...this.items.values()].filter((item) => item.pk === host);
+    const rules = [...this.items.values()].filter(
+      (item) => item.pk === host && isRuleSk(item.sk),
+    );
     return Promise.resolve(rules);
+  }
+
+  // Shares `summarizeHosts` with the real repository rather than counting again
+  // here — two implementations of the same fold is how the fake and the thing it
+  // stands in for drift apart.
+  listHosts(): Promise<HostSummary[]> {
+    return Promise.resolve(summarizeHosts([...this.items.values()]));
+  }
+
+  // "Exists" means anything under the partition — a rule or an earlier marker —
+  // not just the marker's own key, matching the two-step check in the real one.
+  //
+  // The marker is written either way, like the real one: refusing the duplicate
+  // is what the caller sees, and repairing a host that has rules but no marker
+  // is what the refused call is still good for.
+  createHost(host: string): Promise<boolean> {
+    const exists = [...this.items.values()].some((item) => item.pk === host);
+
+    // Cast because the marker carries no `type`: it is not a rule, and the fake
+    // stores it exactly as the real repository writes it.
+    this.items.set(this.key(host, HOST_MARKER_SK), {
+      pk: host,
+      sk: HOST_MARKER_SK,
+    } as RuleItem);
+    return Promise.resolve(!exists);
+  }
+
+  // All of them at once — the real one deletes in batches and can fail part-way,
+  // which is a DynamoDB property the fake cannot usefully imitate. The batching
+  // and the unprocessed-items retry are covered against the mocked client in
+  // dynamo-rules-repository.test.ts.
+  deleteHost(host: string): Promise<number> {
+    const doomed = [...this.items.values()].filter((item) => item.pk === host);
+    for (const item of doomed) this.items.delete(this.key(item.pk, item.sk));
+
+    return Promise.resolve(doomed.length);
   }
 
   get(host: string, sk: string): Promise<RuleItem | null> {
@@ -36,11 +81,18 @@ export class FakeRulesRepository implements RulesRepository {
     return Promise.resolve(this.items.delete(this.key(host, sk)));
   }
 
+  // Leaves the host marker behind too, like the real one: a fake that skipped it
+  // would let a test pass on the asymmetry where a host created by writing a
+  // rule vanishes with that rule while an explicitly added one stays.
   create(item: RuleItem): Promise<boolean> {
     const key = this.key(item.pk, item.sk);
     if (this.items.has(key)) return Promise.resolve(false);
 
     this.items.set(key, item);
+    this.items.set(this.key(item.pk, HOST_MARKER_SK), {
+      pk: item.pk,
+      sk: HOST_MARKER_SK,
+    } as RuleItem);
     return Promise.resolve(true);
   }
 

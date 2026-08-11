@@ -1,5 +1,6 @@
 import { ApiError, toApiError } from "./error";
 import type {
+  HostSummary,
   Rule,
   RuleInput,
   Target,
@@ -93,8 +94,10 @@ export function createApiClient(options: ApiClientOptions = {}) {
     return parsed as T;
   }
 
+  const hostsPath = (targetId: string) => `/targets/${segment(targetId)}/hosts`;
+
   const rulesPath = (targetId: string, host: string) =>
-    `/targets/${segment(targetId)}/hosts/${segment(host)}/rules`;
+    `${hostsPath(targetId)}/${segment(host)}/rules`;
 
   return {
     /** The configured base URL, after trimming. Useful in diagnostics. */
@@ -112,6 +115,32 @@ export function createApiClient(options: ApiClientOptions = {}) {
         request<Target>("PUT", `/targets/${segment(id)}`, input),
       remove: (id: string) =>
         request<void>("DELETE", `/targets/${segment(id)}`),
+    },
+
+    hosts: {
+      /**
+       * The target's hosts, sorted by name. A host exists as long as it holds at
+       * least one rule, or was created empty — an unknown *target* is a 404, but
+       * a target with nothing in it is `[]`.
+       */
+      list: (targetId: string) =>
+        request<HostSummary[]>("GET", hostsPath(targetId)),
+
+      /**
+       * Creates a host that has no rules yet, so it survives a reload. A host
+       * that already exists — with rules or without — is a 409 `HOST_EXISTS`.
+       * The server lowercases it, so the returned `host` is the one to address.
+       */
+      create: (targetId: string, host: string) =>
+        request<HostSummary>("POST", hostsPath(targetId), { host }),
+
+      /**
+       * Deletes the host **and every rule under it**. A host that is not there
+       * is a 404. Not atomic server-side: a failure part-way leaves the host
+       * with fewer rules, and repeating the call finishes the job.
+       */
+      remove: (targetId: string, host: string) =>
+        request<void>("DELETE", `${hostsPath(targetId)}/${segment(host)}`),
     },
 
     rules: {
