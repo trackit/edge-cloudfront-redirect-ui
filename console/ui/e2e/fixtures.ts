@@ -1,5 +1,5 @@
 import { expect, test as base, type Page, type Route } from "@playwright/test";
-import type { HostSummary } from "../src/api";
+import type { HostSummary, Rule } from "../src/api";
 import type { Stored } from "../src/distribution";
 import type { Distribution } from "../src/types";
 
@@ -45,6 +45,14 @@ export interface ApiStub {
    * default 204.
    */
   deleteHostReply: (reply: { status: number; body: unknown }) => void;
+  /**
+   * What `GET …/hosts/{host}/rules` returns. The host view fetches this on
+   * mount, so — like `setHosts` — it is the state the page starts in.
+   *
+   * Writes are deliberately still unstubbed: no spec exercises one yet, and the
+   * 500 fallthrough is what will say so when one does.
+   */
+  setRules: (rules: Rule[]) => void;
 }
 
 const jsonOf = (route: Route): unknown => {
@@ -69,6 +77,7 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
   let hosts: HostSummary[] = [];
   let createHost: { status: number; body: unknown } | null = null;
   let deleteHost: { status: number; body: unknown } | null = null;
+  let rules: Rule[] = [];
 
   // A predicate, not the `**/api/**` glob that looks right: the app's own source
   // lives in `src/api/`, and in dev Vite serves those modules from URLs the glob
@@ -141,6 +150,18 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
         }
       }
 
+      // Before the fallthrough and after the host routes: the host view fetches
+      // its rules on mount, so leaving this to the 500 would put every spec that
+      // lands on a host into the "Could not load these rules" state.
+      if (method === "GET" && RULES_COLLECTION.test(url.pathname)) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(rules),
+        });
+        return;
+      }
+
       if (method === "DELETE" && HOSTS_ITEM.test(url.pathname)) {
         const reply = deleteHost ?? { status: 204, body: null };
         await route.fulfill({
@@ -182,6 +203,9 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
     deleteHostReply: (reply) => {
       deleteHost = reply;
     },
+    setRules: (next) => {
+      rules = next;
+    },
   };
 };
 
@@ -209,6 +233,9 @@ const HOSTS_COLLECTION = /\/hosts$/;
 
 /** `…/targets/{id}/hosts/{host}`, one host — but not its `/rules` below it. */
 const HOSTS_ITEM = /\/hosts\/[^/]+$/;
+
+/** `…/hosts/{host}/rules`, the collection — not one rule addressed under it. */
+const RULES_COLLECTION = /\/rules$/;
 
 /** A host row as `GET …/hosts` returns it. Counts default to an empty host. */
 export const host = (
