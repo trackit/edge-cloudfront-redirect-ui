@@ -67,6 +67,16 @@ const rewriteRule = (over: Partial<RedirectRule> = {}): RedirectRule =>
     ...over,
   }) as RedirectRule;
 
+const S3_ORIGIN = {
+  s3: {
+    authMethod: "origin-access-identity",
+    region: "us-east-1",
+    domainName: "example-assets.s3.us-east-1.amazonaws.com",
+    path: "",
+    customHeaders: {},
+  },
+} as const;
+
 const withRules = (...rules: RedirectRule[]): void => {
   repo = new FakeRepository(rules);
   resetService();
@@ -174,17 +184,7 @@ describe("origin-request (rewrites)", () => {
   it("switches to an s3 origin", async () => {
     withRules(
       rewriteRule({
-        forwardSettings: {
-          origin: {
-            s3: {
-              authMethod: "origin-access-identity",
-              region: "us-east-1",
-              domainName: "example-assets.s3.us-east-1.amazonaws.com",
-              path: "",
-              customHeaders: {},
-            },
-          },
-        },
+        forwardSettings: { origin: S3_ORIGIN },
       } as Partial<RedirectRule>),
     );
 
@@ -428,6 +428,105 @@ describe("priority ordering", () => {
     expect(result.headers?.["location"]?.[0]?.value).toBe(
       "https://www.example.com/broad",
     );
+  });
+});
+
+describe("the incoming query string on rewrites", () => {
+  /** A rewrite whose forwardSettings are spelled out per case. */
+  const rewriteForwarding = (
+    forwardSettings: Record<string, unknown>,
+  ): RedirectRule => rewriteRule({ forwardSettings } as Partial<RedirectRule>);
+
+  const rewriting = async (rule: RedirectRule): Promise<CloudFrontRequest> => {
+    withRules(rule);
+
+    return (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .withQuerystring("a=1")
+        .build(),
+    )) as CloudFrontRequest;
+  };
+
+  it("replaces it with the query string the rule spells out", async () => {
+    const result = await rewriting(
+      rewriteForwarding({ pathAndQS: "/api/v1/legacy?x=1" }),
+    );
+
+    expect(result.querystring).toBe("x=1");
+  });
+
+  it("keeps it when the rule only switches origin", async () => {
+    const result = await rewriting(rewriteForwarding({ origin: S3_ORIGIN }));
+
+    expect(result.querystring).toBe("a=1");
+  });
+
+  // The case hand-written rules depend on: a path with no query of its own says
+  // nothing about the incoming query string, so it is forwarded. Unchanged from
+  // the upstream snippet, and deliberately not "fixed" along with the opt-out.
+  it("keeps it when the rule's path carries no query string", async () => {
+    const result = await rewriting(
+      rewriteForwarding({ pathAndQS: "/api/v1/legacy" }),
+    );
+
+    expect(result.uri).toBe("/api/v1/legacy");
+    expect(result.querystring).toBe("a=1");
+  });
+
+  it("keeps it when the rule opts in explicitly", async () => {
+    const result = await rewriting(
+      rewriteForwarding({
+        pathAndQS: "/api/v1/legacy",
+        useIncomingQueryString: true,
+      }),
+    );
+
+    expect(result.querystring).toBe("a=1");
+  });
+
+  it("drops it when the rule opts out", async () => {
+    const result = await rewriting(
+      rewriteForwarding({
+        pathAndQS: "/api/v1/legacy",
+        useIncomingQueryString: false,
+      }),
+    );
+
+    expect(result.uri).toBe("/api/v1/legacy");
+    expect(result.querystring).toBe("");
+  });
+
+  it("drops it on an origin-only rewrite, without touching the path", async () => {
+    const result = await rewriting(
+      rewriteForwarding({ origin: S3_ORIGIN, useIncomingQueryString: false }),
+    );
+
+    expect(result.uri).toBe("/legacy/thing");
+    expect(result.querystring).toBe("");
+    expect(result.origin?.s3?.domainName).toBe(
+      "example-assets.s3.us-east-1.amazonaws.com",
+    );
+  });
+
+  it("prefers the rule's own query string over the opt-out", async () => {
+    const result = await rewriting(
+      rewriteForwarding({
+        pathAndQS: "/api/v1/legacy?x=1",
+        useIncomingQueryString: false,
+      }),
+    );
+
+    expect(result.querystring).toBe("x=1");
+  });
+
+  it("keeps a literal ? inside the rule's query string", async () => {
+    const result = await rewriting(
+      rewriteForwarding({ pathAndQS: "/api?next=/somewhere?deep=1" }),
+    );
+
+    expect(result.uri).toBe("/api");
+    expect(result.querystring).toBe("next=/somewhere?deep=1");
   });
 });
 

@@ -74,7 +74,22 @@ export type RedirectRule = EdgeRedirectRule | ForwardRewriteRule;
 
 export type MatchResult =
   | { type: "redirect"; statusCode: 301 | 302; redirectURL: string }
-  | { type: "rewrite"; forwardSettings: ForwardSettings };
+  | {
+      type: "rewrite";
+      forwardSettings: ForwardSettings;
+      /**
+       * The rule set `useIncomingQueryString: false`, so the query string the
+       * viewer sent must not reach the origin.
+       *
+       * Separate from `forwardSettings.pathAndQS` because the two are
+       * independent: a rewrite that only switches origin resolves no path at
+       * all, and still has to be able to clear the query string. An **absent**
+       * flag is not an opt-out — it keeps the query string, which is what it has
+       * always done here and in the upstream snippet, and what hand-written
+       * rules therefore rely on.
+       */
+      dropIncomingQueryString: boolean;
+    };
 
 export type RequestParams = {
   hostname: string;

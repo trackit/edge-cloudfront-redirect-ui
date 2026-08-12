@@ -179,13 +179,23 @@ const handleOriginRequest = async (
   if (result?.type !== "rewrite") return request;
 
   const { pathAndQS, origin } = result.forwardSettings;
+  let queryReplaced = false;
 
   if (pathAndQS) {
     const [newPath, ...qsParts] = pathAndQS.split("?");
     request.uri = newPath || "/";
     if (qsParts.length > 0) {
       request.querystring = qsParts.join("?");
+      queryReplaced = true;
     }
+  }
+
+  // A query string the rule resolved to wins. Failing that, an explicit
+  // `useIncomingQueryString: false` clears what the viewer sent — the only thing
+  // that ever drops it. Left alone otherwise: an absent flag means keep, so a
+  // rule written by hand against the upstream snippet behaves the same here.
+  if (!queryReplaced && result.dropIncomingQueryString) {
+    request.querystring = "";
   }
 
   if (origin) {

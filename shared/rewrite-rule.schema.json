@@ -42,7 +42,11 @@
           "type": "string",
           "description": "Rewritten path (and optional query string) the request is forwarded with."
         },
-        "useIncomingQueryString": { "type": "boolean" }
+        "useIncomingQueryString": {
+          "type": "boolean",
+          "description": "Whether the request's own query string is forwarded. Absent means yes — only an explicit false drops it. A query string written into pathAndQS wins over either.",
+          "$comment": "Absent is deliberately not an opt-out: forwarding is what this field has always done when omitted, both here and in the upstream snippet, so rules written by hand keep behaving the same. See infra/lambda/README.md#the-query-string-on-a-rewrite."
+        }
       }
     },
     "disabled": {

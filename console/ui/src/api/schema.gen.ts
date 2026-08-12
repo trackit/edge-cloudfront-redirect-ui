@@ -416,6 +416,7 @@ export interface components {
             } & (unknown | unknown);
             /** @description Rewritten path (and optional query string) the request is forwarded with. */
             pathAndQS?: string;
+            /** @description Whether the request's own query string is forwarded. Absent means yes — only an explicit false drops it. A query string written into pathAndQS wins over either. */
             useIncomingQueryString?: boolean;
           }
         | unknown
@@ -430,6 +431,7 @@ export interface components {
           } & (unknown | unknown);
           /** @description Rewritten path (and optional query string) the request is forwarded with. */
           pathAndQS?: string;
+          /** @description Whether the request's own query string is forwarded. Absent means yes — only an explicit false drops it. A query string written into pathAndQS wins over either. */
           useIncomingQueryString?: boolean;
         }
       | unknown

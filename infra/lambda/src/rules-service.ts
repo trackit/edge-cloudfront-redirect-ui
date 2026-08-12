@@ -164,6 +164,12 @@ export class RulesService {
         }),
         ...(includePath && { pathAndQS: targetString }),
       },
+      // `appendQueryStringIfNeeded` above decides whether the incoming query
+      // string is carried into the target; this is the other half of the same
+      // flag — whether it is cleared when it was not. Only an explicit `false`
+      // clears it. See MatchResult.
+      dropIncomingQueryString:
+        rule.forwardSettings.useIncomingQueryString === false,
     };
   }
 

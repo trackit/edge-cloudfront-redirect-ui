@@ -46,6 +46,34 @@ The fallback only keeps a single-association distribution behaving as it did;
 rules written by the console are keyed on hostnames, so none of them match under
 it.
 
+## The query string on a rewrite
+
+Two things decide what reaches the origin: any query string in the rule's
+`pathAndQS`, and `forwardSettings.useIncomingQueryString`. For a request carrying
+`?a=1`:
+
+| `pathAndQS`      | `useIncomingQueryString` | Forwarded |
+| ---------------- | ------------------------ | --------- |
+| `/api?x=1`       | anything                 | `x=1`     |
+| absent           | absent                   | `a=1`     |
+| `/api`           | absent                   | `a=1`     |
+| absent or `/api` | `true`                   | `a=1`     |
+| absent or `/api` | `false`                  | _(empty)_ |
+
+A query string the rule spells out always wins. Otherwise the request's own is
+forwarded, and **only an explicit `false` drops it** — an absent flag is not an
+opt-out, which is what it has always meant here and in the upstream snippet, so
+rules written by hand against either behave the same.
+
+The equivalent flag on a redirect is the other way round: `redirectURL` is used
+as written, and the incoming query string is appended only when
+`useIncomingQueryString` is `true`.
+
+> The upstream snippet this was extracted from resolves the flag correctly and
+> then never applies it — its origin-request handler only assigns
+> `request.querystring` when the resolved path contains a `?`, so an opt-out is a
+> no-op there. Fixing that is a deliberate divergence, not drift.
+
 ## Config
 
 Lambda@Edge does not support environment variables, so config is **baked into the bundle**
