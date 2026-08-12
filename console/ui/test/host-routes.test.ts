@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONSOLE_PATH, hostKey, hostPath } from "../src/hostRoutes";
+import { CONSOLE_PATH, hostKey, hostPath } from "../src/domain/hostRoutes";
 
 /**
  * Where a host sits in a URL, and what counts as the same host.

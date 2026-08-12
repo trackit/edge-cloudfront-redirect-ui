@@ -8,11 +8,11 @@ import ImportModal from "./ImportModal";
 import RuleEditor from "./RuleEditor";
 import RuleList from "./RuleList";
 import { IconClock, IconPlus, IconUpload } from "./icons";
-import { resolveHostView, useHosts } from "../hosts";
-import { takenPriorities, useRules } from "../rules";
-import { CONSOLE_PATH, hostKey, hostPath } from "../hostRoutes";
+import { resolveHostView, useHosts } from "../domain/hosts";
+import { takenPriorities, useRules } from "../domain/rules";
+import { CONSOLE_PATH, hostKey, hostPath } from "../domain/hostRoutes";
 import type { HostSummary, Rule, RuleInput } from "../api";
-import type { Distribution } from "../types";
+import type { Distribution } from "../domain/types";
 
 interface Props {
   distribution: Distribution;

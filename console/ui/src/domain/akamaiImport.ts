@@ -5,7 +5,7 @@ import {
   validateDraft,
   type RedirectDraft,
 } from "./ruleDraft";
-import type { MatchCondition, RuleInput, ValidationDetail } from "./api";
+import type { MatchCondition, RuleInput, ValidationDetail } from "../api";
 
 /**
  * Turns an Akamai Edge Redirector export into rules for a distribution.

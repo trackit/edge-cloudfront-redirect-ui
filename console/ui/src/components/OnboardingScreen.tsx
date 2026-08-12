@@ -6,9 +6,9 @@ import {
   SAMPLE_DISTRIBUTION,
   connectDistribution,
   emptyDistribution,
-} from "../distribution";
+} from "../domain/distribution";
 import { ApiError } from "../api";
-import type { Distribution, DistributionDraft } from "../types";
+import type { Distribution, DistributionDraft } from "../domain/types";
 import { IconArrow, IconBolt, IconServer, IconSliders } from "./icons";
 
 interface Props {

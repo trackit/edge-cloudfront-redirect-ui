@@ -1,9 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { IconArrow, IconCheck, IconClose, IconInfo, IconUpload } from "./icons";
-import { parseExport } from "../akamaiImport";
-import type { ImportPreview, ParsedRow, SourceFormat } from "../akamaiImport";
-import type { RedirectDraft } from "../ruleDraft";
-import type { ImportItem, ImportOutcome } from "../rules";
+import { parseExport } from "../domain/akamaiImport";
+import type { ImportPreview, ParsedRow, SourceFormat } from "../domain/akamaiImport";
+import type { RedirectDraft } from "../domain/ruleDraft";
+import type { ImportItem, ImportOutcome } from "../domain/rules";
 
 interface Props {
   /** The distribution rules are imported into, named in the subtitle. */

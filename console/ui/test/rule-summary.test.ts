@@ -5,7 +5,7 @@ import {
   ruleFrom,
   ruleKindLabel,
   ruleTo,
-} from "../src/ruleSummary";
+} from "../src/domain/ruleSummary";
 import type { ForwardSettings, MatchCondition, Rule } from "../src/api";
 
 /**
