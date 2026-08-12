@@ -105,8 +105,14 @@ resource "aws_cloudfront_distribution" "existing" {
   add the same block to any `ordered_cache_behavior` that needs them.
 - The ARNs are **qualified version ARNs** (required by CloudFront) — always take
   them from the module outputs; never hand-build them.
-- Rules key on the request's `Host` header, so they apply to whatever hostname
-  the viewer used (your distribution's domain or its alternate CNAMEs).
+- Rules key on the hostname the **viewer** asked for, so they apply to whatever
+  hostname it used (your distribution's domain or its alternate CNAMEs).
+- **Rewrites need both associations.** CloudFront replaces `Host` with the
+  origin's domain before origin-request, so viewer-request is what carries the
+  viewer's hostname across (as `X-EdgeRoute-Viewer-Host`, dropped again before the
+  request leaves for the origin). Attach origin-request on its own and rewrites
+  are looked up under the origin's domain instead — which is not what the console
+  writes rules under, so none of them will match. Redirects are unaffected.
 
 ## Using the module more than once
 

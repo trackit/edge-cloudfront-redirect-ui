@@ -13,6 +13,8 @@ The Terraform module in `infra/` creates a DynamoDB rules table and a Lambda@Edg
 
 That's the entire integration surface. The module takes no input about your distribution and never touches it.
 
+Attach **both**. Rules are keyed on the hostname the viewer asked for, and CloudFront has replaced the `Host` header with the origin's domain by the time origin-request runs — so viewer-request is what carries that hostname across for rewrites to be found under. Redirects work either way; rewrites without the viewer-request association are looked up under the origin's domain instead. See [infra/lambda](infra/lambda/README.md#the-host-a-rule-is-keyed-on).
+
 ## Repo layout
 
 ```

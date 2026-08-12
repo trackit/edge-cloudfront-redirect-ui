@@ -13,13 +13,38 @@ Extracted from `edge-platform-functions-cdn`'s `src/snippets/dynamodb-redirect/`
 
 ## Rule evaluation
 
-1. `Query(pk = <Host header>, begins_with(sk, "REDIRECT#" | "REWRITE#"))`.
+1. `Query(pk = <the viewer's hostname>, begins_with(sk, "REDIRECT#" | "REWRITE#"))`
+   — see [the host a rule is keyed on](#the-host-a-rule-is-keyed-on).
 2. Rules with `disabled: true` are dropped.
 3. Remaining rules are evaluated in ascending sort-key order (`REDIRECT#00010` before `REDIRECT#00100`) — lower priority number wins.
 4. The **first** rule whose `matches` **all** pass is applied; the rest are ignored.
 5. No match → the request passes through unmodified.
 
 A DynamoDB error is logged and the request passes through — rules never fail a request.
+
+## The host a rule is keyed on
+
+A rule's `pk` is the hostname the viewer asked for. Only viewer-request sees it:
+CloudFront replaces the `Host` header with the **origin's** domain before
+origin-request fires, so a rewrite looked up there would query the partition of a
+bucket or backend — which holds no rules, so every rewrite silently never matches.
+
+So viewer-request stamps the viewer's hostname on the request as
+`X-EdgeRoute-Viewer-Host`, and origin-request prefers that header over `Host`. The
+header is set unconditionally, overwriting anything the viewer sent — otherwise a
+request could name any host and be matched by its rules. origin-request drops it
+before the request reaches the origin.
+
+| Association attached                  | `pk` a rewrite is looked up under                    |
+| ------------------------------------- | ---------------------------------------------------- |
+| viewer + origin-request (recommended) | the viewer's hostname                                |
+| origin-request alone                  | the **origin's** domain — nothing stamped the header |
+
+Attach both — see
+[modules/edge](../modules/edge/README.md#wiring-it-into-an-existing-distribution).
+The fallback only keeps a single-association distribution behaving as it did;
+rules written by the console are keyed on hostnames, so none of them match under
+it.
 
 ## Config
 

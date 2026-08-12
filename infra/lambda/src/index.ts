@@ -1,4 +1,5 @@
 import type {
+  CloudFrontEvent,
   CloudFrontHeaders,
   CloudFrontOrigin,
   CloudFrontRequest,
@@ -13,6 +14,7 @@ import type {
   CloudFrontOriginWithExtendedProtocol,
   RequestParams,
 } from "./rule-types.js";
+import { VIEWER_HOST_HEADER, stampViewerHost } from "./lib/viewer-host.js";
 
 /**
  * Terraform renders `edge-config.generated.ts` into the zip at package time, so
@@ -54,13 +56,10 @@ export const resetService = (): void => {
   servicePromise = undefined;
 };
 
-const getParams = (request: CloudFrontRequest): RequestParams | null => {
-  const hostHeader = request.headers["host"]?.[0]?.value || "";
-  if (!hostHeader) return null;
-
-  const protocol = request.headers["x-forwarded-proto"]?.[0]?.value || "https";
-  const search = request.querystring ? `?${request.querystring}` : "";
-
+const getParams = (
+  request: CloudFrontRequest,
+  eventType: CloudFrontEvent["config"]["eventType"],
+): RequestParams | null => {
   const headers: Record<string, string> = {};
   for (const [key, entries] of Object.entries(request.headers)) {
     if (entries?.[0]?.value) {
@@ -68,8 +67,28 @@ const getParams = (request: CloudFrontRequest): RequestParams | null => {
     }
   }
 
+  // At origin-request `host` is the origin's domain, not the site the viewer
+  // asked for, so the value viewer-request stamped is the one that can find the
+  // host's rules (see lib/viewer-host.ts). It is only trusted for that event:
+  // at viewer-request the real Host header is right there, and preferring a
+  // header the viewer can set would let it choose whose rules to be matched by.
+  //
+  // Falling back to `host` covers a distribution that attaches origin-request
+  // alone — nothing was stamped, so rewrites key on the origin's domain, as they
+  // did before. Attach both associations to key them on the viewer's hostname.
+  const hostname =
+    (eventType === "origin-request"
+      ? headers[VIEWER_HOST_HEADER]
+      : undefined) ??
+    headers["host"] ??
+    "";
+  if (!hostname) return null;
+
+  const protocol = headers["x-forwarded-proto"] || "https";
+  const search = request.querystring ? `?${request.querystring}` : "";
+
   return {
-    hostname: hostHeader,
+    hostname,
     path: `${request.uri}${search}`,
     protocol,
     headers,
@@ -121,6 +140,11 @@ const handleViewerRequest = async (
   request: CloudFrontRequest,
   params: RequestParams,
 ): Promise<CloudFrontRequestResult> => {
+  // Stamped before the lookup so origin-request still knows the viewer's
+  // hostname when rule evaluation fails and the handler passes the request
+  // through untouched.
+  stampViewerHost(request.headers, params.hostname);
+
   const service = await getService();
   const result = await service.match(params, "REDIRECT");
 
@@ -144,6 +168,11 @@ const handleOriginRequest = async (
   request: CloudFrontRequest,
   params: RequestParams,
 ): Promise<CloudFrontRequestResult> => {
+  // Its one reader is `params.hostname`, which is already resolved. Dropped
+  // rather than forwarded: it is this function's own bookkeeping, and a rewrite
+  // may hand the request to an origin that is not ours.
+  delete request.headers[VIEWER_HOST_HEADER];
+
   const service = await getService();
   const result = await service.match(params, "REWRITE");
 
@@ -180,7 +209,7 @@ export const handler = async (
     throw new Error("redirect-rules: event carried no CloudFront request");
   }
 
-  const params = getParams(request);
+  const params = getParams(request, record.config.eventType);
   if (!params) return request;
 
   try {

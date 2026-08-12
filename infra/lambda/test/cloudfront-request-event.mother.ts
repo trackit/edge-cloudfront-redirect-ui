@@ -4,6 +4,10 @@ import type {
   CloudFrontRequest,
   CloudFrontRequestEvent,
 } from "aws-lambda";
+import { VIEWER_HOST_HEADER } from "../src/lib/viewer-host.js";
+
+const ORIGIN_DOMAIN = "original-bucket.s3.amazonaws.com";
+const VIEWER_HOST = "www.example.com";
 
 export class CloudfrontRequestEventMother {
   private request: CloudFrontRequest;
@@ -17,26 +21,37 @@ export class CloudfrontRequestEventMother {
       requestId: "test-request-id",
     };
 
+    const isOriginRequest = eventType === "origin-request";
+
     this.request = {
       clientIp: "1.2.3.4",
       method: "GET",
       uri: "/test",
       querystring: "",
-      headers: {
-        host: [{ key: "Host", value: "www.example.com" }],
-      },
-      origin:
-        eventType === "origin-request"
-          ? {
-              s3: {
-                authMethod: "origin-access-identity",
-                domainName: "original-bucket.s3.amazonaws.com",
-                path: "",
-                customHeaders: {},
-                region: "us-east-1",
-              },
-            }
-          : undefined,
+      // By origin-request CloudFront has replaced Host with the origin's own
+      // domain, and the viewer's hostname only survives because viewer-request
+      // stamped it. Modelling that faithfully is the point: a fixture that puts
+      // the viewer's host in `host` at origin-request describes an event
+      // CloudFront cannot produce, and a lookup keyed on the wrong header passes.
+      headers: isOriginRequest
+        ? {
+            host: [{ key: "Host", value: ORIGIN_DOMAIN }],
+            [VIEWER_HOST_HEADER]: [
+              { key: "X-EdgeRoute-Viewer-Host", value: VIEWER_HOST },
+            ],
+          }
+        : { host: [{ key: "Host", value: VIEWER_HOST }] },
+      origin: isOriginRequest
+        ? {
+            s3: {
+              authMethod: "origin-access-identity",
+              domainName: ORIGIN_DOMAIN,
+              path: "",
+              customHeaders: {},
+              region: "us-east-1",
+            },
+          }
+        : undefined,
     };
   }
 
@@ -72,6 +87,20 @@ export class CloudfrontRequestEventMother {
 
   withHost(host: string): this {
     this.request.headers["host"] = [{ key: "Host", value: host }];
+    return this;
+  }
+
+  /** A viewer sending the header itself, or viewer-request having stamped it. */
+  withViewerHostHeader(host: string): this {
+    this.request.headers[VIEWER_HOST_HEADER] = [
+      { key: "X-EdgeRoute-Viewer-Host", value: host },
+    ];
+    return this;
+  }
+
+  /** A distribution with no viewer-request association: nothing stamped it. */
+  withoutViewerHostHeader(): this {
+    delete this.request.headers[VIEWER_HOST_HEADER];
     return this;
   }
 

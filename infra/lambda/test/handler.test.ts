@@ -7,6 +7,7 @@ import type {
 import type { RedirectRule } from "../src/rule-types.js";
 import { CloudfrontRequestEventMother } from "./cloudfront-request-event.mother.js";
 import { FakeRepository } from "./fake-repository.js";
+import { VIEWER_HOST_HEADER } from "../src/lib/viewer-host.js";
 
 // The handler builds its own repository from baked config; swap in the fake so
 // the rest of the pipeline (config -> service -> matcher -> response) runs real.
@@ -427,6 +428,132 @@ describe("priority ordering", () => {
     expect(result.headers?.["location"]?.[0]?.value).toBe(
       "https://www.example.com/broad",
     );
+  });
+});
+
+describe("the viewer's hostname at origin-request", () => {
+  it("stamps the viewer's host on the request it passes through", async () => {
+    withRules(redirectRule());
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("/somewhere-else")
+        .withHost("shop.example.com")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.headers[VIEWER_HOST_HEADER]?.[0]?.value).toBe(
+      "shop.example.com",
+    );
+  });
+
+  it("overwrites a viewer-supplied value, so nobody can pick a host", async () => {
+    withRules(redirectRule());
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("/somewhere-else")
+        .withHost("shop.example.com")
+        .withViewerHostHeader("victim.example.com")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.headers[VIEWER_HOST_HEADER]?.[0]?.value).toBe(
+      "shop.example.com",
+    );
+  });
+
+  it("keys a rewrite on the stamped host, not the origin's domain", async () => {
+    withRules(rewriteRule());
+
+    const event = CloudfrontRequestEventMother.originRequest()
+      .withUri("/legacy/thing")
+      .build();
+    // The state CloudFront actually delivers: Host is the origin, and the rule
+    // lives under the viewer's hostname.
+    expect(event.Records[0]!.cf.request.headers["host"]?.[0]?.value).toBe(
+      "original-bucket.s3.amazonaws.com",
+    );
+
+    const result = (await handler(event)) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/api/v1/legacy");
+  });
+
+  it("matches a hostname condition against the viewer's host", async () => {
+    withRules(
+      rewriteRule({
+        matches: [
+          {
+            matchType: "hostname",
+            matchOperator: "equals",
+            matchValue: HOST,
+          },
+        ],
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/api/v1/legacy");
+  });
+
+  it("does not forward the stamped header to the origin", async () => {
+    withRules(rewriteRule());
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.headers[VIEWER_HOST_HEADER]).toBeUndefined();
+  });
+
+  it("drops the header even when no rule matches", async () => {
+    withRules(rewriteRule());
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/modern/thing")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.headers[VIEWER_HOST_HEADER]).toBeUndefined();
+  });
+
+  it("falls back to Host when nothing stamped it", async () => {
+    // origin-request attached on its own: no viewer-request ran, so the only
+    // hostname available is the origin's. Rules keyed there still apply.
+    withRules(rewriteRule({ pk: "original-bucket.s3.amazonaws.com" }));
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .withoutViewerHostHeader()
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/api/v1/legacy");
+  });
+
+  it("ignores the header at viewer-request", async () => {
+    // Rules for the spoofed host must not apply just because a viewer asked.
+    withRules(redirectRule({ pk: "victim.example.com" }));
+
+    const result = await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("/old-landing")
+        .withHost("shop.example.com")
+        .withViewerHostHeader("victim.example.com")
+        .build(),
+    );
+
+    expect((result as CloudFrontResultResponse).status).toBeUndefined();
   });
 });
 

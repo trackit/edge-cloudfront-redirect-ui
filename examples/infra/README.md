@@ -6,7 +6,7 @@ can prove a hand-written rule is served at the edge, then tear it all down.
 
 ```
 DynamoDB (rules)  ◄─── you insert a rule here (step 4)
-      ▲  Query(pk = Host, begins_with(sk))
+      ▲  Query(pk = viewer's hostname, begins_with(sk))
       │
 CloudFront ──(viewer-request)──► L@E redirect (301/302)
            └─(origin-request)──► L@E rewrite ──► S3 placeholder origin
@@ -39,10 +39,10 @@ terraform output -raw sample_put_item_command
 
 ## 2. Insert a sample rule (manually)
 
-The edge keys rules on the request's `Host` header. When you curl the default
-`*.cloudfront.net` domain, that domain **is** the host — so the rule's `pk` is
-the distribution's own domain. The `sample_put_item_command` output already has
-it filled in:
+The edge keys rules on the hostname the viewer asked for. When you curl the
+default `*.cloudfront.net` domain, that domain **is** the host — so the rule's
+`pk` is the distribution's own domain. The `sample_put_item_command` output
+already has it filled in:
 
 ```bash
 eval "$(terraform output -raw sample_put_item_command)"
@@ -77,8 +77,12 @@ origin's page, wait a moment and retry.
 
 > **Rewrites too:** insert a `frMatchRule` (see
 > [`shared/examples/rewrite-example.json`](../../shared/examples/rewrite-example.json),
-> `sk = REWRITE#…`) and the origin-request association rewrites the path and/or
-> swaps `request.origin`.
+> `sk = REWRITE#…`) with the same `pk`, and the origin-request association
+> rewrites the path and/or swaps `request.origin`. The `pk` is the distribution's
+> domain there as well, even though origin-request runs after CloudFront has
+> changed the `Host` header — viewer-request carries the viewer's hostname across
+> for it (see
+> [infra/lambda](../../infra/lambda/README.md#the-host-a-rule-is-keyed-on)).
 
 ## 4. Tear down
 
