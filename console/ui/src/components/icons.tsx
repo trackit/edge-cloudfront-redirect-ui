@@ -100,3 +100,10 @@ export const IconInfo = ({ size = 16 }: P) => (
     <path d="M12 8h.01" />
   </svg>
 );
+
+export const IconUpload = ({ size = 16 }: P) => (
+  <svg {...base(size)}>
+    <path d="M12 15V3M8 7l4-4 4 4" />
+    <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+  </svg>
+);

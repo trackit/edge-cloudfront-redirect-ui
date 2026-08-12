@@ -18,6 +18,7 @@ export default defineConfig({
       // hook are excluded rather than counted as uncovered — phase 2 owns them,
       // and listing them here would report a number that cannot move.
       include: [
+        "src/akamaiImport.ts",
         "src/api/client.ts",
         "src/api/error.ts",
         "src/api/types.ts",
