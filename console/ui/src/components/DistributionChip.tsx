@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Distribution } from "../types";
+import type { Distribution } from "../domain/types";
 import {
   IconCheck,
   IconChevron,

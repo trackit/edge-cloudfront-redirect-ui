@@ -1,7 +1,7 @@
 import { expect, test as base, type Page, type Route } from "@playwright/test";
 import type { HostSummary, Rule } from "../src/api";
-import type { Stored } from "../src/distribution";
-import type { Distribution } from "../src/types";
+import type { Stored } from "../src/domain/distribution";
+import type { Distribution } from "../src/domain/types";
 
 /**
  * The two things every spec here needs: a stubbed API, and a browser that

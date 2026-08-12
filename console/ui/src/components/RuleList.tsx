@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { isRedirect, priorityOf } from "../api";
 import type { Rule } from "../api";
-import type { GroupedRules } from "../rules";
+import type { GroupedRules } from "../domain/rules";
 import {
   describeMatches,
   ruleFrom,
   ruleKindLabel,
   ruleTo,
-} from "../ruleSummary";
+} from "../domain/ruleSummary";
 import { IconArrow, IconEdit, IconPlus, IconTrash } from "./icons";
 
 type Filter = "all" | "redirect" | "rewrite";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectFormat, parseExport } from "../src/akamaiImport";
+import { detectFormat, parseExport } from "../src/domain/akamaiImport";
 import type { RedirectRuleInput, RuleInput } from "../src/api";
 
 /**

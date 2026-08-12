@@ -2,9 +2,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import DistributionFields from "./DistributionFields";
 import { IconClose } from "./icons";
 import { ApiError } from "../api";
-import { connectDistribution } from "../distribution";
+import { connectDistribution } from "../domain/distribution";
 import { useFocusTrap } from "../useFocusTrap";
-import type { Distribution, DistributionDraft } from "../types";
+import type { Distribution, DistributionDraft } from "../domain/types";
 
 interface Props {
   distribution: Distribution;

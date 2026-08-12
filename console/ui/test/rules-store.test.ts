@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asApiError, takenPriorities } from "../src/rules";
+import { asApiError, takenPriorities } from "../src/domain/rules";
 import { ApiError } from "../src/api";
 import type { Rule } from "../src/api";
 

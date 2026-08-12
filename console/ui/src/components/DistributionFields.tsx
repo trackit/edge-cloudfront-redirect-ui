@@ -1,4 +1,4 @@
-import type { DistributionDraft } from "../types";
+import type { DistributionDraft } from "../domain/types";
 
 interface Props {
   /** The draft, not a connected Distribution — these fields exist before the

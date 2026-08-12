@@ -1,7 +1,7 @@
 import PriorityField from "./PriorityField";
 import Toggle from "./Toggle";
-import { convertRedirectUrl } from "../ruleDraft";
-import type { RedirectDraft } from "../ruleDraft";
+import { convertRedirectUrl } from "../domain/ruleDraft";
+import type { RedirectDraft } from "../domain/ruleDraft";
 
 interface Props {
   draft: RedirectDraft;

@@ -1,4 +1,4 @@
-import { isRedirect, narrowForwardSettings, priorityOf } from "./api";
+import { isRedirect, narrowForwardSettings, priorityOf } from "../api";
 import type {
   CustomOrigin,
   MatchCondition,
@@ -6,7 +6,7 @@ import type {
   RuleInput,
   S3Origin,
   ValidationDetail,
-} from "./api";
+} from "../api";
 /** A blank condition, as both the editor's "add" button and a new draft need one. */
 export const emptyMatch = (): MatchCondition => ({
   matchType: "path",

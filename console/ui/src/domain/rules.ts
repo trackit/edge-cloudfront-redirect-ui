@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, api, isRedirect, priorityOf } from "./api";
-import type { Rule, RuleInput } from "./api";
+import { ApiError, api, isRedirect, priorityOf } from "../api";
+import type { Rule, RuleInput } from "../api";
 
 /**
  * Loading and mutating one host's rules.
