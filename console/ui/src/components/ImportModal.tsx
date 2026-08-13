@@ -20,23 +20,41 @@ interface Props {
 
 const FORMAT_LABEL: Record<SourceFormat, string> = {
   "edge-redirector-csv": "Edge Redirector CSV",
+  "edge-redirector-policy-csv": "Edge Redirector policy CSV",
   "simple-csv": "Simple CSV",
   "match-rules-json": "matchRules JSON",
 };
 
 const ACCEPT = ".csv,.json,.txt";
 
-/** The condition a preview row leads with: its path, or "(any)" when it has none. */
+/**
+ * The condition a preview row leads with.
+ *
+ * Normally the path condition. But when the redirect reinjects a capture
+ * (`$1` …), the regex that *provides* that capture is the meaningful matcher —
+ * leading with a broad `path` pre-filter would hide where `$1` comes from — so
+ * that regex is shown instead.
+ */
 const fromLabel = (draft: RedirectDraft): string => {
-  const path = draft.matches.find((match) => match.matchType === "path");
-  if (path !== undefined) return path.matchValue;
   if (draft.matches.length === 0) return "(any)";
-  const first = draft.matches[0];
+
+  const reinjectsCapture = /\$[1-9]\d*/.test(draft.redirectURL);
+  const captureSource = reinjectsCapture
+    ? draft.matches.find((match) => match.matchOperator === "regex")
+    : undefined;
+  const lead =
+    captureSource ??
+    draft.matches.find((match) => match.matchType === "path") ??
+    draft.matches[0];
+
+  if (lead.matchType === "path" && lead.matchOperator !== "regex") {
+    return lead.matchValue;
+  }
   const name =
-    first.matchType === "header" && first.headerName
-      ? `header:${first.headerName}`
-      : first.matchType;
-  return `${name} ${first.matchValue}`;
+    lead.matchType === "header" && lead.headerName
+      ? `header:${lead.headerName}`
+      : lead.matchType;
+  return `${name} ${lead.matchValue}`;
 };
 
 /** The right-aligned note on a row: why it was skipped, or what it lost. */
