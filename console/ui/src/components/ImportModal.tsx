@@ -1,7 +1,11 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { IconArrow, IconCheck, IconClose, IconInfo, IconUpload } from "./icons";
 import { parseExport } from "../domain/akamaiImport";
-import type { ImportPreview, ParsedRow, SourceFormat } from "../domain/akamaiImport";
+import type {
+  ImportPreview,
+  ParsedRow,
+  SourceFormat,
+} from "../domain/akamaiImport";
 import type { RedirectDraft } from "../domain/ruleDraft";
 import type { ImportItem, ImportOutcome } from "../domain/rules";
 
@@ -143,7 +147,9 @@ export default function ImportModal({
   const hasFormat = preview.format !== "unrecognized";
   const done = result !== undefined;
   // The picker always offers the default host, even if the list has not loaded.
-  const hostOptions = hosts.includes(defaultHost) ? hosts : [defaultHost, ...hosts];
+  const hostOptions = hosts.includes(defaultHost)
+    ? hosts
+    : [defaultHost, ...hosts];
 
   const loadFile = async (file: File): Promise<void> => {
     const content = await file.text();
@@ -246,8 +252,8 @@ export default function ImportModal({
                 <IconInfo size={15} />
                 <span>
                   Edge Redirector CSV (ruleName, matchURL, redirectURL,
-                  result.statusCode); a simple source/target CSV; or a matchRules
-                  JSON export (matches[] + result).
+                  result.statusCode); a simple source/target CSV; or a
+                  matchRules JSON export (matches[] + result).
                 </span>
               </div>
             )}
@@ -367,7 +373,10 @@ export default function ImportModal({
                 {preview.rows.map((row) => {
                   const note = noteFor(row);
                   return (
-                    <li key={row.index} className={`import-row is-${row.status}`}>
+                    <li
+                      key={row.index}
+                      className={`import-row is-${row.status}`}
+                    >
                       <span
                         className={`import-dot is-${row.status}`}
                         aria-hidden="true"
@@ -387,7 +396,9 @@ export default function ImportModal({
                       <span className="import-to mono">
                         {row.draft.redirectURL || "—"}
                       </span>
-                      {note !== "" && <span className="import-note">{note}</span>}
+                      {note !== "" && (
+                        <span className="import-note">{note}</span>
+                      )}
                     </li>
                   );
                 })}

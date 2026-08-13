@@ -85,7 +85,11 @@ test("pastes an export, previews it, and imports the ready rows", async ({
   );
   expect(posts).toHaveLength(2);
 
-  const first = posts[0].body as { priority: number; redirectURL: string; statusCode: number };
+  const first = posts[0].body as {
+    priority: number;
+    redirectURL: string;
+    statusCode: number;
+  };
   const second = posts[1].body as { priority: number; redirectURL: string };
   expect(first).toMatchObject({
     priority: 2,
@@ -121,8 +125,18 @@ test("routes a hostname-conditioned rule to its own host", async ({
   // Three rules for the target host, one carrying its own hostname condition
   // (→ support.example.com), one broken (→ skipped).
   const json = JSON.stringify([
-    { name: "Home", matchURL: "/old-home", redirectURL: "/new-home", statusCode: 301 },
-    { name: "Promo", matchURL: "/promo", redirectURL: "/campaigns/summer", statusCode: 302 },
+    {
+      name: "Home",
+      matchURL: "/old-home",
+      redirectURL: "/new-home",
+      statusCode: 301,
+    },
+    {
+      name: "Promo",
+      matchURL: "/promo",
+      redirectURL: "/campaigns/summer",
+      statusCode: 302,
+    },
     {
       name: "API",
       redirectURL: "/api/v2",
@@ -137,7 +151,11 @@ test("routes a hostname-conditioned rule to its own host", async ({
       redirectURL: "https://help.example.com",
       statusCode: 301,
       matches: [
-        { matchType: "hostname", matchOperator: "equals", matchValue: "support.example.com" },
+        {
+          matchType: "hostname",
+          matchOperator: "equals",
+          matchValue: "support.example.com",
+        },
       ],
     },
     { name: "Broken", matchURL: "/broken", statusCode: 301 },
@@ -155,7 +173,9 @@ test("routes a hostname-conditioned rule to its own host", async ({
   const posts = api.calls.filter(
     (call) => call.method === "POST" && /\/rules$/.test(call.url),
   );
-  const toWww = posts.filter((c) => c.url.includes("/hosts/www.example.com/rules"));
+  const toWww = posts.filter((c) =>
+    c.url.includes("/hosts/www.example.com/rules"),
+  );
   const toSupport = posts.filter((c) =>
     c.url.includes("/hosts/support.example.com/rules"),
   );
