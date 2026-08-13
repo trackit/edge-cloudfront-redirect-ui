@@ -36,6 +36,15 @@ describe("detectFormat", () => {
     ).toBe("simple-csv");
   });
 
+  it("reads a flattened Edge Redirector policy CSV header", () => {
+    expect(
+      detectFormat({
+        filename: "policy.csv",
+        text: "policyId,policyName,statusCode,redirectURL,matchType,matchOperator,matchValue\n",
+      }),
+    ).toBe("edge-redirector-policy-csv");
+  });
+
   it.each([
     ["a bare array", "[]"],
     ["a rules wrapper", '{"rules":[]}'],
@@ -99,18 +108,20 @@ describe("parseExport — Edge Redirector CSV", () => {
     expect(asRedirect(preview.rows[1].input).statusCode).toBe(302);
   });
 
-  it("translates a wildcard match to an anchored regex, with a warning", () => {
+  it("keeps a wildcard match verbatim for the edge to expand", () => {
     const preview = parseExport(
       "ruleName,matchURL,redirectURL,result.statusCode\nW,/promo/*,/sale,301",
       { filename: "e.csv", defaultHost: HOST },
     );
     const row = preview.rows[0];
-    expect(row.status).toBe("warning");
-    expect(row.messages.join(" ")).toMatch(/wildcard/i);
-    const match = asRedirect(row.input).matches[0];
-    expect(match.matchOperator).toBe("regex");
-    expect(() => new RegExp(match.matchValue)).not.toThrow();
-    expect(new RegExp(match.matchValue).test("/promo/shoes")).toBe(true);
+    // The target has no capture, so the wildcard is passed through untouched —
+    // the edge expands `*` itself. No translation means no warning.
+    expect(row.status).toBe("ok");
+    expect(asRedirect(row.input).matches[0]).toMatchObject({
+      matchType: "path",
+      matchOperator: "equals",
+      matchValue: "/promo/*",
+    });
   });
 
   it("reduces an absolute match URL to its path, with a warning", () => {
@@ -206,6 +217,87 @@ describe("parseExport — matchRules JSON", () => {
     });
   });
 
+  it("passes a regex matchType through verbatim, without glob mangling", () => {
+    const json = JSON.stringify([
+      {
+        name: "rx",
+        redirectURL: "/$1",
+        statusCode: 301,
+        matches: [{ matchType: "regex", matchValue: "^/products/(.*)$" }],
+      },
+    ]);
+    const preview = parseExport(json, { filename: "rules.json", defaultHost: HOST });
+    const row = preview.rows[0];
+    // Supported, so no "not supported" message; verbatim, so no "wildcard" one.
+    expect(row.messages.join(" ")).not.toMatch(/not supported|wildcard/);
+    const match = asRedirect(row.input).matches[0];
+    expect(match).toMatchObject({
+      matchType: "regex",
+      matchOperator: "regex",
+      matchValue: "^/products/(.*)$",
+    });
+  });
+
+  it("unwraps a policy-metadata envelope and maps the wrapped rule", () => {
+    // The real validation-set shape: each rule sits under a `rule` key next to
+    // `policyId` / `policyName` / `why`. Without unwrapping, every row reads as
+    // "Missing redirectURL". The rule is the classic "add trailing slash".
+    const json = JSON.stringify({
+      ruleCount: 1,
+      rules: [
+        {
+          policyId: 5001,
+          policyName: "Redirects_demo_BE",
+          why: ["negate", "op=contains", "regex"],
+          rule: {
+            type: "erMatchRule",
+            name: "Add Trailing /",
+            matchURL: null,
+            matches: [
+              {
+                matchType: "path",
+                matchOperator: "contains",
+                matchValue: "/*/",
+                negate: true,
+                caseSensitive: false,
+              },
+              {
+                matchType: "regex",
+                matchOperator: "equals",
+                matchValue: "(.*)\\/([^\\?\\/]+)[\\?]*.*",
+                negate: false,
+                caseSensitive: false,
+              },
+            ],
+            statusCode: 301,
+            redirectURL: "\\1/\\2/",
+            useIncomingQueryString: true,
+          },
+        },
+      ],
+    });
+    const preview = parseExport(json, { filename: "set.json", defaultHost: HOST });
+    expect(preview.rows).toHaveLength(1);
+    const row = preview.rows[0];
+    expect(row.status).not.toBe("skipped");
+    const input = asRedirect(row.input);
+    expect(input.redirectURL).toBe("$1/$2/");
+    expect(input.useIncomingQueryString).toBe(true);
+    // The negated glob stays a verbatim guard; the explicit regex keeps the
+    // capture (it must not be stolen by converting the glob to a regex).
+    expect(input.matches[0]).toMatchObject({
+      matchType: "path",
+      matchOperator: "contains",
+      matchValue: "/*/",
+      negate: true,
+    });
+    expect(input.matches[1]).toMatchObject({
+      matchType: "regex",
+      matchOperator: "regex",
+      matchValue: "(.*)\\/([^\\?\\/]+)[\\?]*.*",
+    });
+  });
+
   it("carries a header condition's name into headerName", () => {
     const json = JSON.stringify([
       {
@@ -239,6 +331,106 @@ describe("parseExport — matchRules JSON", () => {
     // The only condition was unmappable, so nothing is left to match on — the
     // rule is still importable and applies to every request.
     expect(asRedirect(row.input).matches).toHaveLength(0);
+  });
+});
+
+describe("parseExport — Edge Redirector policy CSV", () => {
+  const HEADER =
+    "policyId,policyName,why,statusCode,redirectURL,useIncomingQueryString," +
+    "useRelativeUrl,matchType,matchOperator,matchValue,negate,caseSensitive";
+
+  it("maps a wildcard-capture redirect, translating \\1 to $1", () => {
+    // The real Akamai shape: a wildcard match feeding a backreference target.
+    const csv = `${HEADER}\n5001,P_BE,note,301,\\1/\\2/,True,,path,contains,/*/*/,False,False`;
+    const preview = parseExport(csv, { filename: "policy.csv", defaultHost: HOST });
+
+    expect(preview.format).toBe("edge-redirector-policy-csv");
+    expect(preview.rows).toHaveLength(1);
+
+    const row = preview.rows[0];
+    // Importable even though the relative target does not start with "/", because
+    // it reinjects a capture whose shape is only known at the edge.
+    expect(row.status).not.toBe("skipped");
+    const input = asRedirect(row.input);
+    expect(input.redirectURL).toBe("$1/$2/");
+    expect(input.statusCode).toBe(301);
+    expect(input.useIncomingQueryString).toBe(true);
+
+    const match = input.matches[0];
+    expect(match.matchOperator).toBe("regex");
+    // Capturing groups, so $1 / $2 have something to resolve to.
+    expect(new RegExp(match.matchValue).exec("/a/b/")?.slice(1)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("groups rows sharing a policyId into one rule, ANDing their conditions", () => {
+    const csv = [
+      HEADER,
+      "500,Multi,note,302,/dest,,,path,equals,/old,False,False",
+      "500,Multi,note,302,/dest,,,hostname,equals,shop.example.com,False,False",
+    ].join("\n");
+    const preview = parseExport(csv, { filename: "policy.csv", defaultHost: HOST });
+
+    expect(preview.rows).toHaveLength(1);
+    const row = preview.rows[0];
+    // The hostname condition routed the rule to its own host and dropped out.
+    expect(row.host).toBe("shop.example.com");
+    const input = asRedirect(row.input);
+    expect(input.statusCode).toBe(302);
+    expect(input.matches).toHaveLength(1);
+    expect(input.matches[0]).toMatchObject({
+      matchType: "path",
+      matchValue: "/old",
+    });
+  });
+
+  it("treats rows without a policyId as separate rules", () => {
+    const csv = [
+      HEADER,
+      ",A,,301,/x,,,path,equals,/a,False,False",
+      ",B,,301,/y,,,path,equals,/b,False,False",
+    ].join("\n");
+    const preview = parseExport(csv, { filename: "policy.csv", defaultHost: HOST });
+    expect(preview.rows).toHaveLength(2);
+    expect(preview.rows.map((r) => r.status)).toEqual(["ok", "ok"]);
+  });
+
+  it("warns when a target reinjects a capture no condition provides", () => {
+    const csv = `${HEADER}\n7,Lost,note,301,\\1/gone,,,path,equals,/exact,False,False`;
+    const preview = parseExport(csv, { filename: "policy.csv", defaultHost: HOST });
+    const row = preview.rows[0];
+    expect(row.status).toBe("warning");
+    expect(row.messages.join(" ")).toMatch(/reinjects a captured group/);
+    expect(asRedirect(row.input).redirectURL).toBe("$1/gone");
+  });
+
+  it("keeps space-separated alternatives verbatim for the edge to expand", () => {
+    // Akamai's `/ /*` means "/ OR /*" (a catch-all): the edge splits on space
+    // and expands each natively. Translating it to one regex would break both
+    // the alternatives and the unanchored `contains` semantics.
+    const csv =
+      `${HEADER}\n42,Catchall,note,301,https://example.com/nl,False,,` +
+      `path,contains,/ /*,False,False`;
+    const preview = parseExport(csv, { filename: "policy.csv", defaultHost: HOST });
+    const row = preview.rows[0];
+    expect(row.status).toBe("ok");
+    const input = asRedirect(row.input);
+    expect(input.redirectURL).toBe("https://example.com/nl");
+    expect(input.matches[0]).toMatchObject({
+      matchType: "path",
+      matchOperator: "contains",
+      matchValue: "/ /*",
+    });
+  });
+
+  it("carries negate and honours useIncomingQueryString=false", () => {
+    const csv = `${HEADER}\n9,Neg,note,301,/here,False,,path,equals,/there,True,False`;
+    const preview = parseExport(csv, { filename: "policy.csv", defaultHost: HOST });
+    const input = asRedirect(preview.rows[0].input);
+    expect(input.useIncomingQueryString).toBe(false);
+    expect(input.matches[0].negate).toBe(true);
   });
 });
 
@@ -287,6 +479,40 @@ describe("parseExport — host routing", () => {
       "support.example.com",
     ]);
     expect(preview.summary.hosts).toBe(2);
+  });
+});
+
+describe("parseExport — policy index", () => {
+  it("recognises a policy index and explains it has no rules", () => {
+    const json = JSON.stringify([
+      { policyId: 1001, policyName: "A", ruleCount: 12, source: "akamai-property-export" },
+      { policyId: 1002, policyName: "B", ruleCount: 8, source: "akamai-property-export" },
+    ]);
+    const preview = parseExport(json, { filename: "policies.json", defaultHost: HOST });
+    expect(preview.rows).toEqual([]);
+    expect(preview.error).toMatch(/policy index/i);
+    expect(preview.error).toMatch(/2 policies/);
+    expect(preview.error).toMatch(/matchRules/);
+  });
+
+  it("does not mistake real wrapped rules for an index", () => {
+    const json = JSON.stringify({
+      rules: [
+        {
+          policyId: 1,
+          policyName: "A",
+          rule: {
+            type: "erMatchRule",
+            redirectURL: "/x",
+            statusCode: 301,
+            matches: [{ matchType: "path", matchOperator: "equals", matchValue: "/a" }],
+          },
+        },
+      ],
+    });
+    const preview = parseExport(json, { filename: "set.json", defaultHost: HOST });
+    expect(preview.rows).toHaveLength(1);
+    expect(preview.rows[0].status).not.toBe("skipped");
   });
 });
 

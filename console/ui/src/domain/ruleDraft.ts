@@ -330,8 +330,14 @@ export const validateDraft = (
   });
 
   if (draft.kind === "redirect") {
+    // A target that reinjects a captured group (`$1` …) has no fixed leading
+    // segment — its shape is only known once the edge substitutes the capture,
+    // so the relative/absolute checks below cannot apply to it.
+    const reinjectsCapture = /\$[1-9]\d*/.test(draft.redirectURL);
     if (draft.redirectURL.trim() === "") {
       details.push({ path: "/redirectURL", message: "is required" });
+    } else if (reinjectsCapture) {
+      // Accepted as-is: validated at the edge against the actual capture.
     } else if (draft.relative && !draft.redirectURL.startsWith("/")) {
       details.push({
         path: "/redirectURL",

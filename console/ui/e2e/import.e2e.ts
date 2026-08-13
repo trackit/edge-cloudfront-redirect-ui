@@ -39,7 +39,8 @@ const seeded = [redirect(0, "/existing-0"), redirect(1, "/existing-1")];
 const csv = [
   "ruleName,matchURL,redirectURL,result.statusCode",
   "Promo,/promo,/sale,302",
-  "Old blog,/blog/*,/news,301",
+  // An absolute match URL is reduced to its path — importable, but warned.
+  "Old blog,https://www.example.com/blog,/news,301",
 ].join("\n");
 
 const openHostWithRules = async (page: Page, api: ApiStub): Promise<void> => {
@@ -68,8 +69,8 @@ test("pastes an export, previews it, and imports the ready rows", async ({
 
   await page.getByPlaceholder(/Paste an Edge Redirector/).fill(csv);
 
-  // One clean row and one wildcard row (a warning) — both importable, so two
-  // ready of which one is warned.
+  // One clean row and one warned row (an absolute match URL) — both importable,
+  // so two ready of which one is warned.
   await expect(page.getByText("Detected: Edge Redirector CSV")).toBeVisible();
   await expect(page.getByText("2 ready")).toBeVisible();
   await expect(page.getByText("1 warning")).toBeVisible();
