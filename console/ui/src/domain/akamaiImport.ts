@@ -716,7 +716,7 @@ const policyIndexNote = (text: string): string | null => {
   if (!list.every(isIndexEntry)) return null;
 
   const policies = list.length;
-  const totalRules = list.reduce((sum, value) => {
+  const totalRules = list.reduce<number>((sum, value) => {
     const count = asRecord(value).ruleCount;
     return sum + (typeof count === "number" ? count : 0);
   }, 0);
@@ -736,7 +736,23 @@ const policyIndexNote = (text: string): string | null => {
  * whole-file failure comes back as `error` with no rows, and a single bad row
  * comes back skipped with a reason.
  */
+/**
+ * A ceiling on the input we will parse. Both PapaParse and `JSON.parse` load the
+ * whole string into memory, so a huge paste/file would freeze the tab; a real
+ * Edge Redirector export of thousands of rules stays comfortably under this.
+ */
+const MAX_IMPORT_BYTES = 50 * 1024 * 1024;
+
 export function parseExport(text: string, opts: ParseOptions): ImportPreview {
+  if (text.length > MAX_IMPORT_BYTES) {
+    const mb = Math.round(text.length / (1024 * 1024));
+    return emptyPreview(
+      "unrecognized",
+      `Import is too large (~${mb} MB, limit 50 MB). Split it into smaller ` +
+        `exports and import them separately.`,
+    );
+  }
+
   const format = detectFormat({ filename: opts.filename, text });
   if (format === "unrecognized") {
     return emptyPreview(

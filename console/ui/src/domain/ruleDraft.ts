@@ -1,3 +1,4 @@
+import safeRegex from "safe-regex";
 import { isRedirect, narrowForwardSettings, priorityOf } from "../api";
 import type {
   CustomOrigin,
@@ -149,6 +150,19 @@ const S3_DEFAULTS: S3Draft = {
 };
 
 const ABSOLUTE_URL = /^https?:\/\//i;
+
+/**
+ * Whether a regex is free of catastrophic backtracking (ReDoS), via `safe-regex`.
+ * An unparseable pattern is treated as safe here — its invalidity is reported
+ * separately — so a single value never draws two overlapping errors.
+ */
+const isSafeRegex = (pattern: string): boolean => {
+  try {
+    return safeRegex(pattern);
+  } catch {
+    return true;
+  }
+};
 
 export const emptyRedirect = (): RedirectDraft => ({
   kind: "redirect",
@@ -318,12 +332,25 @@ export const validateDraft = (
     // type. Checking only the operator lets a `matchType: "regex"` with an
     // invalid pattern through to the server.
     if (match.matchOperator === "regex" || match.matchType === "regex") {
+      let compiles = true;
       try {
         new RegExp(match.matchValue);
       } catch {
+        compiles = false;
         details.push({
           path: `/matches/${at}/matchValue`,
           message: "is not a valid regular expression",
+        });
+      }
+      // The edge runs this pattern on every matching request, so a catastrophic
+      // one (ReDoS) would hang the edge. Reject it here rather than let it ship —
+      // this guards both the importer and the manual editor.
+      if (compiles && !isSafeRegex(match.matchValue)) {
+        details.push({
+          path: `/matches/${at}/matchValue`,
+          message:
+            "is a potentially catastrophic regular expression (ReDoS) that " +
+            "could hang the edge on every request",
         });
       }
     }
