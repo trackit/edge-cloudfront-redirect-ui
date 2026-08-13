@@ -125,7 +125,11 @@ const detectCsv = (text: string): SourceFormat | "unrecognized" => {
   const header = rows[0];
   if (header === undefined) return "unrecognized";
   const names = new Set(header.map((cell) => cell.trim().toLowerCase()));
-  if (names.has("rulename") && names.has("matchurl") && names.has("redirecturl")) {
+  if (
+    names.has("rulename") &&
+    names.has("matchurl") &&
+    names.has("redirecturl")
+  ) {
     return "edge-redirector-csv";
   }
   // The flattened policy export: a redirect column plus per-row match criteria.
@@ -224,7 +228,11 @@ const resolveMatchValue = (
           "represent — verify the result",
       );
     }
-    return { matchOperator: "regex", matchValue: wildcardToRegex(value), messages };
+    return {
+      matchOperator: "regex",
+      matchValue: wildcardToRegex(value),
+      messages,
+    };
   }
 
   return {
@@ -274,7 +282,8 @@ const mapStatus = (
 ): { statusCode: 301 | 302; messages: string[] } => {
   const trimmed = String(raw ?? "").trim();
   if (trimmed === "302") return { statusCode: 302, messages: [] };
-  if (trimmed === "" || trimmed === "301") return { statusCode: 301, messages: [] };
+  if (trimmed === "" || trimmed === "301")
+    return { statusCode: 301, messages: [] };
   return {
     statusCode: 301,
     messages: [`unsupported status code ${trimmed} — mapped to 301`],
@@ -369,7 +378,10 @@ const mapEdgeRedirectorCsv = (text: string, host: string): Candidate[] => {
     const target = cell(row, targetAt);
     const captureMode = usesCapture(toEdgeBackrefs(target));
     const label = cell(row, nameAt) || target || "rule";
-    const { match, messages: matchMsg } = mapMatchUrl(cell(row, matchAt), captureMode);
+    const { match, messages: matchMsg } = mapMatchUrl(
+      cell(row, matchAt),
+      captureMode,
+    );
     const { statusCode, messages: statusMsg } = mapStatus(cell(row, statusAt));
     return {
       label,
@@ -397,7 +409,10 @@ const mapSimpleCsv = (text: string, host: string): Candidate[] => {
     const target = cell(row, targetAt);
     const captureMode = usesCapture(toEdgeBackrefs(target));
     const label = `${cell(row, sourceAt) || "(any)"} → ${target || "(none)"}`;
-    const { match, messages: matchMsg } = mapMatchUrl(cell(row, sourceAt), captureMode);
+    const { match, messages: matchMsg } = mapMatchUrl(
+      cell(row, sourceAt),
+      captureMode,
+    );
     const { statusCode, messages: statusMsg } = mapStatus(cell(row, statusAt));
     return {
       label,
@@ -447,7 +462,11 @@ const mapJsonMatch = (
   // A `regex` matchType is a regular expression whatever operator it states.
   const operator =
     type === "regex" ? "regex" : str(entry.matchOperator).toLowerCase();
-  const resolved = resolveMatchValue(str(entry.matchValue), operator, captureMode);
+  const resolved = resolveMatchValue(
+    str(entry.matchValue),
+    operator,
+    captureMode,
+  );
 
   const match = emptyMatch();
   match.matchType = type as MatchCondition["matchType"];
@@ -462,7 +481,10 @@ const mapJsonMatch = (
 };
 
 /** A positive `hostname equals` condition names the partition, so it routes. */
-const hostRoute = (entry: Record<string, unknown>, type: string): string | null => {
+const hostRoute = (
+  entry: Record<string, unknown>,
+  type: string,
+): string | null => {
   if (type !== "hostname" || entry.negate === true) return null;
   const operator = str(entry.matchOperator).toLowerCase();
   if (operator !== "" && operator !== "equals") return null;
@@ -518,8 +540,7 @@ const mapMatchRule = (
     const operator = str(entry.matchOperator).toLowerCase();
     return type === "regex" || operator === "regex" || operator === "matches";
   });
-  const captureMode =
-    usesCapture(toEdgeBackrefs(target)) && !hasExplicitRegex;
+  const captureMode = usesCapture(toEdgeBackrefs(target)) && !hasExplicitRegex;
 
   let host = defaultHost;
   let matches: MatchCondition[] = [];
@@ -708,9 +729,13 @@ const policyIndexNote = (text: string): string | null => {
   const isIndexEntry = (value: unknown): boolean => {
     const entry = asRecord(value);
     const identifies = ["policyId", "ruleCount"].some((key) => key in entry);
-    const carriesRule = ["rule", "matches", "redirectURL", "matchURL", "type"].some(
-      (key) => key in entry,
-    );
+    const carriesRule = [
+      "rule",
+      "matches",
+      "redirectURL",
+      "matchURL",
+      "type",
+    ].some((key) => key in entry);
     return identifies && !carriesRule;
   };
   if (!list.every(isIndexEntry)) return null;
@@ -775,7 +800,10 @@ export function parseExport(text: string, opts: ParseOptions): ImportPreview {
     candidates = MAPPERS[format](text, opts.defaultHost);
   } catch (caught) {
     const reason = caught instanceof Error ? caught.message : String(caught);
-    return emptyPreview(format, `Could not read the ${format} export: ${reason}`);
+    return emptyPreview(
+      format,
+      `Could not read the ${format} export: ${reason}`,
+    );
   }
 
   // A per-host counter, so each host's provisional priorities are distinct and

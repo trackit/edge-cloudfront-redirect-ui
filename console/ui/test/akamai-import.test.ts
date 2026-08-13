@@ -84,7 +84,10 @@ describe("parseExport — Edge Redirector CSV", () => {
   ].join("\n");
 
   it("maps clean rows to importable redirects on the target host", () => {
-    const preview = parseExport(csv, { filename: "export.csv", defaultHost: HOST });
+    const preview = parseExport(csv, {
+      filename: "export.csv",
+      defaultHost: HOST,
+    });
 
     expect(preview.format).toBe("edge-redirector-csv");
     expect(preview.rows).toHaveLength(2);
@@ -145,7 +148,10 @@ describe("parseExport — Edge Redirector CSV", () => {
       "Broken,/b,,301",
       "Good 2,/c,/y,301",
     ].join("\n");
-    const preview = parseExport(withGap, { filename: "e.csv", defaultHost: HOST });
+    const preview = parseExport(withGap, {
+      filename: "e.csv",
+      defaultHost: HOST,
+    });
 
     expect(preview.rows.map((r) => r.status)).toEqual(["ok", "skipped", "ok"]);
     expect(preview.rows[1].input).toBeUndefined();
@@ -205,7 +211,10 @@ describe("parseExport — matchRules JSON", () => {
         },
       ],
     });
-    const preview = parseExport(json, { filename: "rules.json", defaultHost: HOST });
+    const preview = parseExport(json, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
     expect(preview.rows[0].status).toBe("ok");
     expect(preview.rows[0].host).toBe(HOST);
     const input = asRedirect(preview.rows[0].input);
@@ -226,7 +235,10 @@ describe("parseExport — matchRules JSON", () => {
         matches: [{ matchType: "regex", matchValue: "^/products/(.*)$" }],
       },
     ]);
-    const preview = parseExport(json, { filename: "rules.json", defaultHost: HOST });
+    const preview = parseExport(json, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
     const row = preview.rows[0];
     // Supported, so no "not supported" message; verbatim, so no "wildcard" one.
     expect(row.messages.join(" ")).not.toMatch(/not supported|wildcard/);
@@ -276,7 +288,10 @@ describe("parseExport — matchRules JSON", () => {
         },
       ],
     });
-    const preview = parseExport(json, { filename: "set.json", defaultHost: HOST });
+    const preview = parseExport(json, {
+      filename: "set.json",
+      defaultHost: HOST,
+    });
     expect(preview.rows).toHaveLength(1);
     const row = preview.rows[0];
     expect(row.status).not.toBe("skipped");
@@ -307,7 +322,10 @@ describe("parseExport — matchRules JSON", () => {
         matches: [{ matchType: "header", name: "X-Country", matchValue: "FR" }],
       },
     ]);
-    const preview = parseExport(json, { filename: "rules.json", defaultHost: HOST });
+    const preview = parseExport(json, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
     expect(preview.rows[0].status).toBe("ok");
     expect(asRedirect(preview.rows[0].input).matches[0]).toMatchObject({
       matchType: "header",
@@ -324,7 +342,10 @@ describe("parseExport — matchRules JSON", () => {
         matches: [{ matchType: "method", matchValue: "GET" }],
       },
     ]);
-    const preview = parseExport(json, { filename: "rules.json", defaultHost: HOST });
+    const preview = parseExport(json, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
     const row = preview.rows[0];
     expect(row.status).toBe("warning");
     expect(row.messages.join(" ")).toMatch(/match type "method" not supported/);
@@ -342,7 +363,10 @@ describe("parseExport — Edge Redirector policy CSV", () => {
   it("maps a wildcard-capture redirect, translating \\1 to $1", () => {
     // The real Akamai shape: a wildcard match feeding a backreference target.
     const csv = `${HEADER}\n5001,P_BE,note,301,\\1/\\2/,True,,path,contains,/*/*/,False,False`;
-    const preview = parseExport(csv, { filename: "policy.csv", defaultHost: HOST });
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
 
     expect(preview.format).toBe("edge-redirector-policy-csv");
     expect(preview.rows).toHaveLength(1);
@@ -371,7 +395,10 @@ describe("parseExport — Edge Redirector policy CSV", () => {
       "500,Multi,note,302,/dest,,,path,equals,/old,False,False",
       "500,Multi,note,302,/dest,,,hostname,equals,shop.example.com,False,False",
     ].join("\n");
-    const preview = parseExport(csv, { filename: "policy.csv", defaultHost: HOST });
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
 
     expect(preview.rows).toHaveLength(1);
     const row = preview.rows[0];
@@ -392,14 +419,20 @@ describe("parseExport — Edge Redirector policy CSV", () => {
       ",A,,301,/x,,,path,equals,/a,False,False",
       ",B,,301,/y,,,path,equals,/b,False,False",
     ].join("\n");
-    const preview = parseExport(csv, { filename: "policy.csv", defaultHost: HOST });
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
     expect(preview.rows).toHaveLength(2);
     expect(preview.rows.map((r) => r.status)).toEqual(["ok", "ok"]);
   });
 
   it("warns when a target reinjects a capture no condition provides", () => {
     const csv = `${HEADER}\n7,Lost,note,301,\\1/gone,,,path,equals,/exact,False,False`;
-    const preview = parseExport(csv, { filename: "policy.csv", defaultHost: HOST });
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
     const row = preview.rows[0];
     expect(row.status).toBe("warning");
     expect(row.messages.join(" ")).toMatch(/reinjects a captured group/);
@@ -413,7 +446,10 @@ describe("parseExport — Edge Redirector policy CSV", () => {
     const csv =
       `${HEADER}\n42,Catchall,note,301,https://example.com/nl,False,,` +
       `path,contains,/ /*,False,False`;
-    const preview = parseExport(csv, { filename: "policy.csv", defaultHost: HOST });
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
     const row = preview.rows[0];
     expect(row.status).toBe("ok");
     const input = asRedirect(row.input);
@@ -427,7 +463,10 @@ describe("parseExport — Edge Redirector policy CSV", () => {
 
   it("carries negate and honours useIncomingQueryString=false", () => {
     const csv = `${HEADER}\n9,Neg,note,301,/here,False,,path,equals,/there,True,False`;
-    const preview = parseExport(csv, { filename: "policy.csv", defaultHost: HOST });
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
     const input = asRedirect(preview.rows[0].input);
     expect(input.useIncomingQueryString).toBe(false);
     expect(input.matches[0].negate).toBe(true);
@@ -442,7 +481,11 @@ describe("parseExport — host routing", () => {
         redirectURL: "https://help.example.com",
         statusCode: 301,
         matches: [
-          { matchType: "hostname", matchOperator: "equals", matchValue: "support.example.com" },
+          {
+            matchType: "hostname",
+            matchOperator: "equals",
+            matchValue: "support.example.com",
+          },
         ],
       },
     ]);
@@ -485,10 +528,23 @@ describe("parseExport — host routing", () => {
 describe("parseExport — policy index", () => {
   it("recognises a policy index and explains it has no rules", () => {
     const json = JSON.stringify([
-      { policyId: 1001, policyName: "A", ruleCount: 12, source: "akamai-property-export" },
-      { policyId: 1002, policyName: "B", ruleCount: 8, source: "akamai-property-export" },
+      {
+        policyId: 1001,
+        policyName: "A",
+        ruleCount: 12,
+        source: "akamai-property-export",
+      },
+      {
+        policyId: 1002,
+        policyName: "B",
+        ruleCount: 8,
+        source: "akamai-property-export",
+      },
     ]);
-    const preview = parseExport(json, { filename: "policies.json", defaultHost: HOST });
+    const preview = parseExport(json, {
+      filename: "policies.json",
+      defaultHost: HOST,
+    });
     expect(preview.rows).toEqual([]);
     expect(preview.error).toMatch(/policy index/i);
     expect(preview.error).toMatch(/2 policies/);
@@ -505,12 +561,17 @@ describe("parseExport — policy index", () => {
             type: "erMatchRule",
             redirectURL: "/x",
             statusCode: 301,
-            matches: [{ matchType: "path", matchOperator: "equals", matchValue: "/a" }],
+            matches: [
+              { matchType: "path", matchOperator: "equals", matchValue: "/a" },
+            ],
           },
         },
       ],
     });
-    const preview = parseExport(json, { filename: "set.json", defaultHost: HOST });
+    const preview = parseExport(json, {
+      filename: "set.json",
+      defaultHost: HOST,
+    });
     expect(preview.rows).toHaveLength(1);
     expect(preview.rows[0].status).not.toBe("skipped");
   });
@@ -531,8 +592,20 @@ describe("parseExport — Akamai construct coverage (golden, anonymised)", () =>
         type: "erMatchRule",
         name: null,
         matches: [
-          { matchType: "path", matchOperator: "contains", matchValue: "/f/*", negate: false, caseSensitive: false },
-          { matchType: "regex", matchOperator: "equals", matchValue: "/f/(.*)/travel-advice", negate: false, caseSensitive: false },
+          {
+            matchType: "path",
+            matchOperator: "contains",
+            matchValue: "/f/*",
+            negate: false,
+            caseSensitive: false,
+          },
+          {
+            matchType: "regex",
+            matchOperator: "equals",
+            matchValue: "/f/(.*)/travel-advice",
+            negate: false,
+            caseSensitive: false,
+          },
         ],
         statusCode: 301,
         redirectURL: "/f/\\1",
@@ -543,8 +616,16 @@ describe("parseExport — Akamai construct coverage (golden, anonymised)", () =>
     const input = asRedirect(preview.rows[0].input);
     expect(input.redirectURL).toBe("/f/$1");
     expect(input.useIncomingQueryString).toBe(false);
-    expect(input.matches[0]).toMatchObject({ matchType: "path", matchOperator: "contains", matchValue: "/f/*" });
-    expect(input.matches[1]).toMatchObject({ matchType: "regex", matchOperator: "regex", matchValue: "/f/(.*)/travel-advice" });
+    expect(input.matches[0]).toMatchObject({
+      matchType: "path",
+      matchOperator: "contains",
+      matchValue: "/f/*",
+    });
+    expect(input.matches[1]).toMatchObject({
+      matchType: "regex",
+      matchOperator: "regex",
+      matchValue: "/f/(.*)/travel-advice",
+    });
   });
 
   it("maps a catch-all with a full-URL host guard to a static redirect", () => {
@@ -553,8 +634,20 @@ describe("parseExport — Akamai construct coverage (golden, anonymised)", () =>
         type: "erMatchRule",
         name: "Everything else",
         matches: [
-          { matchType: "path", matchOperator: "contains", matchValue: "/ /*", negate: false, caseSensitive: false },
-          { matchType: "regex", matchOperator: "equals", matchValue: "https://(www\\.)?old.example.com/.*", negate: false, caseSensitive: false },
+          {
+            matchType: "path",
+            matchOperator: "contains",
+            matchValue: "/ /*",
+            negate: false,
+            caseSensitive: false,
+          },
+          {
+            matchType: "regex",
+            matchOperator: "equals",
+            matchValue: "https://(www\\.)?old.example.com/.*",
+            negate: false,
+            caseSensitive: false,
+          },
         ],
         statusCode: 301,
         redirectURL: "https://new.example.com/nl",
@@ -566,8 +659,14 @@ describe("parseExport — Akamai construct coverage (golden, anonymised)", () =>
     expect(row.status).not.toBe("skipped");
     const input = asRedirect(row.input);
     expect(input.redirectURL).toBe("https://new.example.com/nl");
-    expect(input.matches[0]).toMatchObject({ matchOperator: "contains", matchValue: "/ /*" });
-    expect(input.matches[1]).toMatchObject({ matchType: "regex", matchOperator: "regex" });
+    expect(input.matches[0]).toMatchObject({
+      matchOperator: "contains",
+      matchValue: "/ /*",
+    });
+    expect(input.matches[1]).toMatchObject({
+      matchType: "regex",
+      matchOperator: "regex",
+    });
   });
 });
 
@@ -579,13 +678,20 @@ describe("parseExport — ReDoS guard", () => {
         name: "bad",
         redirectURL: "/x",
         statusCode: 301,
-        matches: [{ matchType: "regex", matchOperator: "equals", matchValue: "(a+)+$" }],
+        matches: [
+          { matchType: "regex", matchOperator: "equals", matchValue: "(a+)+$" },
+        ],
       },
     ]);
-    const preview = parseExport(json, { filename: "r.json", defaultHost: HOST });
+    const preview = parseExport(json, {
+      filename: "r.json",
+      defaultHost: HOST,
+    });
     const row = preview.rows[0];
     expect(row.status).toBe("skipped");
-    expect(row.validation.map((d) => d.message).join(" ")).toMatch(/catastrophic|ReDoS/i);
+    expect(row.validation.map((d) => d.message).join(" ")).toMatch(
+      /catastrophic|ReDoS/i,
+    );
   });
 
   it("allows a normal capturing regex", () => {
@@ -595,10 +701,19 @@ describe("parseExport — ReDoS guard", () => {
         name: "ok",
         redirectURL: "/f/$1",
         statusCode: 301,
-        matches: [{ matchType: "regex", matchOperator: "equals", matchValue: "/f/(.*)/x" }],
+        matches: [
+          {
+            matchType: "regex",
+            matchOperator: "equals",
+            matchValue: "/f/(.*)/x",
+          },
+        ],
       },
     ]);
-    const preview = parseExport(json, { filename: "r.json", defaultHost: HOST });
+    const preview = parseExport(json, {
+      filename: "r.json",
+      defaultHost: HOST,
+    });
     expect(preview.rows[0].status).not.toBe("skipped");
   });
 });
@@ -606,7 +721,10 @@ describe("parseExport — ReDoS guard", () => {
 describe("parseExport — file size guard", () => {
   it("rejects an oversized import instead of parsing it", () => {
     const huge = "x".repeat(50 * 1024 * 1024 + 1);
-    const preview = parseExport(huge, { filename: "big.csv", defaultHost: HOST });
+    const preview = parseExport(huge, {
+      filename: "big.csv",
+      defaultHost: HOST,
+    });
     expect(preview.rows).toEqual([]);
     expect(preview.error).toMatch(/too large/i);
   });
