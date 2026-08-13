@@ -516,6 +516,102 @@ describe("parseExport — policy index", () => {
   });
 });
 
+describe("parseExport — Akamai construct coverage (golden, anonymised)", () => {
+  // Real Edge Redirector constructs, wrapped as the validation set ships them,
+  // with all client identifiers replaced. These pin the mapping so a future
+  // refactor cannot silently regress on the shapes that actually occur.
+  const wrap = (rule: object): string =>
+    JSON.stringify({
+      rules: [{ policyId: 9001, policyName: "P", why: [], rule }],
+    });
+
+  it("strips a suffix via a capturing regex while the path guard stays verbatim", () => {
+    const preview = parseExport(
+      wrap({
+        type: "erMatchRule",
+        name: null,
+        matches: [
+          { matchType: "path", matchOperator: "contains", matchValue: "/f/*", negate: false, caseSensitive: false },
+          { matchType: "regex", matchOperator: "equals", matchValue: "/f/(.*)/travel-advice", negate: false, caseSensitive: false },
+        ],
+        statusCode: 301,
+        redirectURL: "/f/\\1",
+        useIncomingQueryString: false,
+      }),
+      { filename: "set.json", defaultHost: HOST },
+    );
+    const input = asRedirect(preview.rows[0].input);
+    expect(input.redirectURL).toBe("/f/$1");
+    expect(input.useIncomingQueryString).toBe(false);
+    expect(input.matches[0]).toMatchObject({ matchType: "path", matchOperator: "contains", matchValue: "/f/*" });
+    expect(input.matches[1]).toMatchObject({ matchType: "regex", matchOperator: "regex", matchValue: "/f/(.*)/travel-advice" });
+  });
+
+  it("maps a catch-all with a full-URL host guard to a static redirect", () => {
+    const preview = parseExport(
+      wrap({
+        type: "erMatchRule",
+        name: "Everything else",
+        matches: [
+          { matchType: "path", matchOperator: "contains", matchValue: "/ /*", negate: false, caseSensitive: false },
+          { matchType: "regex", matchOperator: "equals", matchValue: "https://(www\\.)?old.example.com/.*", negate: false, caseSensitive: false },
+        ],
+        statusCode: 301,
+        redirectURL: "https://new.example.com/nl",
+        useIncomingQueryString: false,
+      }),
+      { filename: "set.json", defaultHost: HOST },
+    );
+    const row = preview.rows[0];
+    expect(row.status).not.toBe("skipped");
+    const input = asRedirect(row.input);
+    expect(input.redirectURL).toBe("https://new.example.com/nl");
+    expect(input.matches[0]).toMatchObject({ matchOperator: "contains", matchValue: "/ /*" });
+    expect(input.matches[1]).toMatchObject({ matchType: "regex", matchOperator: "regex" });
+  });
+});
+
+describe("parseExport — ReDoS guard", () => {
+  it("skips a rule whose regex is potentially catastrophic", () => {
+    const json = JSON.stringify([
+      {
+        type: "erMatchRule",
+        name: "bad",
+        redirectURL: "/x",
+        statusCode: 301,
+        matches: [{ matchType: "regex", matchOperator: "equals", matchValue: "(a+)+$" }],
+      },
+    ]);
+    const preview = parseExport(json, { filename: "r.json", defaultHost: HOST });
+    const row = preview.rows[0];
+    expect(row.status).toBe("skipped");
+    expect(row.validation.map((d) => d.message).join(" ")).toMatch(/catastrophic|ReDoS/i);
+  });
+
+  it("allows a normal capturing regex", () => {
+    const json = JSON.stringify([
+      {
+        type: "erMatchRule",
+        name: "ok",
+        redirectURL: "/f/$1",
+        statusCode: 301,
+        matches: [{ matchType: "regex", matchOperator: "equals", matchValue: "/f/(.*)/x" }],
+      },
+    ]);
+    const preview = parseExport(json, { filename: "r.json", defaultHost: HOST });
+    expect(preview.rows[0].status).not.toBe("skipped");
+  });
+});
+
+describe("parseExport — file size guard", () => {
+  it("rejects an oversized import instead of parsing it", () => {
+    const huge = "x".repeat(50 * 1024 * 1024 + 1);
+    const preview = parseExport(huge, { filename: "big.csv", defaultHost: HOST });
+    expect(preview.rows).toEqual([]);
+    expect(preview.error).toMatch(/too large/i);
+  });
+});
+
 describe("parseExport — unrecognized", () => {
   it("returns an error and no rows", () => {
     const preview = parseExport("total nonsense", {
