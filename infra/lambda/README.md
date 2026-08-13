@@ -35,16 +35,21 @@ header is set unconditionally, overwriting anything the viewer sent — otherwis
 request could name any host and be matched by its rules. origin-request drops it
 before the request reaches the origin.
 
-| Association attached                  | `pk` a rewrite is looked up under                    |
-| ------------------------------------- | ---------------------------------------------------- |
-| viewer + origin-request (recommended) | the viewer's hostname                                |
-| origin-request alone                  | the **origin's** domain — nothing stamped the header |
+| Association attached                  | `pk` a rewrite is looked up under                                                      |
+| ------------------------------------- | -------------------------------------------------------------------------------------- |
+| viewer + origin-request (recommended) | the viewer's hostname                                                                  |
+| origin-request alone                  | the **origin's** domain — or whatever the client sent, if viewer headers are forwarded |
 
 Attach both — see
-[modules/edge](../modules/edge/README.md#wiring-it-into-an-existing-distribution).
-The fallback only keeps a single-association distribution behaving as it did;
-rules written by the console are keyed on hostnames, so none of them match under
-it.
+[modules/edge](../modules/edge/README.md#wiring-it-into-an-existing-distribution),
+where this is written up as a security requirement. The overwrite at
+viewer-request is the whole basis for trusting the header at origin-request:
+without it, a distribution that forwards viewer headers lets a client stamp the
+header itself and pick which host's rules apply to its request. The fallback only
+keeps a single-association distribution behaving as it did, and rules written by
+the console are keyed on hostnames, so none of them match under it. Reaching
+origin-request with nothing stamped logs a warning, once per execution
+environment.
 
 ## The query string on a rewrite
 

@@ -640,6 +640,45 @@ describe("the viewer's hostname at origin-request", () => {
     expect(result.uri).toBe("/api/v1/legacy");
   });
 
+  it("warns once per execution environment when nothing stamped it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    withRules(rewriteRule());
+
+    const unstamped = () =>
+      handler(
+        CloudfrontRequestEventMother.originRequest()
+          .withUri("/legacy/thing")
+          .withoutViewerHostHeader()
+          .build(),
+      );
+
+    await unstamped();
+    await unstamped();
+
+    // A missing association is one deployment mistake, not one per cache miss.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[1]).toMatchObject({
+      keyedOn: "original-bucket.s3.amazonaws.com",
+    });
+
+    warn.mockRestore();
+  });
+
+  it("stays quiet when the header is there", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    withRules(rewriteRule());
+
+    await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .build(),
+    );
+
+    expect(warn).not.toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
+
   it("ignores the header at viewer-request", async () => {
     // Rules for the spoofed host must not apply just because a viewer asked.
     withRules(redirectRule({ pk: "victim.example.com" }));

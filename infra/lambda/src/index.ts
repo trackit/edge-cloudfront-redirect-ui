@@ -51,9 +51,18 @@ const getService = (): Promise<RulesService> => {
   return servicePromise;
 };
 
+/**
+ * Whether this execution environment has already reported a missing viewer-host
+ * stamp. A missing stamp is a deployment-shaped problem — the viewer-request
+ * association is not attached — so it is worth saying, but saying it per request
+ * would fill the log with one line per cache miss.
+ */
+let warnedMissingViewerHost = false;
+
 /** Test seam: drops the memoized service so the next call rebuilds it. */
 export const resetService = (): void => {
   servicePromise = undefined;
+  warnedMissingViewerHost = false;
 };
 
 const getParams = (
@@ -168,6 +177,23 @@ const handleOriginRequest = async (
   request: CloudFrontRequest,
   params: RequestParams,
 ): Promise<CloudFrontRequestResult> => {
+  // Nothing stamped the header, so `params.hostname` fell back to `Host`. Said
+  // once because it means the viewer-request association is missing, and that is
+  // worth knowing on two counts: rewrites are keying on the origin's domain
+  // rather than the viewer's hostname, and if the distribution forwards viewer
+  // headers then the value being keyed on is one the client chose. See
+  // lib/viewer-host.ts.
+  if (
+    request.headers[VIEWER_HOST_HEADER] === undefined &&
+    !warnedMissingViewerHost
+  ) {
+    warnedMissingViewerHost = true;
+    console.warn("redirect-rules: no viewer host stamped at origin-request", {
+      keyedOn: params.hostname,
+      fix: "attach the viewer-request association to this cache behavior",
+    });
+  }
+
   // Its one reader is `params.hostname`, which is already resolved. Dropped
   // rather than forwarded: it is this function's own bookkeeping, and a rewrite
   // may hand the request to an origin that is not ours.

@@ -5,7 +5,7 @@ Lambda@Edge, and a CloudFront distribution with the function attached — so you
 can prove a hand-written rule is served at the edge, then tear it all down.
 
 ```
-DynamoDB (rules)  ◄─── you insert a rule here (step 4)
+DynamoDB (rules)  ◄─── you insert a rule here (steps 2 and 4)
       ▲  Query(pk = viewer's hostname, begins_with(sk))
       │
 CloudFront ──(viewer-request)──► L@E redirect (301/302)
@@ -75,16 +75,35 @@ eval "$(terraform output -raw test_redirect_command)"
 Rules propagate within **~1 minute** (the edge cache TTL). If you still see the
 origin's page, wait a moment and retry.
 
-> **Rewrites too:** insert a `frMatchRule` (see
-> [`shared/examples/rewrite-example.json`](../../shared/examples/rewrite-example.json),
-> `sk = REWRITE#…`) with the same `pk`, and the origin-request association
-> rewrites the path and/or swaps `request.origin`. The `pk` is the distribution's
-> domain there as well, even though origin-request runs after CloudFront has
-> changed the `Host` header — viewer-request carries the viewer's hostname across
-> for it (see
-> [infra/lambda](../../infra/lambda/README.md#the-host-a-rule-is-keyed-on)).
+## 4. See a rewrite (worth doing on purpose)
 
-## 4. Tear down
+A redirect only proves the viewer-request half. A rewrite is evaluated at
+origin-request, after CloudFront has replaced the `Host` header with the origin's
+domain, so it only matches if viewer-request carried the viewer's hostname across
+(see [infra/lambda](../../infra/lambda/README.md#the-host-a-rule-is-keyed-on)).
+This is the check that proves that mechanism end to end on a real distribution:
+
+```bash
+# Before: no such key in the bucket, so S3 answers 403/404.
+eval "$(terraform output -raw test_rewrite_command)"
+
+eval "$(terraform output -raw sample_rewrite_put_item_command)"
+
+# After (allow ~1 min for the edge cache): 200, and the origin's page.
+eval "$(terraform output -raw test_rewrite_command)"
+```
+
+Both associations must be attached for this to pass — which this example does. If
+it returns 403/404 after a minute, check CloudWatch in the region you curled
+from: reaching origin-request with no stamped hostname is logged.
+
+> Two behaviours cannot be seen against this S3 origin, since nothing echoes the
+> request back: `X-EdgeRoute-Viewer-Host` being removed before the request leaves
+> for the origin, and `forwardSettings.useIncomingQueryString: false` dropping the
+> query string. Both are covered by unit tests; observing them live needs an
+> origin that echoes its request.
+
+## 5. Tear down
 
 ```bash
 terraform destroy
