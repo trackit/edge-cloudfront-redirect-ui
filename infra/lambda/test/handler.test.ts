@@ -7,6 +7,7 @@ import type {
 import type { RedirectRule } from "../src/rule-types.js";
 import { CloudfrontRequestEventMother } from "./cloudfront-request-event.mother.js";
 import { FakeRepository } from "./fake-repository.js";
+import { VIEWER_HOST_HEADER } from "../src/lib/viewer-host.js";
 
 // The handler builds its own repository from baked config; swap in the fake so
 // the rest of the pipeline (config -> service -> matcher -> response) runs real.
@@ -65,6 +66,16 @@ const rewriteRule = (over: Partial<RedirectRule> = {}): RedirectRule =>
     },
     ...over,
   }) as RedirectRule;
+
+const S3_ORIGIN = {
+  s3: {
+    authMethod: "origin-access-identity",
+    region: "us-east-1",
+    domainName: "example-assets.s3.us-east-1.amazonaws.com",
+    path: "",
+    customHeaders: {},
+  },
+} as const;
 
 const withRules = (...rules: RedirectRule[]): void => {
   repo = new FakeRepository(rules);
@@ -173,17 +184,7 @@ describe("origin-request (rewrites)", () => {
   it("switches to an s3 origin", async () => {
     withRules(
       rewriteRule({
-        forwardSettings: {
-          origin: {
-            s3: {
-              authMethod: "origin-access-identity",
-              region: "us-east-1",
-              domainName: "example-assets.s3.us-east-1.amazonaws.com",
-              path: "",
-              customHeaders: {},
-            },
-          },
-        },
+        forwardSettings: { origin: S3_ORIGIN },
       } as Partial<RedirectRule>),
     );
 
@@ -427,6 +428,270 @@ describe("priority ordering", () => {
     expect(result.headers?.["location"]?.[0]?.value).toBe(
       "https://www.example.com/broad",
     );
+  });
+});
+
+describe("the incoming query string on rewrites", () => {
+  /** A rewrite whose forwardSettings are spelled out per case. */
+  const rewriteForwarding = (
+    forwardSettings: Record<string, unknown>,
+  ): RedirectRule => rewriteRule({ forwardSettings } as Partial<RedirectRule>);
+
+  const rewriting = async (rule: RedirectRule): Promise<CloudFrontRequest> => {
+    withRules(rule);
+
+    return (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .withQuerystring("a=1")
+        .build(),
+    )) as CloudFrontRequest;
+  };
+
+  it("replaces it with the query string the rule spells out", async () => {
+    const result = await rewriting(
+      rewriteForwarding({ pathAndQS: "/api/v1/legacy?x=1" }),
+    );
+
+    expect(result.querystring).toBe("x=1");
+  });
+
+  it("keeps it when the rule only switches origin", async () => {
+    const result = await rewriting(rewriteForwarding({ origin: S3_ORIGIN }));
+
+    expect(result.querystring).toBe("a=1");
+  });
+
+  // The case hand-written rules depend on: a path with no query of its own says
+  // nothing about the incoming query string, so it is forwarded. Unchanged from
+  // the upstream snippet, and deliberately not "fixed" along with the opt-out.
+  it("keeps it when the rule's path carries no query string", async () => {
+    const result = await rewriting(
+      rewriteForwarding({ pathAndQS: "/api/v1/legacy" }),
+    );
+
+    expect(result.uri).toBe("/api/v1/legacy");
+    expect(result.querystring).toBe("a=1");
+  });
+
+  it("keeps it when the rule opts in explicitly", async () => {
+    const result = await rewriting(
+      rewriteForwarding({
+        pathAndQS: "/api/v1/legacy",
+        useIncomingQueryString: true,
+      }),
+    );
+
+    expect(result.querystring).toBe("a=1");
+  });
+
+  it("drops it when the rule opts out", async () => {
+    const result = await rewriting(
+      rewriteForwarding({
+        pathAndQS: "/api/v1/legacy",
+        useIncomingQueryString: false,
+      }),
+    );
+
+    expect(result.uri).toBe("/api/v1/legacy");
+    expect(result.querystring).toBe("");
+  });
+
+  it("drops it on an origin-only rewrite, without touching the path", async () => {
+    const result = await rewriting(
+      rewriteForwarding({ origin: S3_ORIGIN, useIncomingQueryString: false }),
+    );
+
+    expect(result.uri).toBe("/legacy/thing");
+    expect(result.querystring).toBe("");
+    expect(result.origin?.s3?.domainName).toBe(
+      "example-assets.s3.us-east-1.amazonaws.com",
+    );
+  });
+
+  it("prefers the rule's own query string over the opt-out", async () => {
+    const result = await rewriting(
+      rewriteForwarding({
+        pathAndQS: "/api/v1/legacy?x=1",
+        useIncomingQueryString: false,
+      }),
+    );
+
+    expect(result.querystring).toBe("x=1");
+  });
+
+  it("keeps a literal ? inside the rule's query string", async () => {
+    const result = await rewriting(
+      rewriteForwarding({ pathAndQS: "/api?next=/somewhere?deep=1" }),
+    );
+
+    expect(result.uri).toBe("/api");
+    expect(result.querystring).toBe("next=/somewhere?deep=1");
+  });
+});
+
+describe("the viewer's hostname at origin-request", () => {
+  it("stamps the viewer's host on the request it passes through", async () => {
+    withRules(redirectRule());
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("/somewhere-else")
+        .withHost("shop.example.com")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.headers[VIEWER_HOST_HEADER]?.[0]?.value).toBe(
+      "shop.example.com",
+    );
+  });
+
+  it("overwrites a viewer-supplied value, so nobody can pick a host", async () => {
+    withRules(redirectRule());
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("/somewhere-else")
+        .withHost("shop.example.com")
+        .withViewerHostHeader("victim.example.com")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.headers[VIEWER_HOST_HEADER]?.[0]?.value).toBe(
+      "shop.example.com",
+    );
+  });
+
+  it("keys a rewrite on the stamped host, not the origin's domain", async () => {
+    withRules(rewriteRule());
+
+    const event = CloudfrontRequestEventMother.originRequest()
+      .withUri("/legacy/thing")
+      .build();
+    // The state CloudFront actually delivers: Host is the origin, and the rule
+    // lives under the viewer's hostname.
+    expect(event.Records[0]!.cf.request.headers["host"]?.[0]?.value).toBe(
+      "original-bucket.s3.amazonaws.com",
+    );
+
+    const result = (await handler(event)) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/api/v1/legacy");
+  });
+
+  it("matches a hostname condition against the viewer's host", async () => {
+    withRules(
+      rewriteRule({
+        matches: [
+          {
+            matchType: "hostname",
+            matchOperator: "equals",
+            matchValue: HOST,
+          },
+        ],
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/api/v1/legacy");
+  });
+
+  it("does not forward the stamped header to the origin", async () => {
+    withRules(rewriteRule());
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.headers[VIEWER_HOST_HEADER]).toBeUndefined();
+  });
+
+  it("drops the header even when no rule matches", async () => {
+    withRules(rewriteRule());
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/modern/thing")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.headers[VIEWER_HOST_HEADER]).toBeUndefined();
+  });
+
+  it("falls back to Host when nothing stamped it", async () => {
+    // origin-request attached on its own: no viewer-request ran, so the only
+    // hostname available is the origin's. Rules keyed there still apply.
+    withRules(rewriteRule({ pk: "original-bucket.s3.amazonaws.com" }));
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .withoutViewerHostHeader()
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/api/v1/legacy");
+  });
+
+  it("warns once per execution environment when nothing stamped it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    withRules(rewriteRule());
+
+    const unstamped = () =>
+      handler(
+        CloudfrontRequestEventMother.originRequest()
+          .withUri("/legacy/thing")
+          .withoutViewerHostHeader()
+          .build(),
+      );
+
+    await unstamped();
+    await unstamped();
+
+    // A missing association is one deployment mistake, not one per cache miss.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[1]).toMatchObject({
+      keyedOn: "original-bucket.s3.amazonaws.com",
+    });
+
+    warn.mockRestore();
+  });
+
+  it("stays quiet when the header is there", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    withRules(rewriteRule());
+
+    await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .build(),
+    );
+
+    expect(warn).not.toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
+
+  it("ignores the header at viewer-request", async () => {
+    // Rules for the spoofed host must not apply just because a viewer asked.
+    withRules(redirectRule({ pk: "victim.example.com" }));
+
+    const result = await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("/old-landing")
+        .withHost("shop.example.com")
+        .withViewerHostHeader("victim.example.com")
+        .build(),
+    );
+
+    expect((result as CloudFrontResultResponse).status).toBeUndefined();
   });
 });
 

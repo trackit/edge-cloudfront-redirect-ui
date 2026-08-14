@@ -40,6 +40,7 @@ Anything else reading a whole partition has to choose: listing a host's rules sk
 **Access patterns**
 
 - The Lambda@Edge **reads**: `Query(pk = host, begins_with(sk, "REDIRECT#"))` on viewer-request, `begins_with(sk, "REWRITE#")` on origin-request. Results are cached in-memory briefly at the edge. The host is lowercased for the lookup, since that is how it is stored; the value a `hostname` match condition is tested against stays as the viewer sent it, so `caseSensitive` still means something. The `begins_with` is also why the edge never sees the host marker.
+  - `host` is the hostname the **viewer** asked for, at both events. By origin-request CloudFront has replaced the `Host` header with the origin's domain, so viewer-request stamps the real one on the request for origin-request to read — a rewrite keyed on the header CloudFront leaves behind would query a bucket's or backend's partition and match nothing. See [infra/lambda](../infra/lambda/README.md#the-host-a-rule-is-keyed-on).
 - The console API **writes**: Put / Update / Delete of whole items. It never talks to the Lambda@Edge — the table is the only interface.
 
 **Propagation**

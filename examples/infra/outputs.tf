@@ -47,3 +47,34 @@ output "test_redirect_command" {
   description = "After inserting the rule, this should return HTTP 301."
   value       = "curl -i https://${aws_cloudfront_distribution.this.domain_name}/old-landing"
 }
+
+# A rewrite is the case worth proving by hand, because it is the one that depends
+# on viewer-request carrying the viewer's hostname to origin-request: the pk below
+# is the distribution's domain, which the `Host` header no longer holds by the time
+# rewrites are evaluated. If this rule takes effect, that mechanism works.
+output "sample_rewrite_put_item_command" {
+  description = "Inserts a demo rewrite: /old-docs -> the origin's /index.html."
+  value       = <<-EOT
+    aws dynamodb put-item --region ${var.region} --table-name ${module.table.table_name} --item '{
+      "pk": {"S": "${aws_cloudfront_distribution.this.domain_name}"},
+      "sk": {"S": "REWRITE#00100"},
+      "type": {"S": "frMatchRule"},
+      "forwardSettings": {"M": {
+        "pathAndQS": {"S": "/index.html"}
+      }},
+      "matches": {"L": [{"M": {
+        "matchType": {"S": "path"},
+        "matchOperator": {"S": "equals"},
+        "matchValue": {"S": "/old-docs"},
+        "negate": {"BOOL": false},
+        "caseSensitive": {"BOOL": false}
+      }}]},
+      "disabled": {"BOOL": false}
+    }'
+  EOT
+}
+
+output "test_rewrite_command" {
+  description = "Before the rule: 403/404 from S3. After it: 200 and the origin's page."
+  value       = "curl -i https://${aws_cloudfront_distribution.this.domain_name}/old-docs"
+}

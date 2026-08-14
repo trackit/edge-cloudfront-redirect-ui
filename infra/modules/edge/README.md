@@ -105,8 +105,40 @@ resource "aws_cloudfront_distribution" "existing" {
   add the same block to any `ordered_cache_behavior` that needs them.
 - The ARNs are **qualified version ARNs** (required by CloudFront) — always take
   them from the module outputs; never hand-build them.
-- Rules key on the request's `Host` header, so they apply to whatever hostname
-  the viewer used (your distribution's domain or its alternate CNAMEs).
+- Rules key on the hostname the **viewer** asked for, so they apply to whatever
+  hostname it used (your distribution's domain or its alternate CNAMEs).
+- **Rewrites need both associations — this is a security requirement, not just a
+  functional one.** CloudFront replaces `Host` with the origin's domain before
+  origin-request, so viewer-request is what carries the viewer's hostname across,
+  as `X-EdgeRoute-Viewer-Host` (dropped again before the request leaves for the
+  origin). It is written on **every** request, overwriting whatever the viewer
+  sent, and that overwrite is what makes the header trustworthy at
+  origin-request.
+
+  Attach origin-request on its own and two things follow. Rewrites are looked up
+  under the origin's domain, which is not what the console writes rules under, so
+  none of them match. And if the cache behavior forwards viewer headers — an
+  `AllViewer`-style origin request policy, or a legacy whitelist naming it — then
+  nothing overwrote the header and a client can send `X-EdgeRoute-Viewer-Host`
+  itself, choosing which host's rewrite rules, and so which **origin**, apply to
+  its own request.
+
+  So: attach both. If you genuinely cannot, make sure that cache behavior does
+  **not** forward `X-EdgeRoute-Viewer-Host` from viewers — with no origin request
+  policy naming it, CloudFront drops it before origin-request and the lookup falls
+  back to the origin's domain. The function logs a warning (once per execution
+  environment) when it reaches origin-request with nothing stamped, so a missing
+  association is visible in CloudWatch rather than silent. Redirects are
+  unaffected either way.
+
+- **Cache and origin request policies.** The stamped header reaches
+  origin-request regardless of your origin request policy, because it is added
+  during the same request rather than forwarded from the viewer. Your cache
+  policy is a separate question: leave the header out of the **cache key** unless
+  the behavior both caches responses and serves several hostnames whose rules
+  differ — in that case key on it (or on `Host`), or one hostname's rewritten
+  response will be served to another. Rules are only re-evaluated on a cache
+  miss, so a caching behavior also delays when a rule change is observed.
 
 ## Using the module more than once
 
