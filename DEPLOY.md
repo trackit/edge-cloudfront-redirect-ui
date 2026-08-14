@@ -56,35 +56,40 @@ terraform output table_arn                    # → step 2
 
 ```bash
 cd ../../console/api/infra
-cp terraform.tfvars.example terraform.tfvars
+cp sandbox.tfvars.example sandbox.tfvars
 ```
 
-Edit `terraform.tfvars`: put the `table_arn` from step 1 into `target_table_arns`.
+Edit `sandbox.tfvars`: put the `table_arn` from step 1 into `target_table_arns`.
 **This is the setting that is easy to miss** — it is empty by default, and empty
 means the API can reach no rules table, so the console lists hosts and then fails
 on every one of them with AccessDenied.
 
 ```bash
 terraform init
-terraform apply
+terraform apply -var-file=sandbox.tfvars
 terraform output api_endpoint    # → step 3
 ```
+
+> The file is `sandbox.tfvars`, not `terraform.tfvars`, so it has to be passed
+> explicitly. Terraform auto-loads `terraform.tfvars` everywhere — including
+> `terraform test`, where it overrides the defaults the suite asserts on and fails
+> two runs that have nothing to do with your change.
 
 ## 3. Console
 
 ```bash
 cd ../../console/ui/infra
-cp terraform.tfvars.example terraform.tfvars
+cp sandbox.tfvars.example sandbox.tfvars
 ```
 
-Edit `terraform.tfvars`: the `api_endpoint` from step 2, and the username and
+Edit `sandbox.tfvars`: the `api_endpoint` from step 2, and the username and
 password the console will prompt for. The credential ends up in the CloudFront
 Function's code and in Terraform state, so use a throwaway one — see
 [the module's README](console/ui/infra/README.md#the-credential-is-not-a-secret).
 
 ```bash
 terraform init
-terraform apply
+terraform apply -var-file=sandbox.tfvars
 terraform output console_url
 ```
 
@@ -150,15 +155,18 @@ URL, different page.
 Reverse order:
 
 ```bash
-cd console/ui/infra   && terraform destroy
-cd ../../console/api/infra && terraform destroy
+cd console/ui/infra        && terraform destroy -var-file=sandbox.tfvars
+cd ../../console/api/infra && terraform destroy -var-file=sandbox.tfvars
 cd ../../examples/infra    && terraform destroy
 ```
+
+The two console stacks need their var file on destroy as well — `api_endpoint` and
+the credential have no defaults, so Terraform stops and asks for them otherwise.
 
 Two things will interrupt this:
 
 - **The targets registry table** has deletion protection on unless you set
-  `deletion_protection = false` (the example tfvars does). If it is on, flip it,
+  `deletion_protection = false` (`sandbox.tfvars.example` does). If it is on, flip it,
   `terraform apply`, then destroy.
 - **Lambda@Edge replicas** live on for 15 minutes to an hour after the
   distribution stops using them, so the first `destroy` of the data plane usually

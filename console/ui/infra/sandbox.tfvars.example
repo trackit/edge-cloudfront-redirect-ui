@@ -1,5 +1,11 @@
-# Copy to terraform.tfvars and fill in. That file is gitignored (*.tfvars), this
-# one is not — keep real values out of here.
+# Copy to sandbox.tfvars, fill in, and pass it explicitly:
+#
+#   terraform apply -var-file=sandbox.tfvars
+#
+# Not terraform.tfvars: Terraform auto-loads that name, including when running
+# `terraform test`, where it would override the defaults the suite asserts on.
+# Both names are gitignored (*.tfvars); this .example is the tracked one, so keep
+# real values out of it.
 
 # The `api_endpoint` output of console/api/infra. Host only, no path.
 api_endpoint = "https://REPLACE_ME.execute-api.us-east-1.amazonaws.com"
