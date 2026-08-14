@@ -24,3 +24,16 @@ output "role_arn" {
   value       = aws_iam_role.this.arn
   description = "ARN of the Lambda execution role."
 }
+
+# Rewrites do not work unless this header reaches origin-request, and CloudFront
+# only forwards what the cache policy or the origin request policy names — a header
+# added at viewer-request is otherwise dropped in between. Exposed so a consumer
+# builds its origin request policy from this rather than retyping the name.
+#
+# Kept in step with VIEWER_HOST_HEADER in infra/lambda/src/lib/viewer-host.ts by
+# hand: Terraform cannot read the TypeScript constant, and the handler cannot read
+# this. Change one, change the other.
+output "viewer_host_header" {
+  value       = "x-edgeroute-viewer-host"
+  description = "Header the function stamps the viewer's hostname into at viewer-request and reads at origin-request. Your cache behavior must forward it to the origin, or no rewrite rule will ever match."
+}
