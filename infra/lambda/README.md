@@ -35,6 +35,12 @@ header is set unconditionally, overwriting anything the viewer sent — otherwis
 request could name any host and be matched by its rules. origin-request drops it
 before the request reaches the origin.
 
+The header surviving that trip is **not** automatic. CloudFront builds the origin
+request from the cache key plus the origin request policy, so a behavior whose
+policies do not name the header loses it in between and every rewrite stops
+matching. Forwarding it is part of attaching this function — see
+[modules/edge](../modules/edge/README.md#wiring-it-into-an-existing-distribution).
+
 | Association attached                  | `pk` a rewrite is looked up under                                                      |
 | ------------------------------------- | -------------------------------------------------------------------------------------- |
 | viewer + origin-request (recommended) | the viewer's hostname                                                                  |

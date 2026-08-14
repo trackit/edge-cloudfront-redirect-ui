@@ -51,11 +51,15 @@ under `/assets/` and invalidate `index.html`.
 ## Usage
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars   # then fill it in
+cp sandbox.tfvars.example sandbox.tfvars   # then fill it in
 terraform init
-terraform apply
+terraform apply -var-file=sandbox.tfvars
 terraform output console_url
 ```
+
+`sandbox.tfvars` rather than `terraform.tfvars` because Terraform auto-loads the
+latter, including during `terraform test`, where it would override the defaults the
+suite asserts on.
 
 The distribution takes **5–15 minutes** to deploy, so the URL will not answer
 immediately. `console/api/infra` has to be applied first — its `api_endpoint`
