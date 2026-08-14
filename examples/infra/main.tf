@@ -123,6 +123,40 @@ data "aws_cloudfront_cache_policy" "caching_disabled" {
   name = "Managed-CachingDisabled"
 }
 
+# Without this, rewrites never match.
+#
+# The function stamps the viewer's hostname at viewer-request and reads it back at
+# origin-request, because CloudFront has replaced `Host` with the origin's domain by
+# then. But CloudFront builds the origin request from the cache key plus the origin
+# request policy — with caching disabled and no policy, the stamped header is
+# dropped in between, the lookup falls back to the origin's domain, and no rule is
+# found. Confirmed the hard way on a real distribution: the function logged
+# `no viewer host stamped at origin-request` with the bucket's domain as the key.
+#
+# A whitelist rather than Managed-AllViewer: that one forwards `Host` too, and an
+# S3 origin behind OAC has to receive the bucket's own hostname. Query strings are
+# forwarded because a rewrite can match on them.
+resource "aws_cloudfront_origin_request_policy" "viewer_host" {
+  name    = "${var.function_name}-viewer-host"
+  comment = "Forwards the edge function's viewer-host header to origin-request"
+
+  headers_config {
+    header_behavior = "whitelist"
+
+    headers {
+      items = [module.edge.viewer_host_header]
+    }
+  }
+
+  cookies_config {
+    cookie_behavior = "none"
+  }
+
+  query_strings_config {
+    query_string_behavior = "all"
+  }
+}
+
 # trivy:ignore:AVD-AWS-0010 access logging is unnecessary for a throwaway demo distribution
 # trivy:ignore:AVD-AWS-0011 WAF is out of scope for the example
 resource "aws_cloudfront_distribution" "this" {
@@ -149,11 +183,12 @@ resource "aws_cloudfront_distribution" "this" {
   }
 
   default_cache_behavior {
-    target_origin_id       = local.origin_id
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD"]
-    cached_methods         = ["GET", "HEAD"]
-    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_disabled.id
+    target_origin_id         = local.origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD"]
+    cached_methods           = ["GET", "HEAD"]
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.viewer_host.id
 
     # One published function, associated twice — it dispatches on eventType.
     lambda_function_association {
