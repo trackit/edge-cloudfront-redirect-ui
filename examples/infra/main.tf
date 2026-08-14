@@ -6,6 +6,17 @@ locals {
   origin_domain = local.use_placeholder_origin ? (
     aws_s3_bucket.origin[0].bucket_regional_domain_name
   ) : var.origin_domain_name
+
+  # What the placeholder origin serves. `index.html` is where an unmatched request
+  # lands; the other two exist so a rewrite has somewhere visibly different to send
+  # one. With a single page on the origin, a path rewrite lands back on the page
+  # you already had and proves nothing you can see — and repointing a rule from one
+  # to the other is what shows a rule change taking effect.
+  origin_pages = {
+    "index.html"   = "<h1>Origin reached</h1><p>No redirect/rewrite rule matched this request.</p>"
+    "pricing.html" = "<h1>Pricing</h1><p>This is <code>/pricing.html</code> on the origin.</p>"
+    "plans.html"   = "<h1>Plans</h1><p>This is <code>/plans.html</code> on the origin.</p>"
+  }
 }
 
 # --- Data plane -------------------------------------------------------------
@@ -28,6 +39,7 @@ module "edge" {
   table_name    = module.table.table_name
   table_arn     = module.table.table_arn
   table_region  = module.table.table_region
+  cache_ttl_ms  = var.cache_ttl_ms
   tags          = var.tags
 }
 
@@ -54,12 +66,12 @@ resource "aws_s3_bucket_public_access_block" "origin" {
   restrict_public_buckets = true
 }
 
-resource "aws_s3_object" "index" {
-  count = local.use_placeholder_origin ? 1 : 0
+resource "aws_s3_object" "page" {
+  for_each = local.use_placeholder_origin ? local.origin_pages : {}
 
   bucket       = aws_s3_bucket.origin[0].id
-  key          = "index.html"
-  content      = "<!doctype html><title>edgeroute example origin</title><h1>Origin reached</h1><p>No redirect/rewrite rule matched this request.</p>"
+  key          = each.key
+  content      = "<!doctype html><title>edgeroute example origin</title>${each.value}"
   content_type = "text/html"
 }
 

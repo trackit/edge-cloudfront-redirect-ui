@@ -53,19 +53,43 @@ output "test_redirect_command" {
 # is the distribution's domain, which the `Host` header no longer holds by the time
 # rewrites are evaluated. If this rule takes effect, that mechanism works.
 output "sample_rewrite_put_item_command" {
-  description = "Inserts a demo rewrite: /old-docs -> the origin's /index.html."
+  description = "Inserts a demo rewrite: /old-pricing -> the origin's /pricing.html."
   value       = <<-EOT
     aws dynamodb put-item --region ${var.region} --table-name ${module.table.table_name} --item '{
       "pk": {"S": "${aws_cloudfront_distribution.this.domain_name}"},
       "sk": {"S": "REWRITE#00100"},
       "type": {"S": "frMatchRule"},
       "forwardSettings": {"M": {
-        "pathAndQS": {"S": "/index.html"}
+        "pathAndQS": {"S": "/pricing.html"}
       }},
       "matches": {"L": [{"M": {
         "matchType": {"S": "path"},
         "matchOperator": {"S": "equals"},
-        "matchValue": {"S": "/old-docs"},
+        "matchValue": {"S": "/old-pricing"},
+        "negate": {"BOOL": false},
+        "caseSensitive": {"BOOL": false}
+      }}]},
+      "disabled": {"BOOL": false}
+    }'
+  EOT
+}
+
+# Repointing the same rule is what shows a rule *change* being served, rather than
+# a rule existing: the path stays /old-pricing and the page it serves changes.
+output "repoint_rewrite_put_item_command" {
+  description = "Overwrites the demo rewrite so /old-pricing serves /plans.html instead."
+  value       = <<-EOT
+    aws dynamodb put-item --region ${var.region} --table-name ${module.table.table_name} --item '{
+      "pk": {"S": "${aws_cloudfront_distribution.this.domain_name}"},
+      "sk": {"S": "REWRITE#00100"},
+      "type": {"S": "frMatchRule"},
+      "forwardSettings": {"M": {
+        "pathAndQS": {"S": "/plans.html"}
+      }},
+      "matches": {"L": [{"M": {
+        "matchType": {"S": "path"},
+        "matchOperator": {"S": "equals"},
+        "matchValue": {"S": "/old-pricing"},
         "negate": {"BOOL": false},
         "caseSensitive": {"BOOL": false}
       }}]},
@@ -75,6 +99,6 @@ output "sample_rewrite_put_item_command" {
 }
 
 output "test_rewrite_command" {
-  description = "Before the rule: 403/404 from S3. After it: 200 and the origin's page."
-  value       = "curl -i https://${aws_cloudfront_distribution.this.domain_name}/old-docs"
+  description = "Before the rule: 404 from S3. After it: 200 and the page the rule points at."
+  value       = "curl -i https://${aws_cloudfront_distribution.this.domain_name}/old-pricing"
 }
