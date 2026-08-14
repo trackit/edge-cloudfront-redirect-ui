@@ -18,6 +18,14 @@ output "table_region" {
   description = "Region the rules table lives in (for `aws dynamodb` commands)."
 }
 
+# The console API grants itself access to rules tables by ARN at apply time, so
+# this is what `target_table_arns` is set from. Without it that has to be
+# hand-assembled from the account id and table name.
+output "table_arn" {
+  value       = module.table.table_arn
+  description = "ARN of the rules table — pass to console/api/infra as target_table_arns."
+}
+
 # The edge keys rules on the viewer Host header, which for the default domain is
 # the distribution's own domain — so the demo rule's pk is that domain. Rendered
 # here so there is nothing to hand-edit.

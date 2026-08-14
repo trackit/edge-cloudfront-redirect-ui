@@ -37,6 +37,11 @@ terraform output cloudfront_domain_name
 terraform output -raw sample_put_item_command
 ```
 
+> Deploying the console against this data plane as well? Follow
+> [`DEPLOY.md`](../../DEPLOY.md) instead — it covers all three stacks in order, and
+> `./seed-demo.sh` writes a host and three rules in one go rather than the single
+> rule below.
+
 ## 2. Insert a sample rule (manually)
 
 The edge keys rules on the hostname the viewer asked for. When you curl the
