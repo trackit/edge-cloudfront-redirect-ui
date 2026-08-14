@@ -82,4 +82,43 @@ run "existing_origin_when_provided" {
     condition     = aws_cloudfront_distribution.this.origin.*.domain_name == tolist(["origin.example.com"])
     error_message = "the distribution should use the provided origin domain"
   }
+
+  assert {
+    condition     = length(aws_s3_object.page) == 0
+    error_message = "the demo pages belong to the placeholder bucket; there is nowhere to put them otherwise"
+  }
+}
+
+# =============================================================================
+# Demo pages on the placeholder origin
+# =============================================================================
+
+run "placeholder_origin_serves_more_than_one_page" {
+  command = plan
+
+  # A rewrite has to land somewhere visibly different from where the request
+  # started, or nothing about it can be observed from outside.
+  assert {
+    condition     = length(setsubtract(["index.html", "pricing.html", "plans.html"], keys(aws_s3_object.page))) == 0
+    error_message = "the placeholder origin must serve index.html plus at least two rewrite targets"
+  }
+
+  assert {
+    condition     = alltrue([for o in values(aws_s3_object.page) : o.content_type == "text/html"])
+    error_message = "each demo page must be served as text/html, or a browser will offer to download it"
+  }
+}
+
+# =============================================================================
+# Edge rule cache TTL
+# =============================================================================
+
+run "rejects_a_negative_cache_ttl" {
+  command = plan
+
+  variables {
+    cache_ttl_ms = -1
+  }
+
+  expect_failures = [var.cache_ttl_ms]
 }

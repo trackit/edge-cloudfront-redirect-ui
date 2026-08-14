@@ -81,21 +81,43 @@ A redirect only proves the viewer-request half. A rewrite is evaluated at
 origin-request, after CloudFront has replaced the `Host` header with the origin's
 domain, so it only matches if viewer-request carried the viewer's hostname across
 (see [infra/lambda](../../infra/lambda/README.md#the-host-a-rule-is-keyed-on)).
-This is the check that proves that mechanism end to end on a real distribution:
+This is the check that proves that mechanism end to end on a real distribution.
+
+The placeholder origin serves three pages — `index.html`, `pricing.html` and
+`plans.html` — so a rewrite has somewhere visibly different to land:
 
 ```bash
-# Before: no such key in the bucket, so S3 answers 403/404.
+# Before: nothing at that key, so S3 answers 404.
 eval "$(terraform output -raw test_rewrite_command)"
 
 eval "$(terraform output -raw sample_rewrite_put_item_command)"
 
-# After (allow ~1 min for the edge cache): 200, and the origin's page.
+# After (allow for the edge cache): 200, and the Pricing page.
 eval "$(terraform output -raw test_rewrite_command)"
 ```
 
 Both associations must be attached for this to pass — which this example does. If
-it returns 403/404 after a minute, check CloudWatch in the region you curled
+it still 404s after the cache TTL, check CloudWatch in the region you curled
 from: reaching origin-request with no stamped hostname is logged.
+
+To watch a rule **change** being served rather than a rule existing, repoint the
+same rule and curl the same path again — the URL never changes, the page does:
+
+```bash
+eval "$(terraform output -raw repoint_rewrite_put_item_command)"
+eval "$(terraform output -raw test_rewrite_command)"   # → the Plans page
+```
+
+Rule changes take up to the edge cache TTL to appear, one minute by default. When
+you are showing this to someone, deploy with a shorter one:
+
+```bash
+terraform apply -var 'cache_ttl_ms=10000'
+```
+
+That is baked into the bundle at package time, so changing it republishes the
+function and the distribution redeploys (~5–15 min). Set it before the demo, not
+during it.
 
 > Two behaviours cannot be seen against this S3 origin, since nothing echoes the
 > request back: `X-EdgeRoute-Viewer-Host` being removed before the request leaves

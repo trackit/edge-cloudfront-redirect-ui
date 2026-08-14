@@ -16,6 +16,17 @@ variable "function_name" {
   description = "Name of the demo Lambda@Edge function."
 }
 
+variable "cache_ttl_ms" {
+  type        = number
+  default     = 60000
+  description = "How long the edge caches a host's rules, baked into the bundle. Left at the module default so this example demonstrates the documented ~1 minute propagation. Lower it (e.g. 10000) when you are showing rule changes to someone and a minute of waiting is the whole demo."
+
+  validation {
+    condition     = var.cache_ttl_ms >= 0
+    error_message = "cache_ttl_ms must be zero or greater. Zero disables the cache, so every request queries DynamoDB."
+  }
+}
+
 variable "origin_domain_name" {
   type        = string
   default     = null
