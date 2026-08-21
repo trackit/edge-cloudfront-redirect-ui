@@ -111,3 +111,41 @@ variable "tags" {
   default     = {}
   description = "Tags to apply to all resources."
 }
+
+variable "cognito_domain_prefix" {
+  type        = string
+  description = "Prefix for the Cognito hosted UI domain, giving <prefix>.auth.<region>.amazoncognito.com. No default: the prefix is globally unique across all AWS accounts, so any value shipped here would collide for the second person to apply this."
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$", var.cognito_domain_prefix))
+    error_message = "cognito_domain_prefix must be 3-63 characters of lowercase letters, digits and hyphens, and may not start or end with a hyphen (Cognito domain rules)."
+  }
+}
+
+variable "auth_callback_urls" {
+  type        = list(string)
+  default     = ["http://localhost:5180/auth/callback"]
+  description = "URLs Cognito may redirect to after a login. Defaults to the Vite dev server so a fresh pool is usable locally before anything is deployed; add the deployed console's /auth/callback when it exists. Cognito allows http only for localhost."
+
+  validation {
+    condition = alltrue([
+      for url in var.auth_callback_urls :
+      can(regex("^https://", url)) || can(regex("^http://localhost(:[0-9]+)?/", url))
+    ])
+    error_message = "each auth_callback_urls entry must be https, or http on localhost — Cognito rejects plain http anywhere else, and a redirect URI is where the authorization code lands."
+  }
+}
+
+variable "auth_logout_urls" {
+  type        = list(string)
+  default     = ["http://localhost:5180/login"]
+  description = "URLs Cognito may redirect to after a logout. Signing out has to end somewhere the user can sign in again, so this is normally the console's login page."
+
+  validation {
+    condition = alltrue([
+      for url in var.auth_logout_urls :
+      can(regex("^https://", url)) || can(regex("^http://localhost(:[0-9]+)?/", url))
+    ])
+    error_message = "each auth_logout_urls entry must be https, or http on localhost."
+  }
+}

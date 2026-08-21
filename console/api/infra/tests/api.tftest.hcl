@@ -4,6 +4,13 @@
 # sets directly; provider-computed values are mocked and not meaningful here.
 # The policy-document data source is mocked to valid JSON so aws_iam_role
 # accepts it; policy content is provider-computed and not asserted here.
+# `cognito_domain_prefix` has no default on purpose — the prefix is globally
+# unique across AWS, so shipping one would collide for the second person to
+# apply this. The suite supplies a throwaway.
+variables {
+  cognito_domain_prefix = "edgeroute-console-api-test"
+}
+
 mock_provider "aws" {
   mock_data "aws_iam_policy_document" {
     defaults = {
@@ -22,6 +29,13 @@ mock_provider "aws" {
   mock_data "aws_partition" {
     defaults = {
       partition = "aws"
+    }
+  }
+
+  # Pinned for the same reason: the hosted UI's URL is built from it.
+  mock_data "aws_region" {
+    defaults = {
+      region = "us-east-1"
     }
   }
 }
@@ -518,5 +532,126 @@ run "allowed_regions_omitted_when_empty" {
   assert {
     condition     = !contains(keys(aws_lambda_function.this.environment[0].variables), "ALLOWED_REGIONS")
     error_message = "ALLOWED_REGIONS must be omitted entirely when allowed_regions is empty"
+  }
+}
+
+run "pool_is_admin_create_only" {
+  command = plan
+
+  assert {
+    condition     = aws_cognito_user_pool.this.admin_create_user_config[0].allow_admin_create_user_only
+    error_message = "self sign-up must stay off: this API can repoint production traffic, so an open registration form is not something to leave to a default"
+  }
+
+  assert {
+    condition     = aws_cognito_user_pool.this.password_policy[0].minimum_length >= 12
+    error_message = "password policy must require at least 12 characters"
+  }
+}
+
+run "client_is_confidential_and_code_only" {
+  command = plan
+
+  assert {
+    condition     = aws_cognito_user_pool_client.console.generate_secret
+    error_message = "the client must have a secret: the API performs the code exchange so the browser never holds one, which is what keeps the refresh token out of JavaScript"
+  }
+
+  assert {
+    condition     = aws_cognito_user_pool_client.console.allowed_oauth_flows == toset(["code"])
+    error_message = "only the authorization code flow may be enabled; implicit returns tokens in the URL fragment"
+  }
+
+  assert {
+    condition     = !contains(aws_cognito_user_pool_client.console.explicit_auth_flows, "ALLOW_USER_PASSWORD_AUTH")
+    error_message = "USER_PASSWORD_AUTH would let anything trade a password for a token outside the hosted UI"
+  }
+}
+
+run "both_roles_exist_as_groups" {
+  command = plan
+
+  assert {
+    condition     = aws_cognito_user_group.viewer.name == "viewer"
+    error_message = "the viewer group is the read-only role the router checks for"
+  }
+
+  assert {
+    condition     = aws_cognito_user_group.editor.name == "editor"
+    error_message = "the editor group is the role that may write"
+  }
+}
+
+run "authorizer_accepts_only_this_pool_and_client" {
+  command = plan
+
+  assert {
+    condition     = aws_apigatewayv2_authorizer.jwt.authorizer_type == "JWT"
+    error_message = "the authorizer must validate JWTs; a REQUEST authorizer would mean writing the validation ourselves"
+  }
+
+  assert {
+    condition     = aws_apigatewayv2_authorizer.jwt.identity_sources == toset(["$request.header.Authorization"])
+    error_message = "the token is read from the Authorization header"
+  }
+
+  assert {
+    condition     = length(aws_apigatewayv2_authorizer.jwt.jwt_configuration[0].audience) == 1
+    error_message = "the audience must name exactly this app client, or a token minted for another client of the same pool would be accepted"
+  }
+}
+
+run "default_route_requires_a_token" {
+  command = plan
+
+  assert {
+    condition     = aws_apigatewayv2_route.default.authorization_type == "JWT"
+    error_message = "every route the public list does not name must require a token; $default is the catch-all the Lambda's router dispatches"
+  }
+}
+
+run "only_health_and_auth_are_public" {
+  command = plan
+
+  # Named exactly rather than counted: a route added here is reachable without a
+  # token, so the test should fail until someone states which one and why.
+  assert {
+    condition = toset(keys(aws_apigatewayv2_route.public)) == toset([
+      "GET /health",
+      "POST /auth/session",
+      "POST /auth/refresh",
+      "POST /auth/logout",
+    ])
+    error_message = "the unauthenticated route set changed: /health is for uptime checks and the /auth routes are the exchange that issues a token, so requiring one would be circular. Anything else needs a reason."
+  }
+
+  assert {
+    condition = alltrue([
+      for route in aws_apigatewayv2_route.public : route.authorization_type == "NONE"
+    ])
+    error_message = "the public routes must opt out explicitly; inheriting the default would make them unreachable before login"
+  }
+}
+
+run "callback_urls_reject_plain_http" {
+  command = plan
+
+  variables {
+    auth_callback_urls = ["http://console.example.com/auth/callback"]
+  }
+
+  expect_failures = [var.auth_callback_urls]
+}
+
+run "callback_urls_allow_localhost_for_dev" {
+  command = plan
+
+  variables {
+    auth_callback_urls = ["http://localhost:5180/auth/callback"]
+  }
+
+  assert {
+    condition     = length(aws_cognito_user_pool_client.console.callback_urls) == 1
+    error_message = "http on localhost is the one exception Cognito makes, and it is what makes the flow testable before anything is deployed"
   }
 }

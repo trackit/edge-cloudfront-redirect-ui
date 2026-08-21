@@ -32,3 +32,23 @@ output "targets_table_arn" {
   value       = aws_dynamodb_table.targets.arn
   description = "ARN of the targets registry DynamoDB table."
 }
+
+output "region" {
+  value       = data.aws_region.current.region
+  description = "Region this deployment is in. Read by seed-users.sh so it does not depend on the caller's configured default."
+}
+
+output "user_pool_id" {
+  value       = aws_cognito_user_pool.this.id
+  description = "Cognito user pool backing the console. The seed script reads this to create the demo accounts."
+}
+
+output "user_pool_client_id" {
+  value       = aws_cognito_user_pool_client.console.id
+  description = "App client the console authenticates through. Also the JWT audience the API Gateway authorizer accepts."
+}
+
+output "cognito_domain" {
+  value       = "https://${aws_cognito_user_pool_domain.this.domain}.auth.${data.aws_region.current.region}.amazoncognito.com"
+  description = "Hosted UI base URL. /login redirects here to sign in and /logout to sign out."
+}
