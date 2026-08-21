@@ -97,11 +97,13 @@ export interface CustomDraft {
   readTimeout: string;
   keepaliveTimeout: string;
   /**
-   * One CloudFront-allowed TLS version. The schema stores an array; the editor
-   * offers a single choice and wraps it on save. Free text is gone so a typo
-   * cannot reach the edge.
+   * The stored array itself, carried through verbatim. The dropdown shows the
+   * strongest of it (`pickSslProtocol`) for a single-choice feel, but the array
+   * stays the source of truth: leaving the field alone round-trips every version
+   * the origin allowed, and only an explicit pick narrows it to that one. Free
+   * text is gone so a typo cannot reach the edge.
    */
-  sslProtocols: SslProtocol;
+  sslProtocols: CustomOrigin["sslProtocols"];
   /** Same as on S3: not editable here, carried through so a `PUT` keeps them. */
   customHeaders: CustomOrigin["customHeaders"];
 }
@@ -119,15 +121,15 @@ const CUSTOM_DEFAULTS: CustomDraft = {
   protocol: "https-only",
   readTimeout: "30",
   keepaliveTimeout: "5",
-  sslProtocols: "TLSv1.2",
+  sslProtocols: ["TLSv1.2"],
   customHeaders: {},
 };
 
 const isSslProtocol = (value: string): value is SslProtocol =>
   (SSL_PROTOCOLS as readonly string[]).includes(value);
 
-/** Prefer the strongest listed protocol when reloading a stored array. */
-const pickSslProtocol = (protocols: string[]): SslProtocol => {
+/** The strongest listed protocol — what the single-choice dropdown displays. */
+export const pickSslProtocol = (protocols: string[]): SslProtocol => {
   for (const preferred of SSL_PROTOCOLS) {
     if (protocols.includes(preferred)) return preferred;
   }
@@ -226,7 +228,7 @@ export const draftFromRule = (rule: Rule): RuleDraft => {
             protocol: custom.protocol,
             readTimeout: String(custom.readTimeout),
             keepaliveTimeout: String(custom.keepaliveTimeout),
-            sslProtocols: pickSslProtocol(custom.sslProtocols),
+            sslProtocols: custom.sslProtocols,
             customHeaders: custom.customHeaders,
           },
     pathAndQS: forward.pathAndQS ?? "",
@@ -384,10 +386,13 @@ export const validateDraft = (
         });
       }
     }
-    if (!isSslProtocol(draft.custom.sslProtocols)) {
+    if (
+      draft.custom.sslProtocols.length === 0 ||
+      !draft.custom.sslProtocols.every(isSslProtocol)
+    ) {
       details.push({
         path: "/forwardSettings/origin/custom/sslProtocols",
-        message: "must be TLSv1.2, TLSv1.1, or TLSv1",
+        message: "must each be TLSv1.2, TLSv1.1, or TLSv1",
       });
     }
   }
@@ -454,7 +459,7 @@ export const toRuleInput = (draft: RuleDraft): RuleInput => {
               protocol: draft.custom.protocol,
               readTimeout: Number(draft.custom.readTimeout),
               keepaliveTimeout: Number(draft.custom.keepaliveTimeout),
-              sslProtocols: [draft.custom.sslProtocols],
+              sslProtocols: draft.custom.sslProtocols,
               customHeaders: draft.custom.customHeaders,
             },
           }

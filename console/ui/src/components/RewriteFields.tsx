@@ -1,6 +1,6 @@
 import Toggle from "./Toggle";
 import { IconInfo } from "./icons";
-import { SSL_PROTOCOLS } from "../ruleDraft";
+import { SSL_PROTOCOLS, pickSslProtocol } from "../ruleDraft";
 import type {
   CustomDraft,
   OriginKind,
@@ -297,10 +297,13 @@ export default function RewriteFields({ draft, onChange }: Props) {
                 <select
                   id="custom-ssl"
                   className="input mono"
-                  value={draft.custom.sslProtocols}
+                  // The draft holds the whole stored array; the dropdown shows
+                  // its strongest. Picking one narrows to that single choice —
+                  // leaving it alone keeps every version the origin allowed.
+                  value={pickSslProtocol(draft.custom.sslProtocols)}
                   onChange={(event) =>
                     patchCustom({
-                      sslProtocols: event.target.value as SslProtocol,
+                      sslProtocols: [event.target.value as SslProtocol],
                     })
                   }
                 >
