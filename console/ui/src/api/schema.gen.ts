@@ -331,6 +331,7 @@ export interface components {
          */
         code:
           | "BAD_REQUEST"
+          | "FORBIDDEN"
           | "HOST_EXISTS"
           | "INTERNAL"
           | "INVALID_JSON"
@@ -339,6 +340,7 @@ export interface components {
           | "RULE_EXISTS"
           | "TARGET_EXISTS"
           | "TARGET_UNREACHABLE"
+          | "UNAUTHORIZED"
           | "UNKNOWN_TARGET"
           | "VALIDATION_ERROR";
         /** @description Human-readable summary. */

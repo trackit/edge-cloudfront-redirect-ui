@@ -7,7 +7,33 @@ import { handler } from "./handler.js";
  *
  * Adapts a node HTTP request into the API Gateway v2 event and runs the same
  * `handler`, so local and deployed share one code path (no SAM).
+ *
+ * There is no authorizer in front of this server, so it stands in for one and
+ * stamps a principal on every request. Without that the whole API answers 401
+ * locally and `npm run dev` is only good for hitting /health.
+ *
+ * `DEV_ROLE=viewer` switches the role, which is how you see the read-only
+ * console without two Cognito accounts. `DEV_ROLE=none` sends no principal at
+ * all, for checking what an unauthenticated caller gets.
  */
+const devPrincipalClaims = ():
+  { authorizer: { jwt: { claims: Record<string, unknown> } } } | undefined => {
+  const role = process.env.DEV_ROLE ?? "editor";
+  if (role === "none") return undefined;
+
+  return {
+    authorizer: {
+      jwt: {
+        claims: {
+          sub: "dev-user",
+          email: `${role}@localhost`,
+          "cognito:groups": [role],
+        },
+      },
+    },
+  };
+};
+
 const readBody = (req: IncomingMessage): Promise<string> =>
   new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -51,7 +77,10 @@ const toEvent = (
     queryStringParameters: query,
     body: body || undefined,
     isBase64Encoded: false,
-    requestContext: { http: { method: req.method ?? "GET" } },
+    requestContext: {
+      http: { method: req.method ?? "GET" },
+      ...devPrincipalClaims(),
+    },
   } as APIGatewayProxyEventV2;
 };
 
