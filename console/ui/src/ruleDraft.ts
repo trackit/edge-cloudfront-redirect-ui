@@ -310,7 +310,10 @@ export const validateDraft = (
         message: "is required for a header condition",
       });
     }
-    if (match.matchOperator === "regex") {
+    // Either is regex mode at the edge: a `regex` operator, or a `regex` match
+    // type. Checking only the operator lets a `matchType: "regex"` with an
+    // invalid pattern through to the server.
+    if (match.matchOperator === "regex" || match.matchType === "regex") {
       try {
         new RegExp(match.matchValue);
       } catch {
