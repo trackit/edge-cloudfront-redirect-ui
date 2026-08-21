@@ -810,6 +810,7 @@ components:
                 the addressed resource does not exist within a known target.
               enum:
                 - BAD_REQUEST
+                - FORBIDDEN
                 - HOST_EXISTS
                 - INTERNAL
                 - INVALID_JSON
@@ -818,6 +819,7 @@ components:
                 - RULE_EXISTS
                 - TARGET_EXISTS
                 - TARGET_UNREACHABLE
+                - UNAUTHORIZED
                 - UNKNOWN_TARGET
                 - VALIDATION_ERROR
             message:

@@ -1,5 +1,6 @@
 import type { ApiRequest, ApiResponse, Handler } from "./context.js";
 import { ApiError } from "./lib/errors.js";
+import { canWrite } from "./lib/principal.js";
 import { hostKey } from "./lib/validate-host.js";
 
 export interface Route {
@@ -7,6 +8,19 @@ export interface Route {
   /** Path pattern with `:name` params, e.g. `/targets/:targetId/hosts/:host/rules`. */
   pattern: string;
   handler: Handler;
+  /**
+   * Reachable without a token. The gateway already exempts these routes, so this
+   * is the same statement made twice on purpose: if the authorizer were ever
+   * detached, an unmarked route would still be refused here rather than served
+   * to anyone who asked.
+   */
+  public?: true;
+  /**
+   * Changes state, so it needs the editor role. Declared on the route rather
+   * than checked inside each handler, so the set of things a viewer cannot do is
+   * one readable column in `routes.ts` instead of thirteen scattered guards.
+   */
+  write?: true;
 }
 
 interface CompiledRoute {
@@ -14,6 +28,8 @@ interface CompiledRoute {
   regex: RegExp;
   keys: string[];
   handler: Handler;
+  isPublic: boolean;
+  isWrite: boolean;
 }
 
 const normalize = (path: string): string => {
@@ -58,7 +74,28 @@ const compile = (route: Route): CompiledRoute => {
     regex: new RegExp(`^${body}$`),
     keys,
     handler: route.handler,
+    isPublic: route.public === true,
+    isWrite: route.write === true,
   };
+};
+
+/**
+ * The authorization decision, kept next to the route table it reads rather than
+ * inside the matching loop, so what it refuses is legible on its own.
+ */
+const authorize = (route: CompiledRoute, req: ApiRequest): void => {
+  if (route.isPublic) return;
+
+  const principal = req.principal;
+  if (principal === undefined) {
+    throw ApiError.unauthorized("This request needs a signed-in user");
+  }
+
+  if (route.isWrite && !canWrite(principal)) {
+    throw ApiError.forbidden(
+      "Your account has read-only access to this console",
+    );
+  }
 };
 
 export interface Router {
@@ -93,6 +130,7 @@ export const createRouter = (routes: Route[]): Router => {
           params[key] = NORMALIZE_PARAM[key]?.(decoded) ?? decoded;
         });
 
+        authorize(route, req);
         return route.handler({ ...req, params });
       }
 
