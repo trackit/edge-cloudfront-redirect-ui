@@ -1652,10 +1652,27 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  width: 100%;
   padding: 12px 14px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  /* The whole row is a <button>: reset its defaults so the label reads as text,
+     not a caption, while the entire card stays the click target. */
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.toggle-row:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+.toggle-row:disabled {
+  cursor: not-allowed;
+}
+.toggle-row:disabled .switch {
+  opacity: 0.5;
 }
 /* Stacked switches (redirect destination) need a gap between the cards. */
 .toggle-row + .toggle-row {
