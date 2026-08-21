@@ -56,12 +56,18 @@ describe("asApiError", () => {
     ["a rejected fetch", new TypeError("Failed to fetch")],
     ["a string", "boom"],
     ["null", null],
-  ])("wraps %s in a MALFORMED_RESPONSE with the fallback message", (_c, thrown) => {
-    const error = asApiError(thrown, "Could not load the rules for this host");
+  ])(
+    "wraps %s in a MALFORMED_RESPONSE with the fallback message",
+    (_c, thrown) => {
+      const error = asApiError(
+        thrown,
+        "Could not load the rules for this host",
+      );
 
-    expect(error).toBeInstanceOf(ApiError);
-    expect(error.code).toBe("MALFORMED_RESPONSE");
-    expect(error.status).toBe(0);
-    expect(error.message).toBe("Could not load the rules for this host");
-  });
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error.code).toBe("MALFORMED_RESPONSE");
+      expect(error.status).toBe(0);
+      expect(error.message).toBe("Could not load the rules for this host");
+    },
+  );
 });
