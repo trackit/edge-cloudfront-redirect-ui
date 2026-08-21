@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 import { IconClose } from "./icons";
+import { useFocusTrap } from "../useFocusTrap";
 
 interface Props {
   title: string;
@@ -10,9 +11,6 @@ interface Props {
   /** The confirm/cancel row. Kept out of `children` so it pins to the bottom. */
   footer?: React.ReactNode;
 }
-
-const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
  * The right-side drawer the rule editor sits in.
@@ -43,49 +41,14 @@ export default function Drawer({
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Captured on mount, restored on unmount: whatever opened the dialog is where
-  // focus belongs afterwards, and only the opener knows what that was.
-  useEffect(() => {
-    const opener = document.activeElement;
-
-    const first = panelRef.current?.querySelector<HTMLElement>(FOCUSABLE);
-    // The panel itself is the fallback target — it carries tabindex={-1}, so it
-    // can hold focus even when the dialog opens with nothing focusable in it.
-    (first ?? panelRef.current)?.focus();
-
-    return () => {
-      if (opener instanceof HTMLElement) opener.focus();
-    };
-  }, []);
+  // Focus moved in on open, cycled inside on Tab, and returned on close.
+  useFocusTrap(panelRef);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation();
         onClose();
-        return;
-      }
-
-      if (event.key !== "Tab" || panelRef.current === null) return;
-
-      // Queried on every Tab rather than once: the editor adds and removes match
-      // conditions, so a list captured on mount would go stale and let focus
-      // escape through a control that was not there at open time.
-      const focusable = Array.from(
-        panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE),
-      );
-      if (focusable.length === 0) return;
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-
-      if (event.shiftKey && (active === first || active === panelRef.current)) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
       }
     };
 

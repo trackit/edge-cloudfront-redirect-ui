@@ -3,6 +3,7 @@ import DistributionFields from "./DistributionFields";
 import { IconClose } from "./icons";
 import { ApiError } from "../api";
 import { connectDistribution } from "../distribution";
+import { useFocusTrap } from "../useFocusTrap";
 import type { Distribution, DistributionDraft } from "../types";
 
 interface Props {
@@ -54,18 +55,17 @@ export default function SettingsModal({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
 
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus();
+  // Focus moved in on open, cycled inside on Tab, and returned on close — the
+  // same trap the Drawer uses, so `aria-modal` below is not a claim the dialog
+  // fails to keep.
+  useFocusTrap(panelRef);
 
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") onCloseRef.current();
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      previouslyFocused?.focus();
-    };
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
   const distributionId = draft.distributionId.trim();
