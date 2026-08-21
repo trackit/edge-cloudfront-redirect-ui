@@ -1934,6 +1934,30 @@ button {
   line-height: 1.4;
   color: var(--text-dim);
 }
+/* The way back to a path-only rewrite, since a native radio cannot be
+   deselected. Deliberately quiet — a text link under the cards, not a card. */
+.origin-clear {
+  display: inline-flex;
+  align-items: center;
+  margin: -6px 0 16px;
+  padding: 7px 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+}
+.origin-clear:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: var(--blue-glow);
+}
+.origin-clear:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
 
 /* --- an explanatory note above a form --- */
 

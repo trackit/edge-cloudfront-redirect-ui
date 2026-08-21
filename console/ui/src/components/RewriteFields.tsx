@@ -117,6 +117,19 @@ export default function RewriteFields({ draft, onChange }: Props) {
           ))}
         </div>
 
+        {/* Native radios cannot be deselected, so without this a stray click on
+            a card would trap a path-only rewrite into an origin one, with Cancel
+            the only way out. This is the way back to "none". */}
+        {draft.originKind !== "none" && (
+          <button
+            type="button"
+            className="origin-clear"
+            onClick={() => onChange({ originKind: "none" })}
+          >
+            Forward the path only (no origin)
+          </button>
+        )}
+
         {draft.originKind === "s3" && (
           <>
             <div className="field">
