@@ -41,6 +41,7 @@ const PROTOCOLS: CustomDraft["protocol"][] = [
   "http",
 ];
 
+/** Common regions offered as suggestions — not the full set, which is open-ended. */
 const REGIONS = [
   "us-east-1",
   "us-west-2",
@@ -50,6 +51,20 @@ const REGIONS = [
   "ap-southeast-1",
   "ap-northeast-1",
 ];
+
+/**
+ * The suggestions, plus the current value when it is not one of them.
+ *
+ * A stored `region` is free text, so an existing rule can hold one this list
+ * does not carry. Prepended rather than dropped so the controlled select can
+ * actually show it — otherwise the browser renders the first option instead,
+ * and the draft and the screen disagree until a stray edit commits the wrong
+ * region. An empty value is left out: the placeholder is a blank rule, not this.
+ */
+const regionOptions = (current: string): string[] =>
+  current !== "" && !REGIONS.includes(current)
+    ? [current, ...REGIONS]
+    : REGIONS;
 
 /**
  * The rewrite-specific half of the editor.
@@ -154,7 +169,13 @@ export default function RewriteFields({ draft, onChange }: Props) {
                       patchS3({ region: event.target.value })
                     }
                   >
-                    {REGIONS.map((region) => (
+                    {/* The stored region is free text and may be one this list
+                        does not carry. Without its own option a controlled
+                        select falls back to the first, showing us-east-1 while
+                        the draft still holds the real value — one edit away from
+                        committing the wrong region. So it is prepended when it is
+                        not already a suggestion. */}
+                    {regionOptions(draft.s3.region).map((region) => (
                       <option key={region} value={region}>
                         {region}
                       </option>
