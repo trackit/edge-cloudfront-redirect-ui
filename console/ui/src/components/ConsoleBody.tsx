@@ -2,11 +2,11 @@ import { useCallback, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import AddHostModal from "./AddHostModal";
 import DeleteHostDialog from "./DeleteHostDialog";
+import DeleteRuleDialog from "./DeleteRuleDialog";
 import HostsSidebar from "./HostsSidebar";
 import RuleEditor from "./RuleEditor";
 import RuleList from "./RuleList";
 import { IconClock, IconPlus } from "./icons";
-import { priorityOf } from "../api";
 import { resolveHostView, useHosts } from "../hosts";
 import { takenPriorities, useRules } from "../rules";
 import { CONSOLE_PATH, hostKey, hostPath } from "../hostRoutes";
@@ -246,6 +246,7 @@ function HostWorkspace({
   const { grouped, loading, error, reload, create, update, toggle, remove } =
     useRules(distribution.targetId, host);
   const [editing, setEditing] = useState<EditorTarget>(null);
+  const [deletingRule, setDeletingRule] = useState<Rule | null>(null);
   const [busy, setBusy] = useState<string[]>([]);
 
   /** Marks a row busy for the duration of a write, so it cannot be double-fired. */
@@ -273,18 +274,13 @@ function HostWorkspace({
     onCountsChanged();
   };
 
-  const confirmDelete = (rule: Rule): void => {
-    const ok = window.confirm(
-      `Delete this rule at priority ${priorityOf(rule.sk)}?\n\n` +
-        "It keeps serving traffic for about a minute after deletion, until the " +
-        "edge cache expires.",
-    );
-    if (!ok) return;
-
-    void withBusy(rule.sk, async () => {
-      await remove(rule.sk);
-      onCountsChanged();
-    });
+  // The confirmation lives in DeleteRuleDialog; this is only the action it runs.
+  // Left on `useRules.remove` so the list refetches in place, and the counts are
+  // refreshed after, since a delete changes them.
+  const deleteRule = async (rule: Rule): Promise<void> => {
+    await remove(rule.sk);
+    onCountsChanged();
+    setDeletingRule(null);
   };
 
   const editorTaken =
@@ -367,7 +363,7 @@ function HostWorkspace({
         onCreate={setEditing}
         onEdit={setEditing}
         onToggle={(rule) => void withBusy(rule.sk, () => toggle(rule))}
-        onDelete={confirmDelete}
+        onDelete={setDeletingRule}
       />
 
       {editing !== null && (
@@ -377,6 +373,14 @@ function HostWorkspace({
           taken={editorTaken}
           onSave={save}
           onClose={() => setEditing(null)}
+        />
+      )}
+
+      {deletingRule !== null && (
+        <DeleteRuleDialog
+          rule={deletingRule}
+          onConfirm={() => deleteRule(deletingRule)}
+          onClose={() => setDeletingRule(null)}
         />
       )}
     </main>
