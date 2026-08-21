@@ -6,6 +6,7 @@ import HostsSidebar from "./HostsSidebar";
 import RuleEditor from "./RuleEditor";
 import RuleList from "./RuleList";
 import { IconClock, IconPlus } from "./icons";
+import { priorityOf } from "../api";
 import { resolveHostView, useHosts } from "../hosts";
 import { takenPriorities, useRules } from "../rules";
 import { CONSOLE_PATH, hostKey, hostPath } from "../hostRoutes";
@@ -274,7 +275,7 @@ function HostWorkspace({
 
   const confirmDelete = (rule: Rule): void => {
     const ok = window.confirm(
-      `Delete this rule at priority ${rule.sk.split("#")[1]}?\n\n` +
+      `Delete this rule at priority ${priorityOf(rule.sk)}?\n\n` +
         "It keeps serving traffic for about a minute after deletion, until the " +
         "edge cache expires.",
     );
