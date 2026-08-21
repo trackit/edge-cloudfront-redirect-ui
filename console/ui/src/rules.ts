@@ -77,33 +77,42 @@ export function useRules(targetId: string, host: string) {
   const currentKey = useRef("");
   const key = `${targetId}\u0000${host}`;
 
-  const load = useCallback(async () => {
-    currentKey.current = key;
+  const load = useCallback(
+    async (options?: { keepVisible?: boolean }) => {
+      currentKey.current = key;
 
-    if (host === "") {
-      setRules([]);
+      if (host === "") {
+        setRules([]);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
+      // A host switch clears up front: the previous host's rules must not stay
+      // on screen under the new host's heading, and a failed load must not fall
+      // back to showing them. A refetch after a write passes `keepVisible`
+      // instead — the host has not changed, so the list stays put and only its
+      // contents update when the response lands. That is what lets the mutating
+      // row show its own busy state rather than the whole list flashing to
+      // skeletons for a change as small as a toggle.
+      if (options?.keepVisible !== true) {
+        setRules([]);
+        setLoading(true);
+      }
       setError(null);
-      setLoading(false);
-      return;
-    }
-
-    // Cleared up front rather than on arrival: the previous host's rules must not
-    // stay on screen under the new host's heading, and a failed load must not
-    // fall back to showing them either.
-    setRules([]);
-    setLoading(true);
-    setError(null);
-    try {
-      const loaded = await api.rules.list(targetId, host);
-      if (currentKey.current !== key) return;
-      setRules(loaded);
-    } catch (caught) {
-      if (currentKey.current !== key) return;
-      setError(asApiError(caught, "Could not load the rules for this host"));
-    } finally {
-      if (currentKey.current === key) setLoading(false);
-    }
-  }, [targetId, host, key]);
+      try {
+        const loaded = await api.rules.list(targetId, host);
+        if (currentKey.current !== key) return;
+        setRules(loaded);
+      } catch (caught) {
+        if (currentKey.current !== key) return;
+        setError(asApiError(caught, "Could not load the rules for this host"));
+      } finally {
+        if (currentKey.current === key) setLoading(false);
+      }
+    },
+    [targetId, host, key],
+  );
 
   useEffect(() => {
     // The promise is deliberately not awaited: `load` handles its own failures
@@ -120,7 +129,9 @@ export function useRules(targetId: string, host: string) {
   const mutate = useCallback(
     async <T>(action: () => Promise<T>): Promise<T> => {
       const result = await action();
-      await load();
+      // Kept visible: the host has not changed, so refetch in place rather than
+      // blanking the list the user is still looking at.
+      await load({ keepVisible: true });
       return result;
     },
     [load],
