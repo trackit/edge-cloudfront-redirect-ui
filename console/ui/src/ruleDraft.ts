@@ -73,6 +73,12 @@ export interface S3Draft {
   region: string;
   domainName: string;
   path: string;
+  /**
+   * Not editable in this ticket. Carried through the draft verbatim so a `PUT`
+   * — which replaces the whole item — preserves any headers the origin already
+   * has instead of overwriting them with an empty object.
+   */
+  customHeaders: S3Origin["customHeaders"];
 }
 
 /**
@@ -96,6 +102,8 @@ export interface CustomDraft {
    * cannot reach the edge.
    */
   sslProtocols: SslProtocol;
+  /** Same as on S3: not editable here, carried through so a `PUT` keeps them. */
+  customHeaders: CustomOrigin["customHeaders"];
 }
 
 export type RuleDraft = RedirectDraft | RewriteDraft;
@@ -112,6 +120,7 @@ const CUSTOM_DEFAULTS: CustomDraft = {
   readTimeout: "30",
   keepaliveTimeout: "5",
   sslProtocols: "TLSv1.2",
+  customHeaders: {},
 };
 
 const isSslProtocol = (value: string): value is SslProtocol =>
@@ -130,6 +139,7 @@ const S3_DEFAULTS: S3Draft = {
   region: "us-east-1",
   domainName: "",
   path: "",
+  customHeaders: {},
 };
 
 const ABSOLUTE_URL = /^https?:\/\//i;
@@ -204,6 +214,7 @@ export const draftFromRule = (rule: Rule): RuleDraft => {
             region: s3.region ?? "",
             domainName: s3.domainName,
             path: s3.path,
+            customHeaders: s3.customHeaders,
           },
     custom:
       custom === undefined
@@ -216,6 +227,7 @@ export const draftFromRule = (rule: Rule): RuleDraft => {
             readTimeout: String(custom.readTimeout),
             keepaliveTimeout: String(custom.keepaliveTimeout),
             sslProtocols: pickSslProtocol(custom.sslProtocols),
+            customHeaders: custom.customHeaders,
           },
     pathAndQS: forward.pathAndQS ?? "",
     keepQueryString: forward.useIncomingQueryString === true,
@@ -391,9 +403,12 @@ export const validateDraft = (
  * supplied key that disagrees with either is a 400 — so omitting them is both
  * simpler and the only form that is always correct, including on a move.
  *
- * `customHeaders: {}` is sent because the schema requires the key on both origin
- * kinds. Editing headers is not in this ticket; an empty object is the valid
- * "none".
+ * `customHeaders` is not edited here, but it is round-tripped: `draftFromRule`
+ * reads the stored headers into the draft and this sends them back unchanged.
+ * A `PUT` replaces the whole item, so sending `{}` instead would drop any
+ * headers an origin already has — an auth header to its backend, say — on an
+ * edit as innocent as a priority change. A new origin defaults to `{}`, the
+ * valid "none".
  */
 export const toRuleInput = (draft: RuleDraft): RuleInput => {
   const priority = Number(draft.priority);
@@ -422,7 +437,7 @@ export const toRuleInput = (draft: RuleDraft): RuleInput => {
             authMethod: draft.s3.authMethod,
             domainName: draft.s3.domainName.trim(),
             path: draft.s3.path.trim(),
-            customHeaders: {},
+            customHeaders: draft.s3.customHeaders,
             // Present only for origin-access-identity: the schema's if/then/else
             // requires it there and forbids it for `none`.
             ...(draft.s3.authMethod === "origin-access-identity"
@@ -440,7 +455,7 @@ export const toRuleInput = (draft: RuleDraft): RuleInput => {
               readTimeout: Number(draft.custom.readTimeout),
               keepaliveTimeout: Number(draft.custom.keepaliveTimeout),
               sslProtocols: [draft.custom.sslProtocols],
-              customHeaders: {},
+              customHeaders: draft.custom.customHeaders,
             },
           }
         : undefined;
