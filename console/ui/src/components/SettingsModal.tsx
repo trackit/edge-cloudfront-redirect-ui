@@ -62,11 +62,16 @@ export default function SettingsModal({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") onCloseRef.current();
+      // Gated on `pending` like the X, Cancel and overlay: dismissing mid-save
+      // would unmount the modal while the request is still in flight, so a
+      // success would commit through the gone dialog and a failure would set
+      // state on an unmounted component. Re-registered when `pending` flips so
+      // the handler always sees its current value.
+      if (event.key === "Escape" && !pending) onCloseRef.current();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [pending]);
 
   const distributionId = draft.distributionId.trim();
   const tableName = draft.tableName.trim();
