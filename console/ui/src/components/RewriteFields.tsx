@@ -309,7 +309,7 @@ export default function RewriteFields({ draft, onChange }: Props) {
                 <label htmlFor="custom-ssl">SSL protocols</label>
                 <select
                   id="custom-ssl"
-                  className="input mono"
+                  className="select"
                   // The draft holds the whole stored array; the dropdown shows
                   // its strongest. Picking one narrows to that single choice —
                   // leaving it alone keeps every version the origin allowed.
