@@ -347,8 +347,7 @@ export const validateDraft = (
   if (draft.originKind === "none" && draft.pathAndQS.trim() === "") {
     details.push({
       path: "/forwardSettings",
-      message:
-        "a rewrite must change something — pick an origin, set a path, or both",
+      message: "must change something — pick an origin, set a path, or both",
     });
   }
 
@@ -401,6 +400,48 @@ export const validateDraft = (
   }
 
   return details;
+};
+
+/**
+ * A human label for a validation `path`, so the error list reads "Priority is
+ * required" rather than "/priority is required".
+ *
+ * The messages are written to follow their field, so `label + message` reads as
+ * a sentence. Paths this UI does not produce — a server error keyed on
+ * something else — fall back to the raw pointer rather than hiding where the
+ * problem is.
+ */
+const FIELD_LABELS: Record<string, string> = {
+  "/priority": "Priority",
+  "/redirectURL": "Redirect URL",
+  "/forwardSettings": "This rewrite",
+  "/forwardSettings/origin/s3/domainName": "Bucket domain name",
+  "/forwardSettings/origin/s3/region": "Bucket region",
+  "/forwardSettings/origin/custom/domainName": "Domain name",
+  "/forwardSettings/origin/custom/port": "Port",
+  "/forwardSettings/origin/custom/readTimeout": "Read timeout",
+  "/forwardSettings/origin/custom/keepaliveTimeout": "Keepalive",
+  "/forwardSettings/origin/custom/sslProtocols": "SSL protocols",
+};
+
+const MATCH_FIELD_LABELS: Record<string, string> = {
+  matchValue: "value",
+  headerName: "header name",
+};
+
+export const labelForPath = (path: string): string => {
+  const known = FIELD_LABELS[path];
+  if (known !== undefined) return known;
+
+  // `/matches/0/matchValue` → "Condition 1 value" — 1-based, since the number
+  // is for the user, not the array index.
+  const inMatch = /^\/matches\/(\d+)\/(\w+)$/.exec(path);
+  if (inMatch !== null) {
+    const [, index, field] = inMatch;
+    return `Condition ${Number(index) + 1} ${MATCH_FIELD_LABELS[field] ?? field}`;
+  }
+
+  return path;
 };
 
 /**

@@ -12,6 +12,7 @@ import {
   draftFromRule,
   emptyRedirect,
   emptyRewrite,
+  labelForPath,
   toRuleInput,
   validateDraft,
 } from "../ruleDraft";
@@ -152,7 +153,8 @@ export default function RuleEditor({
                     is replaced wholesale rather than reordered. */}
                 {details.map((detail, at) => (
                   <li key={at}>
-                    <span className="mono">{detail.path}</span> {detail.message}
+                    <strong>{labelForPath(detail.path)}</strong>{" "}
+                    {detail.message}
                   </li>
                 ))}
               </ul>
