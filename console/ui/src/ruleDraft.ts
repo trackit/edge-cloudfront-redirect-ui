@@ -113,6 +113,10 @@ export type RuleDraft = RedirectDraft | RewriteDraft;
 export const PRIORITY_MIN = 0;
 export const PRIORITY_MAX = 99999;
 
+/** The TCP port range. A custom origin's port must fall inside it. */
+export const PORT_MIN = 1;
+export const PORT_MAX = 65535;
+
 /** CloudFront's own defaults for a custom origin, so a new one is valid as-is. */
 const CUSTOM_DEFAULTS: CustomDraft = {
   domainName: "",
@@ -376,15 +380,27 @@ export const validateDraft = (
         message: "is required",
       });
     }
-    for (const [field, value] of [
-      ["port", draft.custom.port],
-      ["readTimeout", draft.custom.readTimeout],
-      ["keepaliveTimeout", draft.custom.keepaliveTimeout],
+    // Integer-ness is not enough: a 0 or negative port or timeout is a whole
+    // number but a meaningless one. Port is bounded to the TCP range; timeouts
+    // only need to be positive, the API owning CloudFront's upper limits.
+    for (const [field, value, min, max] of [
+      ["port", draft.custom.port, PORT_MIN, PORT_MAX],
+      ["readTimeout", draft.custom.readTimeout, 1, undefined],
+      ["keepaliveTimeout", draft.custom.keepaliveTimeout, 1, undefined],
     ] as const) {
-      if (!Number.isInteger(Number(value)) || value.trim() === "") {
+      const parsed = Number(value);
+      const valid =
+        value.trim() !== "" &&
+        Number.isInteger(parsed) &&
+        parsed >= min &&
+        (max === undefined || parsed <= max);
+      if (!valid) {
         details.push({
           path: `/forwardSettings/origin/custom/${field}`,
-          message: "must be a whole number",
+          message:
+            max === undefined
+              ? "must be a whole number greater than 0"
+              : `must be a whole number between ${min} and ${max}`,
         });
       }
     }
