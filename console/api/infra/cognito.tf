@@ -71,7 +71,13 @@ resource "aws_cognito_user_pool_client" "console" {
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
   allowed_oauth_scopes                 = ["openid", "email", "profile"]
-  supported_identity_providers         = ["COGNITO"]
+  # The pool's own accounts, plus a configured provider when there is one. Both
+  # are offered rather than either replacing the other: a deployment that adds
+  # SSO usually still wants a break-glass account that does not depend on it.
+  supported_identity_providers = concat(
+    ["COGNITO"],
+    [for provider in aws_cognito_identity_provider.sso : provider.provider_name]
+  )
 
   callback_urls = var.auth_callback_urls
   logout_urls   = var.auth_logout_urls
@@ -103,6 +109,34 @@ resource "aws_cognito_user_pool_client" "console" {
   ]
 
   prevent_user_existence_errors = "ENABLED"
+
+  # Cognito rejects a client naming a provider that does not exist yet, and the
+  # reference above is inside a comprehension that Terraform cannot always see
+  # through.
+  depends_on = [aws_cognito_identity_provider.sso]
+}
+
+# Created only when a deployment names one. `for_each` over a zero-or-one set
+# rather than `count`, so adding a provider later does not renumber anything.
+resource "aws_cognito_identity_provider" "sso" {
+  for_each = var.identity_provider == null ? {} : { sso = var.identity_provider }
+
+  user_pool_id  = aws_cognito_user_pool.this.id
+  provider_name = each.value.name
+  provider_type = "OIDC"
+
+  provider_details = {
+    oidc_issuer      = each.value.issuer
+    client_id        = each.value.client_id
+    client_secret    = each.value.client_secret
+    authorize_scopes = join(" ", each.value.scopes)
+    # Cognito reads the endpoints from the issuer's discovery document rather
+    # than making us list them, which is most of why OIDC is cheaper to support
+    # than SAML.
+    attributes_request_method = "GET"
+  }
+
+  attribute_mapping = each.value.attribute_mapping
 }
 
 # Roles as groups rather than a custom attribute: membership arrives in the
