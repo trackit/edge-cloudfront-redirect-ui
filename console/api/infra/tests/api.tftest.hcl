@@ -655,3 +655,87 @@ run "callback_urls_allow_localhost_for_dev" {
     error_message = "http on localhost is the one exception Cognito makes, and it is what makes the flow testable before anything is deployed"
   }
 }
+
+run "no_identity_provider_by_default" {
+  command = plan
+
+  # The default that matters for a tool other people deploy: a working pool with
+  # its own accounts, no third party, and no federated-MAU billing until someone
+  # opts in.
+  assert {
+    condition     = length(aws_cognito_identity_provider.sso) == 0
+    error_message = "no identity provider should exist unless a deployment names one"
+  }
+
+  assert {
+    condition     = aws_cognito_user_pool_client.console.supported_identity_providers == toset(["COGNITO"])
+    error_message = "with no provider configured the pool's own accounts are the only way in"
+  }
+}
+
+run "an_oidc_provider_is_added_alongside_cognito" {
+  command = plan
+
+  variables {
+    identity_provider = {
+      name          = "Okta"
+      issuer        = "https://example.okta.com"
+      client_id     = "okta-client"
+      client_secret = "okta-secret"
+    }
+  }
+
+  assert {
+    condition     = aws_cognito_identity_provider.sso["sso"].provider_type == "OIDC"
+    error_message = "OIDC covers Google, Okta, Auth0, Entra ID and Keycloak from the same four inputs; SAML would need per-provider metadata"
+  }
+
+  # Alongside, not instead of: a deployment that adds SSO usually still wants an
+  # account that works when the provider is down or misconfigured.
+  assert {
+    condition     = aws_cognito_user_pool_client.console.supported_identity_providers == toset(["COGNITO", "Okta"])
+    error_message = "the configured provider should be offered in addition to the pool's own accounts"
+  }
+
+  assert {
+    condition     = aws_cognito_identity_provider.sso["sso"].provider_details.authorize_scopes == "openid email profile"
+    error_message = "scopes default to the three the console needs and are space-joined as OIDC expects"
+  }
+
+  assert {
+    condition     = aws_cognito_identity_provider.sso["sso"].attribute_mapping.email == "email"
+    error_message = "email must map through: it is this pool's username attribute, so a provider that does not supply it cannot create a user"
+  }
+}
+
+run "a_provider_issuer_must_be_https" {
+  command = plan
+
+  variables {
+    identity_provider = {
+      name          = "Okta"
+      issuer        = "http://example.okta.com"
+      client_id     = "c"
+      client_secret = "s"
+    }
+  }
+
+  expect_failures = [var.identity_provider]
+}
+
+run "a_provider_may_not_take_a_reserved_name" {
+  command = plan
+
+  variables {
+    identity_provider = {
+      name          = "Google"
+      issuer        = "https://accounts.google.com"
+      client_id     = "c"
+      client_secret = "s"
+    }
+  }
+
+  # Cognito keeps these for its own social providers, and the failure it gives
+  # for reusing one is not obvious from the message.
+  expect_failures = [var.identity_provider]
+}
