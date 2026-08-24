@@ -16,6 +16,7 @@ import {
   toggleRule,
 } from "./handlers/rules.js";
 import { createHost, deleteHost, listHosts } from "./handlers/hosts.js";
+import { createSession, endSession, refreshSession } from "./handlers/auth.js";
 
 const HOSTS = "/targets/:targetId/hosts";
 const HOST = `${HOSTS}/:host`;
@@ -33,6 +34,28 @@ const RULES = `${HOST}/rules`;
  */
 export const routes: Route[] = [
   { method: "GET", pattern: "/health", handler: health, public: true },
+
+  // Public because they are what issues a token — requiring one to obtain one
+  // would be circular. Each is still gated by something the caller must already
+  // hold: a code Cognito only mints after a real login, or the HttpOnly cookie.
+  {
+    method: "POST",
+    pattern: "/auth/session",
+    handler: createSession,
+    public: true,
+  },
+  {
+    method: "POST",
+    pattern: "/auth/refresh",
+    handler: refreshSession,
+    public: true,
+  },
+  {
+    method: "POST",
+    pattern: "/auth/logout",
+    handler: endSession,
+    public: true,
+  },
 
   { method: "GET", pattern: "/targets", handler: listTargets },
   { method: "POST", pattern: "/targets", handler: createTarget, write: true },

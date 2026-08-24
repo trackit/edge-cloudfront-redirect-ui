@@ -81,6 +81,7 @@ const serialize = (res: ApiResponse): APIGatewayProxyStructuredResultV2 => ({
   statusCode: res.status,
   headers: { "content-type": "application/json" },
   body: JSON.stringify(res.body),
+  ...(res.cookies === undefined ? {} : { cookies: res.cookies }),
 });
 
 /** Lambda entry point for the console API. */

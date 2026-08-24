@@ -90,8 +90,14 @@ const server = createServer((req, res) => {
   readBody(req)
     .then((body) => handler(toEvent(req, body)))
     .then((result) => {
+      // API Gateway turns its `cookies` array into Set-Cookie headers; node
+      // needs that done by hand, and without it the refresh cookie is never set
+      // locally and every reload logs you out.
       res.writeHead(result.statusCode ?? 200, {
         "content-type": "application/json",
+        ...(result.cookies === undefined
+          ? {}
+          : { "set-cookie": result.cookies }),
       });
       res.end(result.body ?? "");
     })

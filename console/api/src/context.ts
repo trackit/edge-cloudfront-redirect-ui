@@ -23,6 +23,15 @@ export interface ApiRequest {
 export interface ApiResponse {
   status: number;
   body: unknown;
+  /**
+   * `Set-Cookie` values. API Gateway v2 carries these in their own array rather
+   * than in `headers`, because a headers map cannot hold two of the same key and
+   * a response may legitimately set more than one cookie.
+   *
+   * Only the auth routes use this: it is how the refresh token reaches the
+   * browser without passing through JavaScript.
+   */
+  cookies?: string[];
 }
 
 export type Handler = (req: ApiRequest) => ApiResponse | Promise<ApiResponse>;
