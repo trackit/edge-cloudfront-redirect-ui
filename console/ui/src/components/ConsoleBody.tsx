@@ -9,6 +9,7 @@ import RuleList from "./RuleList";
 import { IconClock, IconPlus } from "./icons";
 import { resolveHostView, useHosts } from "../hosts";
 import { takenPriorities, useRules } from "../rules";
+import { useCanWrite } from "../auth/useAuth";
 import { CONSOLE_PATH, hostKey, hostPath } from "../hostRoutes";
 import type { HostSummary, Rule, RuleInput } from "../api";
 import type { Distribution } from "../types";
@@ -248,6 +249,12 @@ function HostWorkspace({
   const [editing, setEditing] = useState<EditorTarget>(null);
   const [deletingRule, setDeletingRule] = useState<Rule | null>(null);
   const [busy, setBusy] = useState<string[]>([]);
+  // Disabled rather than hidden. A viewer whose console is missing controls
+  // reads it as broken or as a different product; one whose controls are dead
+  // and say why reads it as a permission. The API refuses either way — this only
+  // decides what the user is told.
+  const canWrite = useCanWrite();
+  const readOnly = canWrite ? undefined : "Your account has read-only access";
 
   /** Marks a row busy for the duration of a write, so it cannot be double-fired. */
   const withBusy = useCallback(
@@ -314,7 +321,8 @@ function HostWorkspace({
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            disabled={error !== null}
+            disabled={error !== null || !canWrite}
+            title={readOnly}
             onClick={() => setEditing("rewrite")}
           >
             <IconPlus size={15} />
@@ -323,7 +331,8 @@ function HostWorkspace({
           <button
             type="button"
             className="btn btn-primary btn-sm"
-            disabled={error !== null}
+            disabled={error !== null || !canWrite}
+            title={readOnly}
             onClick={() => setEditing("redirect")}
           >
             <IconPlus size={15} />
@@ -360,6 +369,7 @@ function HostWorkspace({
         loading={loading}
         failed={error !== null}
         busy={busy}
+        canWrite={canWrite}
         onCreate={setEditing}
         onEdit={setEditing}
         onToggle={(rule) => void withBusy(rule.sk, () => toggle(rule))}

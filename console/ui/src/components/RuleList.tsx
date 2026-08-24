@@ -27,6 +27,8 @@ interface Props {
   onDelete: (rule: Rule) => void;
   /** Sort keys currently being written, so their row can show it. */
   busy: string[];
+  /** False for a viewer: the row's controls are shown but inert, and say why. */
+  canWrite: boolean;
 }
 
 /**
@@ -41,6 +43,9 @@ interface Props {
  * No drag-to-reorder — out of scope for the MVP. Priority is edited as a number in
  * the editor, which is also the only thing that actually moves a rule.
  */
+/** Said the same way in every place a viewer meets a control they cannot use. */
+const READ_ONLY = "Your account has read-only access";
+
 export default function RuleList({
   host,
   grouped,
@@ -51,6 +56,7 @@ export default function RuleList({
   onToggle,
   onDelete,
   busy,
+  canWrite,
 }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const total = grouped.redirects.length + grouped.rewrites.length;
@@ -142,6 +148,7 @@ export default function RuleList({
           onToggle={onToggle}
           onDelete={onDelete}
           busy={busy}
+          canWrite={canWrite}
         />
       )}
 
@@ -156,6 +163,7 @@ export default function RuleList({
           onToggle={onToggle}
           onDelete={onDelete}
           busy={busy}
+          canWrite={canWrite}
         />
       )}
     </div>
@@ -172,6 +180,7 @@ function RuleGroup({
   onToggle,
   onDelete,
   busy,
+  canWrite,
 }: {
   title: string;
   kind: "redirect" | "rewrite";
@@ -182,6 +191,8 @@ function RuleGroup({
   onToggle: (rule: Rule) => void;
   onDelete: (rule: Rule) => void;
   busy: string[];
+  /** False for a viewer: the row's controls are shown but inert, and say why. */
+  canWrite: boolean;
 }) {
   return (
     <section className="rule-group">
@@ -212,6 +223,7 @@ function RuleGroup({
             <RuleCard
               rule={rule}
               busy={busy.includes(rule.sk)}
+              canWrite={canWrite}
               onEdit={onEdit}
               onToggle={onToggle}
               onDelete={onDelete}
@@ -226,12 +238,14 @@ function RuleGroup({
 function RuleCard({
   rule,
   busy,
+  canWrite,
   onEdit,
   onToggle,
   onDelete,
 }: {
   rule: Rule;
   busy: boolean;
+  canWrite: boolean;
   onEdit: (rule: Rule) => void;
   onToggle: (rule: Rule) => void;
   onDelete: (rule: Rule) => void;
@@ -277,7 +291,8 @@ function RuleCard({
           role="switch"
           aria-checked={enabled}
           aria-label={`${enabled ? "Disable" : "Enable"} ${label}`}
-          disabled={busy}
+          disabled={busy || !canWrite}
+          title={canWrite ? undefined : READ_ONLY}
           className={`switch${enabled ? " is-on" : ""}`}
           onClick={() => onToggle(rule)}
         >
@@ -289,6 +304,7 @@ function RuleCard({
           className="icon-btn"
           aria-label={`Edit ${label}`}
           disabled={busy}
+          title={canWrite ? undefined : "View this rule"}
           onClick={() => onEdit(rule)}
         >
           <IconEdit size={16} />
@@ -298,7 +314,8 @@ function RuleCard({
           type="button"
           className="icon-btn is-danger"
           aria-label={`Delete ${label}`}
-          disabled={busy}
+          disabled={busy || !canWrite}
+          title={canWrite ? undefined : READ_ONLY}
           onClick={() => onDelete(rule)}
         >
           <IconTrash size={16} />

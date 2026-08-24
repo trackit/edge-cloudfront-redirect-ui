@@ -2,6 +2,7 @@ import { useState } from "react";
 import Brand from "../components/Brand";
 import ConsoleBody from "../components/ConsoleBody";
 import DistributionChip from "../components/DistributionChip";
+import ProfileMenu from "../components/ProfileMenu";
 import OnboardingScreen from "../components/OnboardingScreen";
 import SettingsModal from "../components/SettingsModal";
 import { useDistributions } from "../distribution";
@@ -63,13 +64,18 @@ export default function ConsolePage() {
     <div className="console">
       <header className="console-bar">
         <Brand />
-        <DistributionChip
-          distributions={distributions}
-          current={current}
-          onSelect={select}
-          onAddDistribution={() => setFlow("add")}
-          onOpenSettings={() => setFlow("settings")}
-        />
+        {/* Grouped so the two controls read as one cluster on the right rather
+            than as the chip plus something unrelated after it. */}
+        <div className="console-bar-end">
+          <DistributionChip
+            distributions={distributions}
+            current={current}
+            onSelect={select}
+            onAddDistribution={() => setFlow("add")}
+            onOpenSettings={() => setFlow("settings")}
+          />
+          <ProfileMenu />
+        </div>
       </header>
 
       <ConsoleBody distribution={current} />

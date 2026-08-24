@@ -14,7 +14,7 @@
  *     if (e instanceof ApiError && e.isValidation) render(e.details);
  *   }
  */
-export { api, createApiClient } from "./client";
+export { api, createApiClient, setAuthTokenProvider } from "./client";
 export type { ApiClient, ApiClientOptions } from "./client";
 export { ApiError, toApiError } from "./error";
 export type { ClientErrorCode } from "./error";
