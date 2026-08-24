@@ -45,6 +45,88 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
+  /auth/session:
+    post:
+      operationId: createSession
+      summary: Exchange an authorization code for a session.
+      description: >-
+        Completes the hosted-UI login. The refresh token is returned as an
+        HttpOnly cookie rather than in the body, so it is never readable by
+        script; the body carries only a short-lived access token. Unauthenticated
+        by necessity — this is what issues the token.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionRequest"
+      responses:
+        "200":
+          description: Signed in. Sets the refresh cookie.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/refresh:
+    post:
+      operationId: refreshSession
+      summary: Mint a new access token from the refresh cookie.
+      description: >-
+        Also how the console answers "am I signed in?" on load: nothing is kept
+        in browser storage, so the only way to know is to ask. A 401 is the
+        ordinary answer for a signed-out visitor, not an error.
+      tags: [auth]
+      responses:
+        "200":
+          description: A fresh access token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/logout:
+    post:
+      operationId: endSession
+      summary: Clear the session and say where to finish signing out.
+      description: >-
+        Clears the refresh cookie and returns the identity provider's logout
+        URL. Both halves are needed: the provider keeps its own session cookie,
+        so clearing ours alone would let the next sign-in through with no
+        prompt.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
+      responses:
+        "200":
+          description: Signed out here. Send the browser to `logoutUrl` to finish.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Logout"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /targets:
     get:
       operationId: listTargets
@@ -61,6 +143,8 @@ paths:
                   $ref: "#/components/schemas/Target"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -84,6 +168,10 @@ paths:
                 $ref: "#/components/schemas/Target"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
@@ -108,6 +196,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -137,6 +227,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
@@ -157,6 +251,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -196,6 +294,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -242,6 +342,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
@@ -280,6 +384,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -313,6 +421,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -364,6 +474,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
@@ -392,6 +506,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -434,6 +550,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
@@ -473,6 +593,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -493,6 +617,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -546,6 +674,63 @@ components:
       properties:
         status:
           const: ok
+    SessionRequest:
+      description: The authorization code, as the hosted UI handed it back.
+      type: object
+      additionalProperties: false
+      required: [code, redirectUri]
+      properties:
+        code:
+          description: Single-use authorization code from the redirect.
+          type: string
+        redirectUri:
+          description: >-
+            The redirect URI the login started from. Sent again because the token
+            endpoint compares the two, which is what stops a code issued for one
+            client being redeemed by another. Must be on the app client's
+            callback list, so it is not a value an attacker can choose.
+          type: string
+        codeVerifier:
+          description: PKCE verifier, when the login used one.
+          type: string
+    Session:
+      description: >-
+        A signed-in session. The refresh token is deliberately absent — it is set
+        as an HttpOnly cookie, and repeating it here would undo that.
+      type: object
+      additionalProperties: false
+      required: [accessToken, idToken, expiresIn]
+      properties:
+        accessToken:
+          description: "Bearer token for this API. Send as `Authorization: Bearer`."
+          type: string
+        idToken:
+          description: Identity token. Carries the email and group claims the console displays.
+          type: string
+        expiresIn:
+          description: Seconds until the access token expires. Refresh before it does.
+          type: integer
+    LogoutRequest:
+      type: object
+      additionalProperties: false
+      required: [returnTo]
+      properties:
+        returnTo:
+          description: >-
+            Where the identity provider should send the browser once it has
+            cleared its own session. Must be on the app client's logout list.
+          type: string
+    Logout:
+      type: object
+      additionalProperties: false
+      required: [logoutUrl]
+      properties:
+        logoutUrl:
+          description: >-
+            Send the browser here to finish signing out. Skipping it leaves the
+            provider's session cookie in place, so the next sign-in returns with
+            no prompt.
+          type: string
     TargetInput:
       description: Fields a client supplies to create or update a target.
       type: object
@@ -836,6 +1021,23 @@ components:
   responses:
     BadRequest:
       description: The request was malformed or failed schema validation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: >-
+        No usable identity on the request — no token, an invalid one, or an
+        expired session. Signing in again resolves it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: >-
+        A signed-in user who may not do this. Distinct from 401 on purpose:
+        signing in again will not help, so the console must not offer that as
+        the remedy. Writes need the `editor` role; `viewer` may only read.
       content:
         application/json:
           schema:
