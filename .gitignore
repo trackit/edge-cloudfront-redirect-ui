@@ -26,6 +26,11 @@ infra/modules/edge/.build/
 *.tfstate.*
 *.tfvars
 *.tfvars.json
+# The deployed environments' variable files are tracked: they hold names and
+# flags, never credentials or cross-stack values, and the workflow needs them in
+# the checkout. Everything else matching *.tfvars stays ignored, including the
+# sandbox.tfvars a person copies from the .example files.
+!deploy/*/*.tfvars
 crash.log
 crash.*.log
 override.tf
