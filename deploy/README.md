@@ -27,7 +27,12 @@ resources is consistent: state and reality disappear together and the next run
 builds from empty. A _partial_ sweep is the bad case, not a total one.
 
 **2. A GitHub OIDC provider and a deploy role** in the same account, the role
-trusted on `repo:<org>/<repo>:ref:refs/heads/dev`. Beyond the obvious S3, DynamoDB,
+trusted on `repo:<org>/<repo>:environment:sandbox-dev`. **Not the `ref:` form** —
+the deploy job names an `environment:`, and that changes GitHub's `sub` claim from
+the branch to the environment. A trust policy written against
+`ref:refs/heads/dev` looks right and never matches. Restricting which branches may
+deploy is then the environment's own "deployment branches" setting, not the trust
+policy. Beyond the obvious S3, DynamoDB,
 API Gateway, Lambda and CloudFront permissions it needs `iam:CreateRole`,
 `iam:PutRolePolicy` and `iam:PassRole`; `lambda:EnableReplication` and
 `iam:CreateServiceLinkedRole` for the Lambda@Edge replicator; and
