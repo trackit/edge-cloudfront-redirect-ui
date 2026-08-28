@@ -17,13 +17,14 @@ const REGIONS = [
   "us-east-1",
   "us-west-2",
   "eu-west-1",
+  "eu-west-3",
   "eu-central-1",
   "ap-southeast-1",
   "ap-northeast-1",
 ];
 
 /* Form fields for a CloudFront distribution and its DynamoDB rules table.
-   Used by onboarding, and by Settings once that ticket lands. */
+   Shared by onboarding (first connect / add) and the Settings modal. */
 export default function DistributionFields({ value, onChange }: Props) {
   return (
     <>

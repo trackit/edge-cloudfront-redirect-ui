@@ -13,13 +13,6 @@ import { IconArrow, IconBolt, IconServer, IconSliders } from "./icons";
 
 interface Props {
   onConnect: (d: Distribution) => void;
-  /**
-   * Prefills the form with an already-connected environment, which turns this
-   * screen into Settings. Its presence is what distinguishes the two modes —
-   * there is nothing else to tell them apart, since editing submits through the
-   * same call as connecting.
-   */
-  initial?: DistributionDraft;
   /** Leaves without submitting. Only meaningful when there is something to go back to. */
   onCancel?: () => void;
 }
@@ -61,24 +54,10 @@ const errorHeading = (error: ApiError): string => {
 
 /* Ticket: MVP - Front — Console + env configuration, the "no env available"
    half. Explains EdgeRoute on the left, takes the distribution details on the
-   right. Shown until a distribution is connected. */
-export default function OnboardingScreen({
-  onConnect,
-  initial,
-  onCancel,
-}: Props) {
-  // Two independent questions, so two flags rather than one mode. Editing an
-  // existing environment changes the wording; being able to go back depends only
-  // on there being a console to go back to. Adding a second distribution from the
-  // console is "not editing" *and* cancellable, which one flag could not express.
-  const editing = initial !== undefined;
+   right. Shown until a distribution is connected, and again when adding one. */
+export default function OnboardingScreen({ onConnect, onCancel }: Props) {
   const canCancel = onCancel !== undefined;
-  // Lazy initialiser so `initial` is captured once. A later prop change is not a
-  // new environment to edit, it is the one being edited — reseeding mid-edit
-  // would discard what the user typed.
-  const [d, setD] = useState<DistributionDraft>(
-    () => initial ?? emptyDistribution(),
-  );
+  const [d, setD] = useState<DistributionDraft>(emptyDistribution);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -160,13 +139,10 @@ export default function OnboardingScreen({
         {/* right — the details we need */}
         <div className="onboard-main">
           <form className="onboard-connect" onSubmit={submit}>
-            <h1>
-              {editing ? "Distribution settings" : "Connect your distribution"}
-            </h1>
+            <h1>Connect your distribution</h1>
             <p className="onboard-sub">
-              {editing
-                ? "Change what this console is pointed at. Saving re-points it; the rules already in the other table are left untouched."
-                : "The CloudFront distribution EdgeRoute is attached to, and the DynamoDB table that stores its rules."}
+              The CloudFront distribution EdgeRoute is attached to, and the
+              DynamoDB table that stores its rules.
             </p>
 
             <div className="onboard-form">
@@ -196,41 +172,21 @@ export default function OnboardingScreen({
             )}
 
             <div className="onboard-actions">
-              {/* Sample values are for a first connection. Offering them while
-                  editing would put a one-click way to overwrite a working
-                  environment next to the save button. */}
-              {editing ? (
-                <button
-                  className="btn btn-ghost"
-                  type="button"
-                  disabled={pending}
-                  onClick={onCancel}
-                >
-                  Cancel
-                </button>
-              ) : (
-                <button
-                  className="btn btn-ghost"
-                  type="button"
-                  disabled={pending}
-                  onClick={() => setD(SAMPLE_DISTRIBUTION)}
-                >
-                  Use sample values
-                </button>
-              )}
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={pending}
+                onClick={() => setD(SAMPLE_DISTRIBUTION)}
+              >
+                Use sample values
+              </button>
               <button
                 className="btn btn-primary btn-lg"
                 type="submit"
                 disabled={!valid || pending}
                 style={!valid || pending ? { opacity: 0.5 } : undefined}
               >
-                {pending
-                  ? editing
-                    ? "Saving…"
-                    : "Connecting…"
-                  : editing
-                    ? "Save"
-                    : "Connect"}
+                {pending ? "Connecting…" : "Connect"}
                 <IconArrow size={18} />
               </button>
             </div>

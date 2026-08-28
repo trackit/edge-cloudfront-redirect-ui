@@ -177,7 +177,13 @@ export default function DistributionChip({
             <button
               type="button"
               className="dist-action"
-              onClick={act(onOpenSettings)}
+              onClick={() => {
+                // Close first so the panel is gone before the overlay mounts —
+                // otherwise the panel's outside-mousedown listener can race the
+                // overlay and the click feels like a no-op.
+                setOpen(false);
+                onOpenSettings();
+              }}
             >
               <IconSliders size={16} />
               Settings for current

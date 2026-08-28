@@ -1,21 +1,28 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import AddHostModal from "./AddHostModal";
 import DeleteHostDialog from "./DeleteHostDialog";
+import DeleteRuleDialog from "./DeleteRuleDialog";
 import HostsSidebar from "./HostsSidebar";
+import RuleEditor from "./RuleEditor";
+import RuleList from "./RuleList";
+import { IconClock, IconPlus } from "./icons";
 import { resolveHostView, useHosts } from "../hosts";
+import { takenPriorities, useRules } from "../rules";
 import { CONSOLE_PATH, hostKey, hostPath } from "../hostRoutes";
-import type { HostSummary } from "../api";
+import type { HostSummary, Rule, RuleInput } from "../api";
 import type { Distribution } from "../types";
 
 interface Props {
   distribution: Distribution;
 }
 
+/** What the rule editor is open on: an existing rule, or the kind being created. */
+type EditorTarget = Rule | "redirect" | "rewrite" | null;
+
 /**
- * The console proper: the host list on the left, the addressed host on the
- * right. Everything below the title — the rule list, its filters and the
- * editors — belongs to the rules ticket and lands in this main area.
+ * The console proper: the host list on the left, the addressed host and its
+ * rules on the right.
  *
  * Kept out of ConsolePage because that page owns which *screen* is showing
  * (connect, settings, console); this owns what the console screen contains.
@@ -181,21 +188,29 @@ export default function ConsoleBody({ distribution }: Props) {
         onDelete={setDeleting}
       />
 
-      <main className="host-view">
-        <header className="host-head">
-          <h1 className="host-name mono">{shown}</h1>
-          <p className="host-sub mono">
-            {distribution.distributionId} · {distribution.tableName}
-          </p>
-        </header>
+      {known ? (
+        /* Keyed on the host so its rules, the open editor and the in-flight
+           writes are dropped when the selection moves — they belong to the host
+           that was on screen, not to the next one. */
+        <HostWorkspace
+          key={shown}
+          distribution={distribution}
+          host={shown}
+          onCountsChanged={reload}
+        />
+      ) : (
+        <main className="host-view">
+          <header className="host-head">
+            <div className="host-title">
+              <h1 className="host-name mono">{shown}</h1>
+              <p className="host-sub mono">
+                {distribution.distributionId} · {distribution.tableName}
+              </p>
+            </div>
+          </header>
 
-        {known ? (
-          <p className="console-note-inline">
-            Rules for this host arrive with the rule list.
-          </p>
-        ) : (
-          /* Reachable from a stale link or a host someone else deleted. Saying
-             so beats an empty pane that looks like a host with no rules. */
+          {/* Reachable from a stale link or a host someone else deleted. Saying
+              so beats an empty pane that looks like a host with no rules. */}
           <div className="console-error" role="alert">
             <strong>No such host</strong>
             <span>
@@ -203,10 +218,171 @@ export default function ConsoleBody({ distribution }: Props) {
               link may point at another distribution.
             </span>
           </div>
-        )}
-      </main>
+        </main>
+      )}
 
       {modal}
     </div>
+  );
+}
+
+/**
+ * One host: its name as the title, and its redirects and rewrites below.
+ *
+ * `onCountsChanged` refreshes the sidebar after a write that adds or removes a
+ * rule, so the counts beside each host stay the server's answer rather than
+ * drifting from the list on screen. Toggling does not call it — a disabled rule
+ * still counts, because the count is of rules that exist.
+ */
+function HostWorkspace({
+  distribution,
+  host,
+  onCountsChanged,
+}: {
+  distribution: Distribution;
+  host: string;
+  onCountsChanged: () => void;
+}) {
+  const { grouped, loading, error, reload, create, update, toggle, remove } =
+    useRules(distribution.targetId, host);
+  const [editing, setEditing] = useState<EditorTarget>(null);
+  const [deletingRule, setDeletingRule] = useState<Rule | null>(null);
+  const [busy, setBusy] = useState<string[]>([]);
+
+  /** Marks a row busy for the duration of a write, so it cannot be double-fired. */
+  const withBusy = useCallback(
+    async (sk: string, action: () => Promise<unknown>): Promise<void> => {
+      setBusy((prev) => [...prev, sk]);
+      try {
+        await action();
+      } finally {
+        setBusy((prev) => prev.filter((value) => value !== sk));
+      }
+    },
+    [],
+  );
+
+  const save = async (input: RuleInput): Promise<void> => {
+    // `editing` is a Rule when replacing one: its `sk` addresses the rule as
+    // stored, while `priority` in the body says where it should end up. A changed
+    // priority therefore moves it, which is a PUT, not a second create.
+    if (editing !== null && typeof editing !== "string") {
+      await update(editing.sk, input);
+      return;
+    }
+    await create(input);
+    onCountsChanged();
+  };
+
+  // The confirmation lives in DeleteRuleDialog; this is only the action it runs.
+  // Left on `useRules.remove` so the list refetches in place, and the counts are
+  // refreshed after, since a delete changes them.
+  const deleteRule = async (rule: Rule): Promise<void> => {
+    await remove(rule.sk);
+    onCountsChanged();
+    setDeletingRule(null);
+  };
+
+  const editorTaken =
+    editing === null
+      ? []
+      : takenPriorities(
+          [...grouped.redirects, ...grouped.rewrites],
+          typeof editing === "string"
+            ? editing === "redirect"
+              ? "erMatchRule"
+              : "frMatchRule"
+            : editing.type,
+          typeof editing === "string" ? undefined : editing.sk,
+        );
+
+  return (
+    <main className="host-view">
+      <header className="host-head">
+        <div className="host-title">
+          <h1 className="host-name mono">{host}</h1>
+          <p className="host-sub mono">
+            {distribution.distributionId} · {distribution.tableName}
+          </p>
+        </div>
+
+        {/* Creating is refused while the list could not be read. The editor
+            checks a new priority against the rules it knows about, and it knows
+            about none — so it would wave through a priority that is already
+            taken and turn a clear failure into a confusing 409. */}
+        <div className="host-actions">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            disabled={error !== null}
+            onClick={() => setEditing("rewrite")}
+          >
+            <IconPlus size={15} />
+            Rewrite
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            disabled={error !== null}
+            onClick={() => setEditing("redirect")}
+          >
+            <IconPlus size={15} />
+            Redirect
+          </button>
+        </div>
+      </header>
+
+      {/* ER-306: a write is not live when it returns. Stated once, next to the
+          list, rather than only inside the editor — it also explains a deletion
+          that still redirects. */}
+      <p className="propagation">
+        <IconClock size={15} />
+        Rule changes reach the edge in about a minute (edge cache TTL).
+      </p>
+
+      {error !== null && (
+        <div className="form-error" role="alert">
+          <strong>Could not load these rules</strong>
+          <span>{error.message}</span>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => void reload()}
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
+      <RuleList
+        host={host}
+        grouped={grouped}
+        loading={loading}
+        failed={error !== null}
+        busy={busy}
+        onCreate={setEditing}
+        onEdit={setEditing}
+        onToggle={(rule) => void withBusy(rule.sk, () => toggle(rule))}
+        onDelete={setDeletingRule}
+      />
+
+      {editing !== null && (
+        <RuleEditor
+          host={host}
+          target={editing}
+          taken={editorTaken}
+          onSave={save}
+          onClose={() => setEditing(null)}
+        />
+      )}
+
+      {deletingRule !== null && (
+        <DeleteRuleDialog
+          rule={deletingRule}
+          onConfirm={() => deleteRule(deletingRule)}
+          onClose={() => setDeletingRule(null)}
+        />
+      )}
+    </main>
   );
 }

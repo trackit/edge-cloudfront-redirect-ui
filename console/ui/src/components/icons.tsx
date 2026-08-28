@@ -78,3 +78,25 @@ export const IconGlobe = ({ size = 16 }: P) => (
     <path d="M3 12h18M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18Z" />
   </svg>
 );
+
+export const IconEdit = ({ size = 16 }: P) => (
+  <svg {...base(size)}>
+    <path d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16v4Z" />
+    <path d="M13.5 6.5l4 4" />
+  </svg>
+);
+
+export const IconClock = ({ size = 16 }: P) => (
+  <svg {...base(size)}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3.5 2" />
+  </svg>
+);
+
+export const IconInfo = ({ size = 16 }: P) => (
+  <svg {...base(size)}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 11v5" />
+    <path d="M12 8h.01" />
+  </svg>
+);

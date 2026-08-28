@@ -974,11 +974,25 @@ button {
 .host-view {
   padding: 26px 28px;
 }
+/* Title on the left, the two create buttons on the right. Wraps rather than
+   shrinks: a long hostname keeps its own line and the buttons drop below it. */
 .host-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+}
+.host-title {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-bottom: 22px;
+  min-width: 0;
+}
+.host-actions {
+  display: flex;
+  gap: 8px;
 }
 .host-name {
   margin: 0;
@@ -995,12 +1009,6 @@ button {
   font-size: 12.5px;
   color: var(--text-dim);
 }
-.console-note-inline {
-  margin: 0;
-  font-size: 13.5px;
-  color: var(--text-soft);
-}
-
 /* --- loading, empty and failed, before there is a host to show --- */
 
 .console-note {
@@ -1116,9 +1124,22 @@ button {
 }
 
 /* ============================================================
-   Modal — a native <dialog>, so the backdrop, focus trap and
-   Escape are the browser's rather than ours.
+   Modal — host dialogs stay native <dialog>s (they keep ::backdrop).
+   Settings uses `.modal-overlay` instead: under Strict Mode a dialog's
+   mount/unmount probe fires `close` and can clear the open flag before the
+   real mount sticks.
    ============================================================ */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(10, 17, 32, 0.55);
+}
 
 .modal {
   width: min(440px, calc(100vw - 32px));
@@ -1128,6 +1149,9 @@ button {
   background: var(--surface);
   color: var(--text);
   box-shadow: 0 24px 60px rgba(10, 17, 32, 0.35);
+}
+.modal:focus {
+  outline: none;
 }
 .modal::backdrop {
   background: rgba(10, 17, 32, 0.55);
@@ -1248,4 +1272,826 @@ button {
 .modal-foot .btn-ghost:hover {
   background: var(--surface-3);
   color: var(--text);
+}
+
+/* Settings edits three fields already in use — a little wider than Add host so
+   the hints wrap less aggressively. */
+.modal-settings {
+  width: min(480px, calc(100vw - 32px));
+}
+
+/* Forget-this-environment band. Red rather than the amber propagation note:
+   disconnect is a deliberate loss of local state, not a fact about the edge. */
+.modal-danger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  border-radius: var(--radius-sm);
+  background: var(--red-glow);
+}
+.modal-danger-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.modal-danger-text strong {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.modal-danger-text span {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-soft);
+}
+.modal-danger .btn-danger {
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   RULES PANEL — a host's redirects and rewrites.
+   Sits in .host-view, under the host title.
+   ============================================================ */
+
+/* ER-306. Amber rather than red: it is a fact about the system, not a failure. */
+.propagation {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 207, 92, 0.5);
+  background: rgba(255, 207, 92, 0.14);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: #7a5a10;
+}
+.propagation svg {
+  flex-shrink: 0;
+}
+
+/* --- toolbar --- */
+
+.rules-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.rules-order {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.seg {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.seg button {
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.seg button:hover {
+  color: var(--text);
+}
+.seg button.is-active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+/* --- one group: redirects or rewrites --- */
+
+.rule-group {
+  margin-bottom: 26px;
+}
+.rule-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+/* Pushed to the far end of the header, so "create" sits with the group it adds
+   to rather than in a toolbar that has to say which type it means. */
+.rule-group-add {
+  margin-left: auto;
+}
+.rule-group-head h3 {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-soft);
+}
+.count-chip {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-soft);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.phase-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* --- a rule --- */
+
+.rule-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rule-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+/* A disabled rule is dimmed but stays readable — it keeps its priority and is
+   still part of the sequence, so it must not look deleted. */
+.rule-card.is-disabled {
+  background: var(--surface-2);
+  opacity: 0.72;
+}
+.rule-card.is-busy {
+  opacity: 0.55;
+}
+.rule-prio {
+  display: grid;
+  place-items: center;
+  min-width: 42px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-soft);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+}
+.rule-body {
+  min-width: 0;
+}
+.rule-badges {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 7px;
+}
+.rule-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin: 0;
+  font-size: 13.5px;
+}
+.rule-from {
+  color: var(--text);
+  font-weight: 600;
+}
+.rule-arrow {
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+}
+.rule-to {
+  color: var(--blue-600);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.rule-cond {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* --- no rules, and loading --- */
+
+.rules-empty {
+  padding: 56px 20px;
+  text-align: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.rules-empty h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+.rules-empty p {
+  margin: 0 auto;
+  max-width: 420px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+.rules-empty-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+/* Placeholder rows while a host's rules load, sized like a real card so the
+   panel does not jump when they arrive. */
+.skeleton {
+  height: 78px;
+  margin-bottom: 10px;
+  border-radius: var(--radius);
+  background: linear-gradient(
+    90deg,
+    var(--surface-2),
+    var(--surface-3),
+    var(--surface-2)
+  );
+  background-size: 200% 100%;
+  animation: skeleton 1.2s ease-in-out infinite;
+}
+@keyframes skeleton {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+
+/* ============================================================
+   Controls shared by the rule list and the editor.
+   ============================================================ */
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.icon-btn:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 1px;
+}
+.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.icon-btn.is-danger:hover {
+  background: var(--red-glow);
+  border-color: rgba(255, 107, 107, 0.45);
+  color: var(--red);
+}
+
+/* Track + knob. `role="switch"` is on the button, so nothing here conveys state
+   on its own — the knob position is the visual half of aria-checked. */
+.switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-3);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border 0.15s ease;
+}
+.switch.is-on {
+  background: var(--green);
+  border-color: var(--green);
+}
+.switch:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+.switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(16, 32, 60, 0.3);
+  transition: transform 0.15s ease;
+}
+.switch.is-on .switch-knob {
+  transform: translateX(18px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .switch,
+  .switch-knob {
+    transition: none;
+  }
+}
+
+/* A rounded grey card. The switch sits in its own box rather than as a band
+   flush with the page, so it reads as a discrete setting and not as a caption
+   for the field above it. */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  /* The whole row is a <button>: reset its defaults so the label reads as text,
+     not a caption, while the entire card stays the click target. */
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.toggle-row:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+.toggle-row:disabled {
+  cursor: not-allowed;
+}
+.toggle-row:disabled .switch {
+  opacity: 0.5;
+}
+/* Stacked switches (redirect destination) need a gap between the cards. */
+.toggle-row + .toggle-row {
+  margin-top: 10px;
+}
+.toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.toggle-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.toggle-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+/* A two-state chip. `aria-pressed` carries the state; this is its appearance. */
+.flag {
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.flag:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.flag.is-on {
+  background: var(--orange-glow);
+  border-color: var(--orange);
+  color: var(--orange-600);
+}
+.flag:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 1px;
+}
+
+/* Visible to a screen reader, not on screen. Used where an icon-only control
+   already has a visible label elsewhere in its row. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Validation failures, whether raised by the form or returned by the API — both
+   arrive as `{ path, message }`, so one block renders both. */
+.form-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 107, 107, 0.45);
+  background: var(--red-glow);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.form-error strong {
+  color: #b3251f;
+}
+.form-error ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+.form-error li {
+  margin-top: 2px;
+}
+
+/* ============================================================
+   RULE EDITOR — a right-side drawer rather than a <dialog>.
+   The host dialogs above are native <dialog>s and keep the .modal
+   rules as written; the editor reuses their head/body/foot chrome
+   but runs the full height of the viewport and scrolls, so it
+   overrides them under .drawer rather than editing the shared
+   rules underneath.
+   ============================================================ */
+
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(10, 17, 32, 0.6);
+  backdrop-filter: blur(2px);
+  animation: drawer-fade 0.15s ease;
+}
+/* Carries the surface itself: the panel drops .modal, whose rounded corners
+   and 440px width belong to a centred dialog. */
+.drawer {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  height: 100%;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  animation: drawer-slide 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.drawer:focus {
+  outline: none;
+}
+/* The only scrolling region, so the heading and the actions stay put while a
+   long form moves. */
+.drawer .modal-body {
+  display: block;
+  padding: 20px 22px;
+  overflow-y: auto;
+}
+.drawer .modal-foot {
+  justify-content: flex-end;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 22px;
+  /* The drawer meets the viewport edges, so the dialog's rounded bottom would
+     leave two gaps in the corner. */
+  border-radius: 0;
+}
+@keyframes drawer-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes drawer-slide {
+  from {
+    transform: translateX(24px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drawer-overlay,
+  .drawer {
+    animation: none;
+  }
+}
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+
+/* --- the form's sections --- */
+
+/* Flat rather than boxed. The drawer is already a panel, and a bordered card per
+   section inside it read as five nested containers; the uppercase legend groups
+   the fields on its own. What stays boxed is what is genuinely a repeated unit —
+   an origin card, a match condition. */
+.editor-section {
+  margin: 24px 0 0;
+  padding: 0;
+  border: 0;
+}
+.editor-section:first-of-type {
+  margin-top: 0;
+}
+.editor-section > legend {
+  padding: 0;
+  margin-bottom: 12px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-soft);
+}
+
+/* A banded section: one rule above the heading, one under the last row.
+   The opening rule rides the legend rather than the fieldset, because a border
+   on a fieldset is notched by its own legend — and the legend is exactly what
+   has to sit under the line here. */
+.editor-section.is-banded {
+  /* A little air under Target origin before the separator. */
+  margin-top: 10px;
+  /* Space under the toggle card so the closing rule sits clearly below it. */
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+/* Match conditions already ends on the dashed Add button — keep the closing
+   rule tight under it, like the non-banded rewrite case. */
+.editor-section.is-banded:has(> .matches) {
+  padding-bottom: 6px;
+}
+.editor-section.is-banded > legend {
+  width: 100%;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+/* Keep a small gap under the last origin field — not the full 18px field
+   margin, which pushed the band too far down. */
+.editor-section:has(+ .editor-section.is-banded) > :last-child {
+  margin-bottom: 4px;
+}
+
+.field-row,
+.field-row-3 {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.field-row {
+  grid-template-columns: 1fr 1fr;
+}
+.field-row-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+/* The row owns the spacing below it, so a field inside one does not add its own
+   on top. */
+.field-row > .field,
+.field-row-3 > .field {
+  margin-bottom: 0;
+}
+
+/* --- the rewrite's origin picker --- */
+
+.origin-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-bottom: 18px;
+}
+/* A real radio inside the label, hidden but focusable: the browser then owns
+   arrow-key movement between the cards, which a div with `aria-checked` would
+   have to reimplement. */
+.origin-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+}
+.origin-card input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.origin-card:hover {
+  border-color: var(--border-strong);
+}
+.origin-card.is-on {
+  border-color: var(--blue);
+  background: var(--blue-glow);
+}
+.origin-card:focus-within {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+.origin-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.origin-card-hint {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+/* The way back to a path-only rewrite, since a native radio cannot be
+   deselected. Deliberately quiet — a text link under the cards, not a card. */
+.origin-clear {
+  display: inline-flex;
+  align-items: center;
+  margin: -6px 0 16px;
+  padding: 7px 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+}
+.origin-clear:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: var(--blue-glow);
+}
+.origin-clear:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+/* --- an explanatory note above a form --- */
+
+.callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 20px;
+  padding: 11px 13px;
+  border: 1px solid rgba(77, 168, 255, 0.35);
+  border-radius: var(--radius-sm);
+  background: var(--blue-glow);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-soft);
+}
+.callout svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--blue);
+}
+
+/* --- match conditions --- */
+
+.matches {
+  /* Separates the conditions from Priority & status below. On a redirect the
+     Match conditions section is itself `is-banded`, so that section owns the
+     closing rule and this one stays quiet to avoid a double line. */
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.editor-section.is-banded > .matches {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.matches-empty {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 207, 92, 0.5);
+  background: rgba(255, 207, 92, 0.14);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #7a5a10;
+}
+/* Same grey card as the Keep-incoming switch. "Condition N" is a real header
+   inside the box — a <legend> would notch the top border, which is exactly what
+   we do not want here. */
+.match {
+  position: relative;
+  margin: 0 0 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.match-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.match-legend {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-soft);
+}
+.match-remove {
+  width: 28px;
+  height: 28px;
+}
+.match-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.4fr;
+  gap: 10px;
+}
+@media (max-width: 560px) {
+  .match-grid,
+  .origin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.match .field {
+  margin-bottom: 0;
+}
+.match-flags {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+/* Full-width dashed invite — the only control that grows a condition, so it
+   spans the drawer rather than reading as a secondary ghost button. */
+.add-match {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 11px;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.add-match:hover {
+  border-color: var(--orange);
+  color: var(--orange-600);
+  background: var(--orange-glow);
+}
+.add-match:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 1px;
 }
