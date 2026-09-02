@@ -120,7 +120,7 @@ const cases = [
       ["#custom-domain", "legacy-backend.internal.example.com"],
       ["#custom-port", "8443"],
     ],
-    absent: "#s3-domain",
+    absent: ["#s3-domain"],
   },
   {
     stored: "an S3 origin",
@@ -131,16 +131,17 @@ const cases = [
       ["#s3-domain", "example-assets.s3.eu-west-3.amazonaws.com"],
       ["#s3-region", "eu-west-3"],
     ],
-    absent: "#custom-domain",
+    absent: ["#custom-domain"],
   },
   {
     stored: "no origin, only a path",
     priority: 300,
     kind: "none",
     card: "Path only",
-    // Nothing to fill: the rule holds no origin, so neither set of fields shows.
+    // Nothing to fill: the rule holds no origin. Both sections have to be gone,
+    // not just one — this is the only case where neither belongs on screen.
     fields: [],
-    absent: "#custom-domain",
+    absent: ["#custom-domain", "#s3-domain"],
   },
 ] as const;
 
@@ -167,9 +168,35 @@ for (const c of cases) {
     }
     // The other kind's fields stay out of the form rather than showing blank —
     // a rule has one origin, and two half-filled sections would not say which.
-    await expect(page.locator(c.absent)).toHaveCount(0);
+    for (const field of c.absent) {
+      await expect(page.locator(field)).toHaveCount(0);
+    }
   });
 }
+
+test("a new rewrite opens on Custom, and stays answered on path-only", async ({
+  page,
+  api,
+}) => {
+  await seed(page);
+  api.setHosts([host(HOST)]);
+  api.setRules([]);
+
+  await openHost(page);
+  await page.getByRole("button", { name: "New rewrite" }).click();
+  await expect(page.getByRole("dialog", { name: "New rewrite" })).toBeVisible();
+
+  // A new rewrite opens on Custom so the domain and protocol fields are there
+  // to fill straight away.
+  await expect(selected(page)).toHaveValue("custom");
+
+  // Choosing path-only used to blank the picker here too: the button that made
+  // the choice was the one hidden by it, so the form ended up showing no answer
+  // to a question the user had just answered.
+  await page.getByText("Path only").click();
+  await expect(selected(page)).toHaveCount(1);
+  await expect(litCard(page)).toContainText("Path only");
+});
 
 test("the path-only choice is reachable and reversible", async ({
   page,
