@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, api, isRedirect, priorityOf } from "./api";
-import type { Rule, RuleInput } from "./api";
+import { ApiError, api, isRedirect, priorityOf } from "../api";
+import type { Rule, RuleInput } from "../api";
 
 /**
  * Loading and mutating one host's rules.
@@ -15,6 +15,22 @@ import type { Rule, RuleInput } from "./api";
 export interface GroupedRules {
   redirects: Rule[];
   rewrites: Rule[];
+}
+
+/** One rule to import, and the host it belongs to (its own, or the target). */
+export interface ImportItem {
+  host: string;
+  input: RuleInput;
+}
+
+/**
+ * The tally an import returns: how many rules were created, and which items (by
+ * their position in the batch) the API refused, with why. A partial success is
+ * the expected shape, not an error — some rows can land while others fail.
+ */
+export interface ImportOutcome {
+  created: number;
+  failures: { index: number; message: string }[];
 }
 
 const byPriority = (a: Rule, b: Rule): number =>
@@ -166,6 +182,74 @@ export function useRules(targetId: string, host: string) {
     [mutate, targetId, host],
   );
 
+  /**
+   * Creates many rules from an import, one request each — there is no bulk route.
+   *
+   * Rules can land on several hosts (a rule may name its own), and priorities are
+   * per host, so the items are grouped by host and each host's live rules are
+   * read once to place the batch after its current maximum. Assigning here rather
+   * than in the parser is the only way the numbers can be right: the parser never
+   * sees a host it is not already looking at.
+   *
+   * Sequential, not `Promise.all` — the priorities within a host are consecutive,
+   * and firing them at once would race the server's uniqueness check. A failure
+   * does not abort the run: each is caught and reported by its position in the
+   * batch, so one rejection does not cost the rows after it. One refetch at the
+   * end reflects the true final state; `mutate`'s per-write refetch would fire
+   * once per rule.
+   */
+  const importRules = useCallback(
+    async (items: ImportItem[]): Promise<ImportOutcome> => {
+      const failures: ImportOutcome["failures"] = [];
+      let created = 0;
+
+      const byHost = new Map<string, { index: number; input: RuleInput }[]>();
+      items.forEach((item, index) => {
+        const group = byHost.get(item.host) ?? [];
+        group.push({ index, input: item.input });
+        byHost.set(item.host, group);
+      });
+
+      for (const [ruleHost, group] of byHost) {
+        let cursor = 0;
+        const used = new Set<number>();
+        try {
+          const existing = await api.rules.list(targetId, ruleHost);
+          for (const priority of takenPriorities(existing, "erMatchRule")) {
+            used.add(priority);
+          }
+          if (used.size > 0) cursor = Math.max(...used) + 1;
+        } catch {
+          // Could not read the host's rules — start from zero and let any real
+          // collision surface as a per-row failure below rather than aborting.
+        }
+
+        for (const { index, input } of group) {
+          while (used.has(cursor)) cursor++;
+          const priority = cursor++;
+          used.add(priority);
+          try {
+            await api.rules.create(targetId, ruleHost, { ...input, priority });
+            created++;
+          } catch (caught) {
+            const err = asApiError(caught, "Could not create this rule");
+            failures.push({
+              index,
+              message:
+                err.code === "RULE_EXISTS"
+                  ? "priority already in use (created concurrently?)"
+                  : err.message,
+            });
+          }
+        }
+      }
+
+      await load();
+      return { created, failures };
+    },
+    [targetId, load],
+  );
+
   return {
     rules,
     grouped: groupRules(rules),
@@ -176,6 +260,7 @@ export function useRules(targetId: string, host: string) {
     update,
     toggle,
     remove,
+    importRules,
   };
 }
 

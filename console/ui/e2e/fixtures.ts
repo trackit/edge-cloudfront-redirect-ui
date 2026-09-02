@@ -1,7 +1,7 @@
 import { expect, test as base, type Page, type Route } from "@playwright/test";
 import type { HostSummary, Rule } from "../src/api";
-import type { Stored } from "../src/distribution";
-import type { Distribution } from "../src/types";
+import type { Stored } from "../src/domain/distribution";
+import type { Distribution } from "../src/domain/types";
 
 /**
  * The two things every spec here needs: a stubbed API, and a browser that
@@ -48,11 +48,14 @@ export interface ApiStub {
   /**
    * What `GET …/hosts/{host}/rules` returns. The host view fetches this on
    * mount, so — like `setHosts` — it is the state the page starts in.
-   *
-   * Writes are deliberately still unstubbed: no spec exercises one yet, and the
-   * 500 fallthrough is what will say so when one does.
    */
   setRules: (rules: Rule[]) => void;
+  /**
+   * Answers every subsequent `POST …/rules` with this instead of the default
+   * 201 that echoes and appends the rule. Non-consuming, like the others — used
+   * to force a 409 and exercise the import's per-row failure path.
+   */
+  createRuleReply: (reply: { status: number; body: unknown }) => void;
 }
 
 const jsonOf = (route: Route): unknown => {
@@ -78,6 +81,7 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
   let createHost: { status: number; body: unknown } | null = null;
   let deleteHost: { status: number; body: unknown } | null = null;
   let rules: Rule[] = [];
+  let createRule: { status: number; body: unknown } | null = null;
 
   // A predicate, not the `**/api/**` glob that looks right: the app's own source
   // lives in `src/api/`, and in dev Vite serves those modules from URLs the glob
@@ -162,6 +166,37 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
         return;
       }
 
+      // Import posts one rule at a time. The default echoes the body with the
+      // key the server would derive and adds it to what the next GET returns, so
+      // a refetch after an import shows the new rules — as the real API would. A
+      // forced reply (a 409, say) skips the append, to test partial failure.
+      if (method === "POST" && RULES_COLLECTION.test(url.pathname)) {
+        if (createRule !== null) {
+          await route.fulfill({
+            status: createRule.status,
+            contentType: "application/json",
+            body: JSON.stringify(createRule.body),
+          });
+          return;
+        }
+        const input = (body ?? {}) as { type?: string; priority?: number };
+        const owner = url.pathname.match(/\/hosts\/([^/]+)\/rules$/);
+        const stored = {
+          pk: owner ? decodeURIComponent(owner[1]) : "",
+          sk: `${input.type === "frMatchRule" ? "REWRITE" : "REDIRECT"}#${String(
+            input.priority ?? 0,
+          ).padStart(5, "0")}`,
+          ...(body as Record<string, unknown>),
+        } as unknown as Rule;
+        rules = [...rules, stored];
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify(stored),
+        });
+        return;
+      }
+
       if (method === "DELETE" && HOSTS_ITEM.test(url.pathname)) {
         const reply = deleteHost ?? { status: 204, body: null };
         await route.fulfill({
@@ -205,6 +240,9 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
     },
     setRules: (next) => {
       rules = next;
+    },
+    createRuleReply: (reply) => {
+      createRule = reply;
     },
   };
 };

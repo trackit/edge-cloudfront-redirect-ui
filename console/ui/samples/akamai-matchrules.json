@@ -1,0 +1,45 @@
+[
+  {
+    "type": "erMatchRule",
+    "name": "Home",
+    "matchURL": "/old-home",
+    "redirectURL": "https://www.example.com/",
+    "statusCode": 301
+  },
+  {
+    "type": "erMatchRule",
+    "name": "Summer promo",
+    "matchURL": "/promo",
+    "redirectURL": "/campaigns/summer",
+    "statusCode": 302
+  },
+  {
+    "type": "erMatchRule",
+    "name": "API v2",
+    "redirectURL": "/api/v2",
+    "statusCode": 301,
+    "matches": [
+      { "matchType": "path", "matchOperator": "equals", "matchValue": "/api" },
+      { "matchType": "method", "matchValue": "GET" }
+    ]
+  },
+  {
+    "type": "erMatchRule",
+    "name": "Support domain",
+    "redirectURL": "https://help.example.com",
+    "statusCode": 301,
+    "matches": [
+      {
+        "matchType": "hostname",
+        "matchOperator": "equals",
+        "matchValue": "support.example.com"
+      }
+    ]
+  },
+  {
+    "type": "erMatchRule",
+    "name": "Broken no target",
+    "matchURL": "/broken",
+    "statusCode": 301
+  }
+]

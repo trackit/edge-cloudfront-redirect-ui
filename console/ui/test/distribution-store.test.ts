@@ -7,8 +7,8 @@ import {
   reduceReplaceCurrent,
   reduceSelect,
   type Stored,
-} from "../src/distribution";
-import type { Distribution } from "../src/types";
+} from "../src/domain/distribution";
+import type { Distribution } from "../src/domain/types";
 
 /**
  * The store's pure half: what a stored string parses to, and what each mutation

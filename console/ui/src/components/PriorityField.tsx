@@ -1,5 +1,5 @@
 import { sortKeyFor } from "../api";
-import { PRIORITY_MAX, PRIORITY_MIN } from "../ruleDraft";
+import { PRIORITY_MAX, PRIORITY_MIN } from "../domain/ruleDraft";
 
 interface Props {
   kind: "redirect" | "rewrite";
