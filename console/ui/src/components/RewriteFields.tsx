@@ -15,10 +15,16 @@ interface Props {
 }
 
 /**
- * Only the two origins a rewrite can point at. `none` stays in the draft — it is
- * what a path-only rewrite loads as, and what a new one starts as — but it is not
- * offered as a card: picking "no origin" is expressed by leaving both unpicked
- * and filling the forwarded path instead.
+ * Every state `originKind` can hold, `none` included.
+ *
+ * `none` is a card and not the absence of a selection: a rewrite may change the
+ * path while leaving the distribution's origin alone, so it is a real choice the
+ * editor has to be able to *show*. Left implicit, a stored path-only rule opened
+ * with both cards blank — the picker looking broken rather than answered — and
+ * with no way back to it either, since the radios cannot be deselected. One card
+ * per state means exactly one is always lit, and the way back is the way in.
+ *
+ * Custom comes first because that is where a new rewrite opens (`emptyRewrite`).
  */
 const ORIGIN_KINDS: { value: OriginKind; label: string; hint: string }[] = [
   {
@@ -30,6 +36,11 @@ const ORIGIN_KINDS: { value: OriginKind; label: string; hint: string }[] = [
     value: "s3",
     label: "S3 origin",
     hint: "An S3 bucket",
+  },
+  {
+    value: "none",
+    label: "Path only",
+    hint: "Keep the current origin",
   },
 ];
 
@@ -116,19 +127,6 @@ export default function RewriteFields({ draft, onChange }: Props) {
             </label>
           ))}
         </div>
-
-        {/* Native radios cannot be deselected, so without this a stray click on
-            a card would trap a path-only rewrite into an origin one, with Cancel
-            the only way out. This is the way back to "none". */}
-        {draft.originKind !== "none" && (
-          <button
-            type="button"
-            className="origin-clear"
-            onClick={() => onChange({ originKind: "none" })}
-          >
-            Forward the path only (no origin)
-          </button>
-        )}
 
         {draft.originKind === "s3" && (
           <>

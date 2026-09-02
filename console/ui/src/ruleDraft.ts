@@ -166,9 +166,9 @@ export const emptyRewrite = (): RewriteDraft => ({
   priority: "",
   disabled: false,
   // New rewrites open on Custom origin so the domain / protocol fields are
-  // visible immediately. `none` (path-only, keep the distribution's origin)
-  // remains valid for existing rules and for validation, but is no longer the
-  // blank starting point now that that card was removed from the picker.
+  // visible immediately. `none` (path-only, keep the distribution's origin) is
+  // one click away in the picker and is what an existing path-only rule loads
+  // as; it is just not the blank starting point.
   originKind: "custom",
   s3: S3_DEFAULTS,
   custom: CUSTOM_DEFAULTS,
