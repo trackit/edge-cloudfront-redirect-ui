@@ -3,8 +3,12 @@
  *
  * The suites below test what the API does for someone allowed to do it, so they
  * authenticate as an editor. That is a fixture, not the subject: which roles may
- * reach which routes is `router.test.ts`'s job, and reading the claims off the
- * event is `handler.test.ts`'s.
+ * reach which routes is `router.test.ts`'s job, and turning an event into a
+ * principal is `principal.test.ts`'s.
+ *
+ * These carry no `Authorization` header, so they exercise the fallback path —
+ * claims read from the authorizer context. The header path, which is what
+ * production takes, is covered in `principal.test.ts` and `handler.test.ts`.
  */
 export const claims = (groups: string[], sub = "user-1") => ({
   authorizer: {

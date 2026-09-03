@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { canWrite, parseGroups, roleOf } from "../src/lib/principal.js";
+import {
+  canWrite,
+  parseGroups,
+  principalFrom,
+  roleOf,
+} from "../src/lib/principal.js";
 import type { Principal } from "../src/lib/principal.js";
 
 /**
@@ -69,5 +74,92 @@ describe("canWrite", () => {
     expect(canWrite(principal(["editor"]))).toBe(true);
     expect(canWrite(principal(["viewer"]))).toBe(false);
     expect(canWrite(principal([]))).toBe(false);
+  });
+});
+
+/**
+ * Building the principal from the two things the Lambda is handed.
+ *
+ * The split under test: the authorizer context decides *whether* there is a
+ * principal, because its presence is the only proof the gateway verified
+ * anything. The token supplies the *shape* of the claims, because the context
+ * has flattened them into a string format we would otherwise be guessing at.
+ */
+describe("principalFrom", () => {
+  const bearer = (payload: unknown): string =>
+    `Bearer ${[
+      Buffer.from(JSON.stringify({ alg: "RS256" })).toString("base64url"),
+      Buffer.from(JSON.stringify(payload)).toString("base64url"),
+      "signature-checked-by-the-gateway",
+    ].join(".")}`;
+
+  const flattened = {
+    sub: "user-1",
+    email: "editor@example.com",
+    // How API Gateway delivers the claim to a Lambda.
+    "cognito:groups": "[editor viewer]",
+  };
+
+  it("has no principal without an authorizer, whatever the header says", () => {
+    // A public route. Nothing verified the token, so a caller could have written
+    // it themselves — reading it here is how a self-signed editor gets in.
+    expect(
+      principalFrom(undefined, bearer({ sub: "attacker", groups: ["editor"] })),
+    ).toBeUndefined();
+  });
+
+  it("has no principal when the claims carry no usable sub", () => {
+    expect(principalFrom({}, undefined)).toBeUndefined();
+    expect(principalFrom({ sub: "" }, undefined)).toBeUndefined();
+    expect(principalFrom({ sub: 42 }, undefined)).toBeUndefined();
+  });
+
+  it("prefers the token's array over the context's flattened string", () => {
+    const result = principalFrom(
+      flattened,
+      bearer({ sub: "user-1", "cognito:groups": ["editor", "viewer"] }),
+    );
+
+    expect(result).toEqual({
+      sub: "user-1",
+      email: "editor@example.com",
+      groups: ["editor", "viewer"],
+    });
+  });
+
+  it("falls back to the flattened claims when there is no header", () => {
+    // Still works, just via the parser we would rather not depend on. This is
+    // the path every existing suite takes, so it has to keep working.
+    expect(principalFrom(flattened, undefined)).toEqual({
+      sub: "user-1",
+      email: "editor@example.com",
+      groups: ["editor", "viewer"],
+    });
+  });
+
+  it("falls back when the token is not decodable", () => {
+    expect(principalFrom(flattened, "Bearer not-a-jwt")).toEqual({
+      sub: "user-1",
+      email: "editor@example.com",
+      groups: ["editor", "viewer"],
+    });
+  });
+
+  it("ignores a token whose sub disagrees with the verified context", () => {
+    // Identity comes from the context either way, so the danger is only the
+    // groups. A mismatch means something upstream is wrong in a way this code
+    // cannot adjudicate, so it trusts the verified side and nothing else.
+    const result = principalFrom(
+      { sub: "user-1", "cognito:groups": "[viewer]" },
+      bearer({ sub: "user-2", "cognito:groups": ["editor"] }),
+    );
+
+    expect(result).toEqual({ sub: "user-1", groups: ["viewer"] });
+  });
+
+  it("reads an email only when there is one to read", () => {
+    expect(principalFrom({ sub: "user-1" }, bearer({ sub: "user-1" }))).toEqual(
+      { sub: "user-1", groups: [] },
+    );
   });
 });

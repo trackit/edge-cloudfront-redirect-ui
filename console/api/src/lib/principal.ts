@@ -1,3 +1,5 @@
+import { bearerToken, decodeJwtPayload } from "./jwt-claims.js";
+
 /**
  * Who is making the request, as the API cares about it.
  *
@@ -50,3 +52,43 @@ export const roleOf = (principal: Principal): Role | undefined =>
 /** Whether this principal may perform a write. */
 export const canWrite = (principal: Principal): boolean =>
   roleOf(principal) === "editor";
+
+/**
+ * The caller, from the gateway's authorizer context and the token behind it.
+ *
+ * `claims` being present is what says the gateway ran, so it is the only thing
+ * that decides whether there is a principal at all. `authorization` is read for
+ * shape, not for authority: the token carries `cognito:groups` as a real array,
+ * where the authorizer context carries a flattened string we would otherwise be
+ * parsing by guesswork.
+ *
+ * Identity still comes from the verified context. The token's groups are used
+ * only when its `sub` matches the context's — if the two disagree, something has
+ * gone wrong upstream that this function is in no position to adjudicate, so it
+ * falls back to the context alone rather than believing the header.
+ */
+export const principalFrom = (
+  claims: Record<string, unknown> | undefined,
+  authorization: string | undefined,
+): Principal | undefined => {
+  if (claims === undefined) return undefined;
+
+  const sub = claims.sub;
+  // Not a token Cognito issues. Treating it as "no principal" means the router
+  // refuses the request rather than inventing an identity with no id.
+  if (typeof sub !== "string" || sub === "") return undefined;
+
+  const payload = decodeJwtPayload(bearerToken(authorization));
+  const fromToken = payload?.sub === sub ? payload : undefined;
+  const email = fromToken?.email ?? claims.email;
+
+  return {
+    sub,
+    ...(typeof email === "string" ? { email } : {}),
+    groups: parseGroups(
+      fromToken === undefined
+        ? claims["cognito:groups"]
+        : fromToken["cognito:groups"],
+    ),
+  };
+};
