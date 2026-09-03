@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { EDITOR } from "./principal-claims.js";
+import { EDITOR, claims } from "./principal-claims.js";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { handler } from "../src/handler.js";
 import {
@@ -123,4 +123,42 @@ describe("handler", () => {
     expect(res.headers).toMatchObject({ "content-type": "application/json" });
     expect(parse(res.body)).toEqual([]);
   });
+
+  /**
+   * That the `Authorization` header actually reaches `principalFrom`.
+   *
+   * Worth its own test because the fallback hides a broken wire: misspell the
+   * header lookup and the authorizer's own claims are still read, so every other
+   * test in the repo passes and only the flattened-string guess ships.
+   *
+   * The two sides deliberately disagree, which cannot happen in production —
+   * they are the same token. Disagreement is simply the only way to observe
+   * which one was used.
+   */
+  it.each(["authorization", "Authorization"])(
+    "reads the groups from the token in the %s header",
+    async (headerName) => {
+      const token = [
+        Buffer.from(JSON.stringify({ alg: "RS256" })).toString("base64url"),
+        Buffer.from(
+          JSON.stringify({ sub: "user-1", "cognito:groups": ["editor"] }),
+        ).toString("base64url"),
+        "signature-checked-by-the-gateway",
+      ].join(".");
+
+      const res = await handler({
+        rawPath: "/targets/prod/hosts",
+        headers: { [headerName]: `Bearer ${token}` },
+        isBase64Encoded: false,
+        requestContext: {
+          http: { method: "POST" },
+          // The context says viewer; the token says editor. A write landing
+          // means the token was read.
+          ...claims(["viewer"]),
+        },
+      } as unknown as APIGatewayProxyEventV2);
+
+      expect(res.statusCode).not.toBe(403);
+    },
+  );
 });
