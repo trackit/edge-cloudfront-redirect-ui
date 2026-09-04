@@ -14,6 +14,21 @@ import { buildRegex } from "./lib/build-regex.js";
 import { checkAkamaiVariant } from "./lib/check-akamai-variant.js";
 import { getMatchSource } from "./lib/get-match-source.js";
 
+/**
+ * Whether the rule reads the viewer's country, and so cannot be evaluated at
+ * viewer-request: CloudFront works the country out after that event.
+ *
+ * Exported because it is what tells the two events apart. viewer-request keeps
+ * every rule that does not read the country -- which is every rule that exists
+ * today -- and origin-request picks up exactly the remainder. Splitting them on
+ * the rule's own content rather than on "is the country header present" matters:
+ * a distribution that enables the header must not thereby start firing ordinary
+ * redirects at origin-request, where they would only run on a cache miss and so
+ * fire unpredictably.
+ */
+export const readsCountry = (rule: RedirectRule): boolean =>
+  rule.matches.some((m) => m.matchType === MatchType.COUNTRY);
+
 const splitPath = (path: string): { pathname: string; search: string } => {
   const [pathname = "", ...rest] = path.split("?");
   return {
@@ -36,15 +51,24 @@ export class RulesService {
     this.cache.clear();
   }
 
-  /** First enabled rule whose conditions all match, in priority order. */
+  /**
+   * First enabled rule whose conditions all match, in priority order.
+   *
+   * `accepts` narrows which rules are even considered. Only one caller needs
+   * it — origin-request, for the redirects viewer-request had to defer — and it
+   * is a predicate on the rule rather than an event type so that this class
+   * keeps knowing nothing about CloudFront's event model.
+   */
   async match(
     params: RequestParams,
     kind: RuleKind,
+    accepts: (rule: RedirectRule) => boolean = () => true,
   ): Promise<MatchResult | null> {
     const rules = await this.loadRules(params.hostname, kind);
 
     const matched = rules.find(
       (rule) =>
+        accepts(rule) &&
         this.isEvaluable(rule, params) &&
         rule.matches.every((m) => this.evaluateMatch(m, params)),
     );
@@ -68,8 +92,7 @@ export class RulesService {
    * and kind alone, and holds the same rules for every request.
    */
   private isEvaluable(rule: RedirectRule, params: RequestParams): boolean {
-    if (params.country) return true;
-    return !rule.matches.some((m) => m.matchType === MatchType.COUNTRY);
+    return Boolean(params.country) || !readsCountry(rule);
   }
 
   private async loadRules(
