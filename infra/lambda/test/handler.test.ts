@@ -4,7 +4,7 @@ import type {
   CloudFrontRequestEvent,
   CloudFrontResultResponse,
 } from "aws-lambda";
-import type { RedirectRule } from "../src/rule-types.js";
+import type { MatchCondition, RedirectRule } from "../src/rule-types.js";
 import { CloudfrontRequestEventMother } from "./cloudfront-request-event.mother.js";
 import { FakeRepository } from "./fake-repository.js";
 import { VIEWER_HOST_HEADER } from "../src/lib/viewer-host.js";
@@ -707,6 +707,114 @@ describe("host scoping", () => {
     );
 
     expect((result as CloudFrontResultResponse).status).toBeUndefined();
+  });
+});
+
+describe("the viewer's country", () => {
+  const countryMatch = (
+    matchValue: string,
+    negate = false,
+  ): MatchCondition => ({
+    matchType: "country",
+    matchOperator: "equals",
+    matchValue,
+    negate,
+  });
+
+  it("matches a rewrite on the country CloudFront reported", async () => {
+    withRules(
+      rewriteRule({
+        matches: [countryMatch("BE FR")],
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/anything")
+        .withViewerCountry("FR")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/api/v1/legacy");
+  });
+
+  it("leaves the request alone when the country is not listed", async () => {
+    withRules(
+      rewriteRule({
+        matches: [countryMatch("BE FR")],
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/anything")
+        .withViewerCountry("DE")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/anything");
+  });
+
+  it("ignores the header a viewer sent itself at viewer-request", async () => {
+    // CloudFront only works the country out after this event, so anything under
+    // that name here came from the client. Trusting it would let a visitor pick
+    // which country's rules apply to them by setting one header.
+    withRules(redirectRule({ matches: [countryMatch("FR")] }));
+
+    const result = await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("/old-landing")
+        .withViewerCountry("FR")
+        .build(),
+    );
+
+    expect((result as CloudFrontResultResponse).status).toBeUndefined();
+  });
+
+  it("does not fire a NEGATED country rule at viewer-request", async () => {
+    // The failure mode the skip in RulesService exists for. Evaluated with an
+    // empty country, "everyone except France" inverts into "everyone", so this
+    // one rule would redirect the entire site.
+    withRules(redirectRule({ matches: [countryMatch("FR", true)] }));
+
+    const result = await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("/old-landing")
+        .build(),
+    );
+
+    expect((result as CloudFrontResultResponse).status).toBeUndefined();
+  });
+
+  it("does not fire a NEGATED country rewrite when the header is missing", async () => {
+    // Same inversion, this time from a distribution whose cache and origin
+    // request policies never ask for the header. Nothing is wrong with the
+    // rule, so the only signal is that it does nothing.
+    withRules(
+      rewriteRule({
+        matches: [countryMatch("FR", true)],
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest().withUri("/anything").build(),
+    )) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/anything");
+  });
+
+  it("still redirects on a rule with no country condition", async () => {
+    // The country is absent at viewer-request for every request, so an ordinary
+    // redirect must be untouched by all of the above.
+    withRules(redirectRule());
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("/old-landing")
+        .build(),
+    )) as CloudFrontResultResponse;
+
+    expect(result.status).toBe("301");
   });
 });
 

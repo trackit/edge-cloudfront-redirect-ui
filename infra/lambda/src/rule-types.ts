@@ -25,6 +25,7 @@ export const MatchType = {
   REGEX: "regex",
   HEADER: "header",
   COOKIE: "cookie",
+  COUNTRY: "country",
 } as const;
 
 export const MatchOperator = {
@@ -97,6 +98,19 @@ export type RequestParams = {
   protocol: string;
   headers?: Record<string, string>;
   cookies?: string;
+  /**
+   * The viewer's country, as CloudFront determined it. Its own field rather than
+   * a read of `headers["cloudfront-viewer-country"]` because *when* it may be
+   * read is the whole subtlety: CloudFront adds that header after the
+   * viewer-request event, so at viewer-request the name carries either nothing
+   * or whatever the viewer chose to send. `getParams` fills this in for
+   * origin-request only, and everything downstream reads the field, so no
+   * caller has to remember the distinction.
+   *
+   * Absent means "unknown", not "nowhere" — a rule that needs it is skipped
+   * rather than evaluated. See `RulesService.match`.
+   */
+  country?: string;
 };
 
 /** Sort-key prefix. Also the DynamoDB `begins_with` operand. */

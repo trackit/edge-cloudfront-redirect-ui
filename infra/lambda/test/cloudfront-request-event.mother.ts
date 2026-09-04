@@ -4,6 +4,7 @@ import type {
   CloudFrontRequest,
   CloudFrontRequestEvent,
 } from "aws-lambda";
+import { VIEWER_COUNTRY_HEADER } from "../src/lib/viewer-country.js";
 import { VIEWER_HOST_HEADER } from "../src/lib/viewer-host.js";
 
 const ORIGIN_DOMAIN = "original-bucket.s3.amazonaws.com";
@@ -101,6 +102,19 @@ export class CloudfrontRequestEventMother {
   /** A distribution with no viewer-request association: nothing stamped it. */
   withoutViewerHostHeader(): this {
     delete this.request.headers[VIEWER_HOST_HEADER];
+    return this;
+  }
+
+  /**
+   * The country header. CloudFront only ever sets this itself, and only from
+   * origin-request onwards, so putting it on a viewer-request event describes a
+   * viewer that sent the name itself — which is exactly the case worth testing,
+   * since the handler must ignore it there.
+   */
+  withViewerCountry(country: string): this {
+    this.request.headers[VIEWER_COUNTRY_HEADER] = [
+      { key: "CloudFront-Viewer-Country", value: country },
+    ];
     return this;
   }
 

@@ -20,6 +20,14 @@ export const getMatchSource = (
   if (match.matchType === MatchTypeValues.COOKIE) {
     return request.cookies ?? "";
   }
+  // Returned here rather than from the lookup below so a country is never run
+  // through the path/full-URL logic. The schema pins a country condition to
+  // `equals`, but this reads items straight out of DynamoDB, and a rule written
+  // by hand before that constraint existed should still be tested against the
+  // country and not against the URL.
+  if (match.matchType === MatchTypeValues.COUNTRY) {
+    return request.country ?? "";
+  }
 
   const isRegexMode =
     match.matchType === MatchTypeValues.REGEX ||
@@ -46,6 +54,7 @@ export const getMatchSource = (
     [MatchTypeValues.REGEX]: pathSource,
     [MatchTypeValues.HEADER]: "",
     [MatchTypeValues.COOKIE]: "",
+    [MatchTypeValues.COUNTRY]: "",
   };
 
   return lookup[match.matchType] ?? "";
