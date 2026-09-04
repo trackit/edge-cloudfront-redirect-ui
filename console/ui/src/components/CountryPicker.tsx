@@ -143,6 +143,16 @@ export default function CountryPicker({ codes, excluded, onChange }: Props) {
           </div>
         ))}
 
+        {/* Both, not one or the other: the message explains why the list looks
+            empty, and the button is the way out of it. Shown alone, the button
+            would leave the empty list unexplained. */}
+        {nothingFound && (
+          <p className="hint" role="status">
+            No country matches “{query.trim()}”.
+            {offered === undefined && " A country code is exactly two letters."}
+          </p>
+        )}
+
         {offered !== undefined && (
           <button
             type="button"
@@ -152,13 +162,6 @@ export default function CountryPicker({ codes, excluded, onChange }: Props) {
             <IconPlus size={14} />
             Use code {offered}
           </button>
-        )}
-
-        {nothingFound && offered === undefined && (
-          <p className="hint" role="status">
-            No country matches “{query.trim()}”. A country code is exactly two
-            letters.
-          </p>
         )}
       </div>
 
