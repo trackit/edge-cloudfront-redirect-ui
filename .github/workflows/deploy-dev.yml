@@ -1,0 +1,161 @@
+name: Deploy dev
+
+# The dev environment tracks the `dev` branch: every merge redeploys it, so the
+# running instance is always what is on the branch.
+#
+# `workflow_dispatch` is the manual path. The sandbox account is swept weekly and
+# a swept environment does not come back on its own — re-running this is how it
+# gets rebuilt without waiting for someone to merge.
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Reset the rules table to the demo data"
+        type: boolean
+        default: true
+
+# Never cancel a run that is mid-apply: a half-applied stack with no state written
+# is the one thing worse than a slow queue. Two merges landing together queue.
+concurrency:
+  group: sandbox-dev
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # assume the deploy role via OIDC
+  contents: read
+
+jobs:
+  # A push to `dev` does not trigger CI on its own — it runs on pull_request and
+  # on push to main. Calling it here is what stops a merge that broke something
+  # from being applied to an environment before anyone notices.
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: checks
+    runs-on: ubuntu-latest
+    # Holds AWS_DEPLOY_ROLE_ARN / AWS_REGION / STATE_BUCKET as variables and
+    # BASIC_AUTH_PASSWORD as a secret, and scopes them to this environment so a
+    # workflow on another branch cannot assume the role.
+    environment: sandbox-dev
+    # Two of the three stacks create CloudFront distributions. A cold rebuild
+    # after a sweep is 30-40 minutes; a normal merge is 10-20.
+    timeout-minutes: 60
+
+    env:
+      TF_IN_AUTOMATION: "1"
+      TF_INPUT: "0"
+      AWS_REGION: ${{ vars.AWS_REGION }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # Both console stacks build from source during their apply. Installing once
+      # here is why their tfvars set npm_install_command = "" — otherwise each one
+      # shells out to its own full reinstall inside local-exec.
+      - run: npm ci
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.6
+          # The wrapper prints its own banner around every command, which lands in
+          # stdout and corrupts `terraform output -raw` where we capture it.
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # The backend block is not committed inside the stacks — a consumer of this
+      # module would inherit it and `terraform init` would ask them for a bucket
+      # they do not own. It is copied in here instead, one file for all three.
+      - name: Stage the S3 backend
+        run: |
+          for stack in examples/infra console/api/infra console/ui/infra; do
+            cp deploy/backend.tf "$stack/backend.tf"
+          done
+
+      - name: Stack 1 — data plane
+        run: |
+          terraform -chdir=examples/infra init \
+            -backend-config="bucket=${{ vars.STATE_BUCKET }}" \
+            -backend-config="key=dev/data-plane.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+          terraform -chdir=examples/infra apply -auto-approve \
+            -var-file=../../deploy/dev/data-plane.tfvars
+
+      # Threaded into stack 2 rather than committed: the ARN only exists once the
+      # table does, and target_table_arns is the setting that silently breaks the
+      # console when it is wrong — an empty list means every rule request comes
+      # back AccessDenied.
+      - name: Carry the table forward
+        run: |
+          arn=$(terraform -chdir=examples/infra output -raw table_arn)
+          echo "TF_VAR_target_table_arns=[\"$arn\"]" >> "$GITHUB_ENV"
+
+      - name: Stack 2 — control plane
+        run: |
+          terraform -chdir=console/api/infra init \
+            -backend-config="bucket=${{ vars.STATE_BUCKET }}" \
+            -backend-config="key=dev/control-plane.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+          terraform -chdir=console/api/infra apply -auto-approve \
+            -var-file=../../../deploy/dev/control-plane.tfvars
+
+      - name: Carry the API endpoint forward
+        run: |
+          endpoint=$(terraform -chdir=console/api/infra output -raw api_endpoint)
+          echo "TF_VAR_api_endpoint=$endpoint" >> "$GITHUB_ENV"
+
+      - name: Stack 3 — console
+        env:
+          # Rendered into the CloudFront Function and stored in state, so it is a
+          # gate rather than a secret — but it is still not something to commit.
+          TF_VAR_basic_auth_password: ${{ secrets.BASIC_AUTH_PASSWORD }}
+        run: |
+          terraform -chdir=console/ui/infra init \
+            -backend-config="bucket=${{ vars.STATE_BUCKET }}" \
+            -backend-config="key=dev/console.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+          terraform -chdir=console/ui/infra apply -auto-approve \
+            -var-file=../../../deploy/dev/console.tfvars
+
+      # dev mirrors the branch, so resetting it to a known state each deploy is
+      # the behaviour we want. The script reads the table, its region and the host
+      # from the outputs in its own directory, so it needs no arguments.
+      - name: Seed the demo data
+        # `inputs` is null on a push, and GitHub casts null and false to the same
+        # number, so `inputs.seed != false` would skip this on every merge. Name
+        # the push case instead of relying on that comparison.
+        if: github.event_name == 'push' || inputs.seed
+        run: ./seed-demo.sh
+        working-directory: examples/infra
+
+      # The console's connect screen is per-browser localStorage, so everyone who
+      # opens the URL types the distribution id, table name and region in by hand.
+      # Without this, every "send me the link" is a dig through Terraform output.
+      - name: Summarise the environment
+        run: |
+          {
+            echo "## dev environment"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Console | $(terraform -chdir=console/ui/infra output -raw console_url) |"
+            echo "| Demo site | https://$(terraform -chdir=examples/infra output -raw cloudfront_domain_name) |"
+            echo "| Distribution id | \`$(terraform -chdir=examples/infra output -raw cloudfront_distribution_id)\` |"
+            echo "| Rules table | \`$(terraform -chdir=examples/infra output -raw table_name)\` |"
+            echo "| Region | \`$(terraform -chdir=examples/infra output -raw table_region)\` |"
+            echo
+            echo "The CloudFront domain changes every time the sandbox is swept — copy it from here, do not bookmark it."
+          } >> "$GITHUB_STEP_SUMMARY"
