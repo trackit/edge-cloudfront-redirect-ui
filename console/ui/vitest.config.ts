@@ -22,6 +22,7 @@ export default defineConfig({
         "src/api/client.ts",
         "src/api/error.ts",
         "src/api/types.ts",
+        "src/countries.ts",
         "src/domain/distribution.ts",
       ],
       exclude: [...coverageConfigDefaults.exclude],
