@@ -67,6 +67,25 @@ describe("describeMatch", () => {
       match({ matchType: "header", matchValue: "prod" }),
       "header:? equals prod",
     ],
+    // A country reads as set membership rather than showing its stored form.
+    // `country equals BE FR` would describe the encoding: the operator is
+    // `equals` only because the edge splits the value on spaces and matches any
+    // variant.
+    [
+      "a country condition, as an inclusion",
+      match({ matchType: "country", matchValue: "BE FR" }),
+      "country in BE, FR",
+    ],
+    [
+      "a negated country condition, as an exclusion",
+      match({ matchType: "country", matchValue: "US", negate: true }),
+      "country not in US",
+    ],
+    [
+      "a country condition with no country yet",
+      match({ matchType: "country", matchValue: "" }),
+      "country in ",
+    ],
   ])("renders %s", (_case, condition, expected) => {
     expect(describeMatch(condition)).toBe(expected);
   });
