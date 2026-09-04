@@ -322,3 +322,104 @@ describe("match conditions", () => {
     ).toBeNull();
   });
 });
+
+/**
+ * A country condition is the only one whose source can be *unknown* rather than
+ * just different: CloudFront adds `CloudFront-Viewer-Country` after the
+ * viewer-request event, and a distribution that does not ask for it in a policy
+ * never sends it at all. Every test below exists because of that third state.
+ */
+describe("country conditions", () => {
+  const countryRule = (matchValue: string, negate = false): RedirectRule =>
+    rule({
+      matches: [
+        { matchType: "country", matchOperator: "equals", matchValue, negate },
+      ],
+    });
+
+  const service = (rules: RedirectRule[]) =>
+    new RulesService(new FakeRepository(rules), 60_000);
+
+  it.each([
+    ["the only listed country", "FR", "FR", true],
+    ["one of several listed countries", "BE FR NL", "FR", true],
+    ["a country that is not listed", "BE NL", "FR", false],
+    // Stored codes are uppercase and CloudFront sends uppercase, but
+    // `caseSensitive` defaults to false, so neither side has to be trusted to
+    // get the casing right.
+    ["a lowercase header value", "FR", "fr", true],
+  ])("matches %s", async (_label, matchValue, country, expected) => {
+    const result = await service([countryRule(matchValue)]).match(
+      params({ country }),
+      "REDIRECT",
+    );
+    expect(result !== null).toBe(expected);
+  });
+
+  it("excludes the listed countries when negated", async () => {
+    const svc = service([countryRule("FR", true)]);
+
+    expect(await svc.match(params({ country: "FR" }), "REDIRECT")).toBeNull();
+    expect(
+      await svc.match(params({ country: "DE" }), "REDIRECT"),
+    ).not.toBeNull();
+  });
+
+  it("keeps a code it does not recognise, and matches on it", async () => {
+    // The edge compares strings and holds no list of countries, which is what
+    // makes a new ISO code work the day CloudFront starts returning it, with no
+    // deploy. Nothing here may be "cleaned up" into a closed list.
+    const svc = service([countryRule("FR XK")]);
+
+    expect(
+      await svc.match(params({ country: "XK" }), "REDIRECT"),
+    ).not.toBeNull();
+  });
+
+  it.each([
+    ["absent", undefined],
+    ["empty", ""],
+  ])(
+    "skips a rule with a country condition when the country is %s",
+    async (_label, country) => {
+      expect(
+        await service([countryRule("FR")]).match(
+          params({ country }),
+          "REDIRECT",
+        ),
+      ).toBeNull();
+    },
+  );
+
+  it("skips a NEGATED country condition when the country is unknown", async () => {
+    // The test this whole guard exists for. Without it: the source is "", the
+    // comparison fails, `negate` flips the failure into a match, and a rule
+    // meaning "redirect everyone except France" fires for every request,
+    // France included. A rule that does nothing is a bug; a rule that matches
+    // everything is an outage.
+    expect(
+      await service([countryRule("FR", true)]).match(params(), "REDIRECT"),
+    ).toBeNull();
+  });
+
+  it("does not skip the rule's other conditions when the country is known", async () => {
+    // The skip is per rule, not per condition: guards against a country
+    // condition being treated as satisfied and the rest ignored.
+    const svc = service([
+      rule({
+        matches: [
+          { matchType: "path", matchOperator: "equals", matchValue: "/other" },
+          { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+        ],
+      }),
+    ]);
+
+    expect(await svc.match(params({ country: "FR" }), "REDIRECT")).toBeNull();
+  });
+
+  it("leaves a rule without a country condition alone", async () => {
+    // No country in the request is the normal case at viewer-request, where
+    // every ordinary redirect still has to fire.
+    expect(await service([rule()]).match(params(), "REDIRECT")).not.toBeNull();
+  });
+});

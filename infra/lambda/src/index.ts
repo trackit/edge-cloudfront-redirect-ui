@@ -14,6 +14,7 @@ import type {
   CloudFrontOriginWithExtendedProtocol,
   RequestParams,
 } from "./rule-types.js";
+import { VIEWER_COUNTRY_HEADER } from "./lib/viewer-country.js";
 import { VIEWER_HOST_HEADER, stampViewerHost } from "./lib/viewer-host.js";
 
 /**
@@ -96,12 +97,24 @@ const getParams = (
   const protocol = headers["x-forwarded-proto"] || "https";
   const search = request.querystring ? `?${request.querystring}` : "";
 
+  // origin-request only, for the same reason the viewer host is: the value is
+  // only CloudFront's at that event. CloudFront adds this header *after*
+  // viewer-request, so there it is either absent or something the viewer sent
+  // itself, and honoring it would let a client pick which country's rules to be
+  // matched by. Left undefined rather than "" so `RulesService` can tell
+  // "unknown" from "known and different" and skip the rule instead of inverting
+  // it. Absent at origin-request too when the distribution's cache or origin
+  // request policy does not ask for the header.
+  const country =
+    eventType === "origin-request" ? headers[VIEWER_COUNTRY_HEADER] : undefined;
+
   return {
     hostname,
     path: `${request.uri}${search}`,
     protocol,
     headers,
     cookies: headers["cookie"] || "",
+    ...(country && { country }),
   };
 };
 

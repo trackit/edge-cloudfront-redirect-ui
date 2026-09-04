@@ -43,11 +43,33 @@ export class RulesService {
   ): Promise<MatchResult | null> {
     const rules = await this.loadRules(params.hostname, kind);
 
-    const matched = rules.find((rule) =>
-      rule.matches.every((m) => this.evaluateMatch(m, params)),
+    const matched = rules.find(
+      (rule) =>
+        this.isEvaluable(rule, params) &&
+        rule.matches.every((m) => this.evaluateMatch(m, params)),
     );
 
     return matched ? this.formatResult(matched, params) : null;
+  }
+
+  /**
+   * Whether every condition on the rule has something to be tested against.
+   *
+   * Only the country can be *unknown* rather than merely different: CloudFront
+   * adds `CloudFront-Viewer-Country` after the viewer-request event, and a
+   * distribution that never asks for it in a cache or origin request policy
+   * never sends it at all. Skipping the rule is not a nicety, it is the only
+   * safe answer — with an empty source the comparison fails, and `negate` then
+   * flips that into a match, so "redirect everyone except France" would fire
+   * for France too, and for every other country. Failing to match is a rule
+   * that does nothing; matching everything is an outage.
+   *
+   * Filtered here and not in `loadRules` so the TTL cache stays keyed on host
+   * and kind alone, and holds the same rules for every request.
+   */
+  private isEvaluable(rule: RedirectRule, params: RequestParams): boolean {
+    if (params.country) return true;
+    return !rule.matches.some((m) => m.matchType === MatchType.COUNTRY);
   }
 
   private async loadRules(
