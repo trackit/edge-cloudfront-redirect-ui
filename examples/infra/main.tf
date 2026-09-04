@@ -6,6 +6,17 @@ locals {
   origin_domain = local.use_placeholder_origin ? (
     aws_s3_bucket.origin[0].bucket_regional_domain_name
   ) : var.origin_domain_name
+
+  # What the placeholder origin serves. `index.html` is where an unmatched request
+  # lands; the other two exist so a rewrite has somewhere visibly different to send
+  # one. With a single page on the origin, a path rewrite lands back on the page
+  # you already had and proves nothing you can see — and repointing a rule from one
+  # to the other is what shows a rule change taking effect.
+  origin_pages = {
+    "index.html"   = "<h1>Origin reached</h1><p>No redirect/rewrite rule matched this request.</p>"
+    "pricing.html" = "<h1>Pricing</h1><p>This is <code>/pricing.html</code> on the origin.</p>"
+    "plans.html"   = "<h1>Plans</h1><p>This is <code>/plans.html</code> on the origin.</p>"
+  }
 }
 
 # --- Data plane -------------------------------------------------------------
@@ -28,6 +39,7 @@ module "edge" {
   table_name    = module.table.table_name
   table_arn     = module.table.table_arn
   table_region  = module.table.table_region
+  cache_ttl_ms  = var.cache_ttl_ms
   tags          = var.tags
 }
 
@@ -54,12 +66,12 @@ resource "aws_s3_bucket_public_access_block" "origin" {
   restrict_public_buckets = true
 }
 
-resource "aws_s3_object" "index" {
-  count = local.use_placeholder_origin ? 1 : 0
+resource "aws_s3_object" "page" {
+  for_each = local.use_placeholder_origin ? local.origin_pages : {}
 
   bucket       = aws_s3_bucket.origin[0].id
-  key          = "index.html"
-  content      = "<!doctype html><title>edgeroute example origin</title><h1>Origin reached</h1><p>No redirect/rewrite rule matched this request.</p>"
+  key          = each.key
+  content      = "<!doctype html><title>edgeroute example origin</title>${each.value}"
   content_type = "text/html"
 }
 
@@ -111,6 +123,40 @@ data "aws_cloudfront_cache_policy" "caching_disabled" {
   name = "Managed-CachingDisabled"
 }
 
+# Without this, rewrites never match.
+#
+# The function stamps the viewer's hostname at viewer-request and reads it back at
+# origin-request, because CloudFront has replaced `Host` with the origin's domain by
+# then. But CloudFront builds the origin request from the cache key plus the origin
+# request policy — with caching disabled and no policy, the stamped header is
+# dropped in between, the lookup falls back to the origin's domain, and no rule is
+# found. Confirmed the hard way on a real distribution: the function logged
+# `no viewer host stamped at origin-request` with the bucket's domain as the key.
+#
+# A whitelist rather than Managed-AllViewer: that one forwards `Host` too, and an
+# S3 origin behind OAC has to receive the bucket's own hostname. Query strings are
+# forwarded because a rewrite can match on them.
+resource "aws_cloudfront_origin_request_policy" "viewer_host" {
+  name    = "${var.function_name}-viewer-host"
+  comment = "Forwards the edge function's viewer-host header to origin-request"
+
+  headers_config {
+    header_behavior = "whitelist"
+
+    headers {
+      items = [module.edge.viewer_host_header]
+    }
+  }
+
+  cookies_config {
+    cookie_behavior = "none"
+  }
+
+  query_strings_config {
+    query_string_behavior = "all"
+  }
+}
+
 # trivy:ignore:AVD-AWS-0010 access logging is unnecessary for a throwaway demo distribution
 # trivy:ignore:AVD-AWS-0011 WAF is out of scope for the example
 resource "aws_cloudfront_distribution" "this" {
@@ -137,11 +183,12 @@ resource "aws_cloudfront_distribution" "this" {
   }
 
   default_cache_behavior {
-    target_origin_id       = local.origin_id
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD"]
-    cached_methods         = ["GET", "HEAD"]
-    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_disabled.id
+    target_origin_id         = local.origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD"]
+    cached_methods           = ["GET", "HEAD"]
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.viewer_host.id
 
     # One published function, associated twice — it dispatches on eventType.
     lambda_function_association {

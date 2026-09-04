@@ -101,3 +101,8 @@ jobs:
       - run: terraform -chdir=console/api/infra init -backend=false
       - run: terraform -chdir=console/api/infra validate
       - run: terraform -chdir=console/api/infra test
+      # The console's hosting. No variables needed: validate does not evaluate
+      # them, and the test suite supplies its own throwaway credential.
+      - run: terraform -chdir=console/ui/infra init -backend=false
+      - run: terraform -chdir=console/ui/infra validate
+      - run: terraform -chdir=console/ui/infra test

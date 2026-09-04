@@ -1,0 +1,35 @@
+# Copy to sandbox.tfvars, fill in, and pass it explicitly:
+#
+#   terraform apply -var-file=sandbox.tfvars
+#
+# Not terraform.tfvars: Terraform auto-loads that name, including when running
+# `terraform test`, where it overrides the defaults the suite asserts on and two
+# runs fail for no reason. Both names are gitignored (*.tfvars); this .example is
+# the tracked one, so keep real values out of it.
+
+# Rules tables the API's own role may read and write.
+#
+# This is the one setting people miss. It is empty by default, and empty means the
+# API can reach no rules table at all, so every rule request comes back
+# AccessDenied — the console lists hosts and then fails on all of them. For the
+# sandbox this is the example's table: `terraform output -raw table_arn` in
+# examples/infra.
+target_table_arns = ["arn:aws:dynamodb:us-east-1:REPLACE_ME:table/edgeroute-example-rules"]
+
+# Regions a target may name. Empty falls back to a built-in list that both ages
+# and includes opt-in regions the account may not have enabled.
+allowed_regions = ["us-east-1"]
+
+# The targets registry is the only record of which table each target points at, so
+# it is protected by default. In a sandbox that blocks `terraform destroy`, and
+# flipping it afterwards costs an extra apply.
+deletion_protection = false
+
+# `npm ci` at the repo root deletes and reinstalls node_modules, which wipes your
+# working install mid-apply. "npm install" keeps it; "" skips installing entirely.
+npm_install_command = "npm install"
+
+tags = {
+  project = "edgeroute"
+  env     = "sandbox"
+}

@@ -123,22 +123,62 @@ resource "aws_cloudfront_distribution" "existing" {
   itself, choosing which host's rewrite rules, and so which **origin**, apply to
   its own request.
 
-  So: attach both. If you genuinely cannot, make sure that cache behavior does
-  **not** forward `X-EdgeRoute-Viewer-Host` from viewers — with no origin request
-  policy naming it, CloudFront drops it before origin-request and the lookup falls
-  back to the origin's domain. The function logs a warning (once per execution
-  environment) when it reaches origin-request with nothing stamped, so a missing
-  association is visible in CloudWatch rather than silent. Redirects are
+  So: attach both. If you genuinely cannot, then do **not** forward
+  `X-EdgeRoute-Viewer-Host` — with no policy naming it, CloudFront drops it before
+  origin-request and the lookup falls back to the origin's domain, which is at
+  least a value the client cannot choose. The function logs a warning (once per
+  execution environment) when it reaches origin-request with nothing stamped, so
+  either mistake is visible in CloudWatch rather than silent. Redirects are
   unaffected either way.
 
-- **Cache and origin request policies.** The stamped header reaches
-  origin-request regardless of your origin request policy, because it is added
-  during the same request rather than forwarded from the viewer. Your cache
-  policy is a separate question: leave the header out of the **cache key** unless
-  the behavior both caches responses and serves several hostnames whose rules
-  differ — in that case key on it (or on `Host`), or one hostname's rewritten
-  response will be served to another. Rules are only re-evaluated on a cache
-  miss, so a caching behavior also delays when a rule change is observed.
+  Note the shape of this: forwarding the header is what makes rewrites work, and
+  the overwrite at viewer-request is what makes forwarding it safe. Doing the
+  first without the second is the one combination to avoid.
+
+- **You must forward `X-EdgeRoute-Viewer-Host` to the origin.** Attaching both
+  associations is not enough. CloudFront builds the origin request from the cache
+  key plus the origin request policy, so a header **no policy names is dropped
+  between viewer-request and origin-request** — including one this function added
+  itself moments earlier. Every rewrite then looks up the origin's domain, finds
+  nothing, and silently does nothing.
+
+  Verified the hard way on a real distribution: with `Managed-CachingDisabled` and
+  no origin request policy, `curl` returned the origin's 403 for an unrewritten
+  path and the function logged
+  `redirect-rules: no viewer host stamped at origin-request` with the bucket's
+  domain as the key. Read that log line as "the header did not arrive", not
+  necessarily as "the association is missing".
+
+  Name the header in an origin request policy on every behavior the associations
+  run on. The header name is the module's `viewer_host_header` output, so it does
+  not have to be retyped:
+
+  ```hcl
+  resource "aws_cloudfront_origin_request_policy" "viewer_host" {
+    name = "edgeroute-viewer-host"
+
+    headers_config {
+      header_behavior = "whitelist"
+      headers { items = [module.edge.viewer_host_header] }
+    }
+    cookies_config { cookie_behavior = "none" }
+    # Rewrites can match on the query string, so it has to arrive too.
+    query_strings_config { query_string_behavior = "all" }
+  }
+  ```
+
+  A whitelist rather than `Managed-AllViewer`, which also forwards `Host` — an S3
+  origin behind OAC must receive the bucket's own hostname, so forwarding the
+  viewer's breaks the origin. If you already have an origin request policy, add the
+  header to it rather than attaching a second one; a behavior takes only one.
+
+  `examples/infra` does exactly this, and is the shortest working reference.
+
+- **The cache key is a separate question.** Leave the header out of it unless the
+  behavior both caches responses and serves several hostnames whose rules differ —
+  in that case key on it (or on `Host`), or one hostname's rewritten response will
+  be served to another. Rules are only re-evaluated on a cache miss, so a caching
+  behavior also delays when a rule change is observed.
 
 ## Using the module more than once
 

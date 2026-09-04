@@ -21,6 +21,9 @@ override_module {
     origin_request_lambda_arn = "arn:aws:lambda:us-east-1:123456789012:function:edge:1"
     function_name             = "edge"
     role_arn                  = "arn:aws:iam::123456789012:role/edge-edge"
+    # The origin request policy is built from this, so an override that omits it
+    # plans a policy that forwards nothing.
+    viewer_host_header = "x-edgeroute-viewer-host"
   }
 }
 
@@ -82,4 +85,76 @@ run "existing_origin_when_provided" {
     condition     = aws_cloudfront_distribution.this.origin.*.domain_name == tolist(["origin.example.com"])
     error_message = "the distribution should use the provided origin domain"
   }
+
+  assert {
+    condition     = length(aws_s3_object.page) == 0
+    error_message = "the demo pages belong to the placeholder bucket; there is nowhere to put them otherwise"
+  }
+}
+
+# =============================================================================
+# Forwarding the viewer-host header (the thing rewrites depend on)
+# =============================================================================
+
+run "viewer_host_header_is_forwarded_to_the_origin" {
+  command = plan
+
+  # CloudFront drops a header added at viewer-request unless a policy names it, so
+  # without this every rewrite silently stops matching. Asserted on the policy
+  # rather than on the behavior, because the behavior only carries the policy's
+  # id and that is provider-computed.
+  assert {
+    condition = contains(
+      aws_cloudfront_origin_request_policy.viewer_host.headers_config[0].headers[0].items,
+      "x-edgeroute-viewer-host",
+    )
+    error_message = "the origin request policy must forward the viewer-host header, or no rewrite rule can match"
+  }
+
+  # Managed-AllViewer would also do it, and would also forward Host — which an S3
+  # origin behind OAC rejects, since it has to receive the bucket's own hostname.
+  assert {
+    condition     = aws_cloudfront_origin_request_policy.viewer_host.headers_config[0].header_behavior == "whitelist"
+    error_message = "forward the header by name; forwarding all viewer headers would send Host and break the OAC origin"
+  }
+
+  # A rewrite rule can match on the query string, so it has to survive too.
+  assert {
+    condition     = aws_cloudfront_origin_request_policy.viewer_host.query_strings_config[0].query_string_behavior == "all"
+    error_message = "query strings must reach origin-request for query-string rule matching to work"
+  }
+}
+
+# =============================================================================
+# Demo pages on the placeholder origin
+# =============================================================================
+
+run "placeholder_origin_serves_more_than_one_page" {
+  command = plan
+
+  # A rewrite has to land somewhere visibly different from where the request
+  # started, or nothing about it can be observed from outside.
+  assert {
+    condition     = length(setsubtract(["index.html", "pricing.html", "plans.html"], keys(aws_s3_object.page))) == 0
+    error_message = "the placeholder origin must serve index.html plus at least two rewrite targets"
+  }
+
+  assert {
+    condition     = alltrue([for o in values(aws_s3_object.page) : o.content_type == "text/html"])
+    error_message = "each demo page must be served as text/html, or a browser will offer to download it"
+  }
+}
+
+# =============================================================================
+# Edge rule cache TTL
+# =============================================================================
+
+run "rejects_a_negative_cache_ttl" {
+  command = plan
+
+  variables {
+    cache_ttl_ms = -1
+  }
+
+  expect_failures = [var.cache_ttl_ms]
 }

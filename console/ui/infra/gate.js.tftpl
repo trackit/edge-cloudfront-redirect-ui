@@ -1,0 +1,98 @@
+// CloudFront Function (viewer-request) for the console distribution.
+//
+// Terraform renders this file — `$${...}` is Terraform interpolation, not
+// JavaScript, and a literal one has to be written `$$` to survive rendering.
+// Keep the syntax to what the cloudfront-js runtime accepts: no
+// let/const in older runtimes, no String.startsWith, no optional chaining. The
+// logic lives in one function because CloudFront allows only one
+// viewer-request function per cache behavior, and this one is attached to both.
+//
+// Three jobs, in order:
+//   1. Basic auth. Login is post-MVP; this keeps the console off the open
+//      internet until real auth exists.
+//   2. Strip the /api prefix. The console calls /api/... so the browser stays
+//      same-origin (the API sends no CORS headers), but the API itself serves
+//      /health, not /api/health.
+//   3. Serve the SPA for client-side routes, so /console and a deep link both
+//      return index.html instead of an S3 error.
+var EXPECTED_AUTHORIZATION = "Basic ${credential}";
+
+// Anything vite emits with a hashed filename. Requests here are real files and
+// must not be rewritten to index.html, or a missing asset would answer 200 with
+// a page in place of the script that was asked for.
+var ASSET_PREFIX = "/assets/";
+
+// Extensions served straight from the bucket when they sit at the root, e.g.
+// /favicon.svg. Deliberately an allowlist: "the last segment has a dot" would
+// break the console's own routes, since /console/hosts/d111.cloudfront.net ends
+// in what looks like an extension.
+var STATIC_EXTENSIONS = [
+  ".html",
+  ".js",
+  ".css",
+  ".svg",
+  ".png",
+  ".ico",
+  ".json",
+  ".txt",
+  ".map",
+  ".woff2",
+];
+
+function unauthorized() {
+  return {
+    statusCode: 401,
+    statusDescription: "Unauthorized",
+    headers: {
+      // Without this the browser shows the 401 body instead of prompting.
+      "www-authenticate": {
+        value: 'Basic realm="EdgeRoute console", charset="UTF-8"',
+      },
+      // A cached 401 would keep prompting after the credential is fixed.
+      "cache-control": { value: "no-store" },
+    },
+  };
+}
+
+function isStaticFile(uri) {
+  if (uri.indexOf(ASSET_PREFIX) === 0) return true;
+
+  for (var i = 0; i < STATIC_EXTENSIONS.length; i++) {
+    var ext = STATIC_EXTENSIONS[i];
+    if (uri.length >= ext.length && uri.indexOf(ext, uri.length - ext.length) !== -1) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function handler(event) {
+  var request = event.request;
+  var authorization = request.headers.authorization;
+
+  if (!authorization || authorization.value !== EXPECTED_AUTHORIZATION) {
+    return unauthorized();
+  }
+
+  var uri = request.uri;
+
+  // The API behavior's own path. "/api" with nothing after it becomes "/", which
+  // the API answers as an unknown route rather than as /api.
+  if (uri === "/api" || uri === "/api/") {
+    request.uri = "/";
+    return request;
+  }
+
+  if (uri.indexOf("/api/") === 0) {
+    request.uri = uri.substring(4);
+    return request;
+  }
+
+  // "/" is left alone: the distribution's default root object serves index.html.
+  if (uri !== "/" && !isStaticFile(uri)) {
+    request.uri = "/index.html";
+  }
+
+  return request;
+}

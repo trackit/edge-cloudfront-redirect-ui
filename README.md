@@ -11,9 +11,12 @@ The Terraform module in `infra/` creates a DynamoDB rules table and a Lambda@Edg
 - **viewer-request** → redirects (301/302)
 - **origin-request** → rewrites (rewrite the path and/or switch the request to a different origin)
 
-That's the entire integration surface. The module takes no input about your distribution and never touches it.
+The module takes no input about your distribution and never touches it. What it does ask of your distribution is small, but it is not nothing:
 
-Attach **both**. Rules are keyed on the hostname the viewer asked for, and CloudFront has replaced the `Host` header with the origin's domain by the time origin-request runs — so viewer-request is what carries that hostname across for rewrites to be found under. Redirects work either way; rewrites without the viewer-request association are looked up under the origin's domain, and on a distribution that forwards viewer headers, under whatever hostname the client chose to send. Attaching both is therefore a security requirement — see [modules/edge](infra/modules/edge/README.md#wiring-it-into-an-existing-distribution) and [infra/lambda](infra/lambda/README.md#the-host-a-rule-is-keyed-on).
+1. **Both associations**, as above. Rules are keyed on the hostname the viewer asked for, and CloudFront has replaced the `Host` header with the origin's domain by the time origin-request runs — so viewer-request is what carries that hostname across, in `X-EdgeRoute-Viewer-Host`. Redirects work either way; rewrites without viewer-request are looked up under the origin's domain, and on a distribution that forwards viewer headers, under whatever hostname the client chose to send. Attaching both is therefore a security requirement, not only a functional one.
+2. **Forward that header to the origin**, in an origin request policy on each behavior the associations run on. CloudFront drops a header no policy names, even one added at viewer-request moments earlier — and then no rewrite rule ever matches. The header name is the module's `viewer_host_header` output.
+
+Redirects need only the first. Rewrites need both, and both failures are silent from outside: the request simply reaches your origin unchanged. The function logs a warning when it reaches origin-request with no hostname, which is the fastest way to tell the two apart. See [modules/edge](infra/modules/edge/README.md#wiring-it-into-an-existing-distribution) for the policy, and [infra/lambda](infra/lambda/README.md#the-host-a-rule-is-keyed-on) for why any of this is necessary.
 
 ## Repo layout
 
