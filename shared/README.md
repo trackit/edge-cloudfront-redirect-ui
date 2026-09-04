@@ -9,7 +9,10 @@ These schemas model the exact DynamoDB **item** shape the edge reads, derived fr
 
 **Rule shape notes**
 
-- **Match conditions** use `matchType` / `matchOperator` / `matchValue` (+ optional `negate`, `caseSensitive`, `headerName`). `matchType ∈ {path, hostname, protocol, regex, header, cookie}`, `matchOperator ∈ {equals, contains, regex}`. `headerName` is required iff `matchType` is `header`.
+- **Match conditions** use `matchType` / `matchOperator` / `matchValue` (+ optional `negate`, `caseSensitive`, `headerName`). `matchType ∈ {path, hostname, protocol, regex, header, cookie, country}`, `matchOperator ∈ {equals, contains, regex}`. `headerName` is required iff `matchType` is `header`.
+- **`matchValue` holds space-separated alternatives**, Akamai-style: any variant may match. This is not visible in the schema beyond a `$comment`, but it is what the edge does for every match type (`RulesService.evaluateMatch`), and it is the whole mechanism behind the next point.
+- **`country`** carries ISO 3166-1 alpha-2 codes, so `"BE FR"` means "the viewer is in Belgium or France" and `negate: true` makes it an exclude list. Its `matchOperator` can only be `equals`. The `pattern` validates the **format**, never the list of countries: CloudFront publishes no such list and its geolocation database changes without notice, so a closed enum would reject a legitimate new country until the schema shipped again (same reasoning as `getAllowedRegions` in `console/api/src/lib/aws-regions.ts`). A reader of these items must therefore expect codes it does not recognise, and must not drop them.
+- **A `country` condition is only evaluable at origin-request.** CloudFront adds `CloudFront-Viewer-Country` _after_ the viewer-request event, so a redirect carrying one is evaluated at origin-request rather than viewer-request. See [infra/lambda](../infra/lambda/README.md#the-country-a-rule-can-be-keyed-on).
 - **`forwardSettings.origin`** (rewrite) is a discriminated union — exactly one of `s3` / `custom` — mirroring the CloudFront `request.origin` structure from `@types/aws-lambda` (the edge assigns it straight through). See both example items.
 - **`disabled`** is optional and reserved for a future "toggle off" feature; the source runtime does **not** honor it yet, so ER-101 must skip `disabled: true` rules or it's a no-op.
 
