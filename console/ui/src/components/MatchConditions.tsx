@@ -1,6 +1,7 @@
 import type { MatchCondition } from "../api";
 import { emptyMatch } from "../ruleDraft";
 import { IconPlus, IconTrash } from "./icons";
+import Toggleable from "./Toggleable";
 
 interface Props {
   matches: MatchCondition[];
@@ -197,35 +198,5 @@ export default function MatchConditions({ matches, onChange }: Props) {
         Add condition
       </button>
     </div>
-  );
-}
-
-/**
- * A compact two-state chip. `aria-pressed` rather than `role="switch"`: these sit
- * inline as a pair of modifiers on the condition above them, and the switches in
- * the editor are the labelled rows — using the same role for both would flatten
- * that distinction.
- */
-function Toggleable({
-  label,
-  hint,
-  on,
-  onClick,
-}: {
-  label: string;
-  hint: string;
-  on: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={`flag${on ? " is-on" : ""}`}
-      aria-pressed={on}
-      title={hint}
-      onClick={onClick}
-    >
-      {label}
-    </button>
   );
 }
