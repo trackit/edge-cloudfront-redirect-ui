@@ -153,7 +153,7 @@ export default function RuleEditor({
                     is replaced wholesale rather than reordered. */}
                 {details.map((detail, at) => (
                   <li key={at}>
-                    <strong>{labelForPath(detail.path)}</strong>{" "}
+                    <strong>{labelForPath(detail.path, draft.matches)}</strong>{" "}
                     {detail.message}
                   </li>
                 ))}
@@ -176,7 +176,11 @@ export default function RuleEditor({
           className={`editor-section${draft.kind === "redirect" ? " is-banded" : ""}`}
         >
           <legend>Match conditions</legend>
-          <MatchConditions matches={draft.matches} onChange={setMatches} />
+          <MatchConditions
+            matches={draft.matches}
+            kind={draft.kind}
+            onChange={setMatches}
+          />
         </fieldset>
 
         {/* A redirect carries its priority next to its status code, where the
