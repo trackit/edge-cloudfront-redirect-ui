@@ -2095,3 +2095,129 @@ button {
   outline: 2px solid var(--orange);
   outline-offset: 1px;
 }
+
+/* --- country picker --- */
+
+.countries {
+  display: grid;
+  gap: 10px;
+}
+
+/* A read-only summary of the current value. `min-height` so the row does not
+   jump between the empty hint and one line of countries. */
+.countries-selected {
+  margin: 0;
+  min-height: 38px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.countries-selected .hint {
+  margin: 0;
+}
+
+.country-groups {
+  display: grid;
+  gap: 12px;
+  /* The full list is ~250 countries: capped and scrolled so the picker does not
+     push the rest of the editor off the drawer. */
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.country-group-label {
+  margin: 0 0 7px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.country-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.country-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: 12px;
+  cursor: pointer;
+}
+.country-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.country-chip.is-on {
+  background: var(--orange-glow);
+  border-color: var(--orange);
+  color: var(--orange-600);
+  font-weight: 600;
+}
+.country-chip:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 1px;
+}
+/* A code our generated list does not contain. Dashed so it does not read as one
+   of the countries we vouch for, while staying selectable. */
+.country-chip.is-unknown {
+  border-style: dashed;
+  font-family: var(--mono);
+}
+
+.country-chip-code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+.country-chip.is-on .country-chip-code {
+  color: var(--orange-600);
+}
+
+/* The escape hatch: adds a code the list has never heard of. */
+.country-offer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  padding: 6px 11px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.country-offer:hover {
+  border-color: var(--orange);
+  color: var(--orange-600);
+}
+.country-offer:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 1px;
+}
+
+/* A warning, not an error: it says the code will be saved. `.callout` is blue
+   and informational, this is the amber variant. */
+.callout.is-warn {
+  margin: 0;
+  border-color: rgba(255, 207, 92, 0.5);
+  background: rgba(255, 207, 92, 0.12);
+}
