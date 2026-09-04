@@ -38,12 +38,24 @@
       "additionalProperties": false,
       "properties": {
         "matchType": {
-          "enum": ["path", "hostname", "protocol", "regex", "header", "cookie"]
+          "enum": [
+            "path",
+            "hostname",
+            "protocol",
+            "regex",
+            "header",
+            "cookie",
+            "country"
+          ]
         },
         "matchOperator": {
           "enum": ["equals", "contains", "regex"]
         },
-        "matchValue": { "type": "string", "minLength": 1 },
+        "matchValue": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Space-separated alternatives, Akamai-style: any variant may match (RulesService.evaluateMatch splits on \" \"). Documented here because it is the whole mechanism a `country` condition uses to mean \"is one of\" — see the conditional below."
+        },
         "negate": { "type": "boolean" },
         "caseSensitive": { "type": "boolean" },
         "headerName": {
@@ -52,11 +64,32 @@
           "description": "Required when matchType is \"header\"; disallowed otherwise."
         }
       },
-      "if": {
-        "properties": { "matchType": { "const": "header" } }
-      },
-      "then": { "required": ["headerName"] },
-      "else": { "not": { "required": ["headerName"] } }
+      "allOf": [
+        {
+          "$comment": "headerName is required iff matchType is \"header\".",
+          "if": {
+            "properties": { "matchType": { "const": "header" } }
+          },
+          "then": { "required": ["headerName"] },
+          "else": { "not": { "required": ["headerName"] } }
+        },
+        {
+          "$comment": "A country condition carries ISO 3166-1 alpha-2 codes, space-separated, and is a set membership test — so the operator can only be `equals`, which the space-splitting above turns into \"is one of\". The pattern validates the format and deliberately not the list of countries: CloudFront publishes no such list, its geolocation database changes without notice, and a closed enum here would reject a legitimate new country until the schema shipped again. Same reasoning as getAllowedRegions in console/api/src/lib/aws-regions.ts. `required` so an item missing matchType fails on that alone, without a confusing second error about matchValue's format.",
+          "if": {
+            "properties": { "matchType": { "const": "country" } },
+            "required": ["matchType"]
+          },
+          "then": {
+            "properties": {
+              "matchOperator": { "const": "equals" },
+              "matchValue": {
+                "type": "string",
+                "pattern": "^[A-Z]{2}( [A-Z]{2})*$"
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }
