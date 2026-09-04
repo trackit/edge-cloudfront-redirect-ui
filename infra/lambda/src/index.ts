@@ -9,7 +9,7 @@ import type {
 import type { EdgeConfig } from "./config.js";
 import { resolveConfig } from "./config.js";
 import { DynamoDBRuleRepository } from "./dynamodb-repository.js";
-import { RulesService } from "./rules-service.js";
+import { RulesService, readsCountry } from "./rules-service.js";
 import type {
   CloudFrontOriginWithExtendedProtocol,
   RequestParams,
@@ -158,6 +158,33 @@ const normalizeOriginProtocol = (
   } as CloudFrontOrigin;
 };
 
+/**
+ * The 301/302 a matched redirect answers with, at either event.
+ *
+ * `no-store` because the response is per-viewer: a redirect decided from the
+ * country must never be handed to the next viewer from somewhere else. It also
+ * means the cache key does not have to carry everything a rule reads for the
+ * *redirect* to stay correct, which is what makes evaluating one at
+ * origin-request safe at all.
+ */
+const redirectResponse = (
+  statusCode: 301 | 302,
+  redirectURL: string,
+): CloudFrontRequestResult => {
+  const headers: CloudFrontHeaders = {
+    location: [{ key: "Location", value: redirectURL }],
+    "cache-control": [
+      { key: "Cache-Control", value: "max-age=0, no-cache, no-store" },
+    ],
+  };
+
+  return {
+    status: statusCode.toString(),
+    statusDescription: statusDescription(statusCode),
+    headers,
+  };
+};
+
 const handleViewerRequest = async (
   request: CloudFrontRequest,
   params: RequestParams,
@@ -172,18 +199,7 @@ const handleViewerRequest = async (
 
   if (result?.type !== "redirect") return request;
 
-  const headers: CloudFrontHeaders = {
-    location: [{ key: "Location", value: result.redirectURL }],
-    "cache-control": [
-      { key: "Cache-Control", value: "max-age=0, no-cache, no-store" },
-    ],
-  };
-
-  return {
-    status: result.statusCode.toString(),
-    statusDescription: statusDescription(result.statusCode),
-    headers,
-  };
+  return redirectResponse(result.statusCode, result.redirectURL);
 };
 
 const handleOriginRequest = async (
@@ -213,6 +229,22 @@ const handleOriginRequest = async (
   delete request.headers[VIEWER_HOST_HEADER];
 
   const service = await getService();
+
+  // Redirects are viewer-request's job, and every one that could fire there
+  // already has. What is left is the ones it had to defer: CloudFront works the
+  // viewer's country out after that event, so a redirect reading the country is
+  // skipped there and only becomes evaluable here. `readsCountry` is the whole
+  // condition -- an ordinary redirect must not be re-evaluated here, where it
+  // would run on cache misses only and so fire unpredictably.
+  //
+  // Tried before the rewrite for the same reason viewer-request runs first: a
+  // redirect answers the viewer, and forwarding to an origin instead would make
+  // a rule's priority depend on which event happened to evaluate it.
+  const redirect = await service.match(params, "REDIRECT", readsCountry);
+  if (redirect?.type === "redirect") {
+    return redirectResponse(redirect.statusCode, redirect.redirectURL);
+  }
+
   const result = await service.match(params, "REWRITE");
 
   if (result?.type !== "rewrite") return request;

@@ -140,6 +140,26 @@ resource "aws_cloudfront_distribution" "existing" {
   response will be served to another. Rules are only re-evaluated on a cache
   miss, so a caching behavior also delays when a rule change is observed.
 
+- **Country conditions need `CloudFront-Viewer-Country`.** A rule with a
+  `country` match condition only fires if the cache behavior asks CloudFront for
+  that header, and it must be in the **cache key** — so a cache policy, not just
+  an origin request policy. Otherwise a response chosen for one country is
+  cached and served to the next viewer from anywhere else. Budget for the hit
+  ratio: a country in the cache key means up to one cached copy per country per
+  URL.
+
+  Nothing breaks if you skip it. The header is absent, the function cannot tell
+  which country the viewer is in, and it **skips** those rules rather than
+  guessing — so they simply never fire, including the negated ones, which is the
+  case that would otherwise redirect your whole site. See
+  [the country a rule can be keyed on](../../lambda/README.md#the-country-a-rule-can-be-keyed-on).
+
+  These redirects are answered at **origin-request**, because CloudFront works
+  the country out after the viewer-request event. That is one more reason to
+  attach both associations, and it means a geo redirect is evaluated on cache
+  misses only — its response is sent `no-store`, so the redirect itself is never
+  cached.
+
 ## Using the module more than once
 
 Each instance builds in its own directory — `.build/<function_name>/` inside the

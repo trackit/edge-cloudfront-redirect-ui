@@ -818,6 +818,132 @@ describe("the viewer's country", () => {
   });
 });
 
+/**
+ * A redirect that reads the country cannot be evaluated at viewer-request, so
+ * origin-request picks it up -- the one place the country exists. What these
+ * tests pin down is the boundary: exactly those redirects and no others, or an
+ * ordinary redirect would start firing on cache misses only.
+ */
+describe("geo redirects at origin-request", () => {
+  const countryRedirect = (matchValue: string, negate = false) =>
+    redirectRule({
+      statusCode: 302,
+      redirectURL: "https://www.example.fr/boutique",
+      matches: [
+        { matchType: "country", matchOperator: "equals", matchValue, negate },
+      ],
+    } as Partial<RedirectRule>);
+
+  it("answers with the redirect when the country matches", async () => {
+    withRules(countryRedirect("BE FR"));
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("FR")
+        .build(),
+    )) as CloudFrontResultResponse;
+
+    expect(result.status).toBe("302");
+    expect(result.statusDescription).toBe("Found");
+    expect(result.headers?.["location"]?.[0]?.value).toBe(
+      "https://www.example.fr/boutique",
+    );
+  });
+
+  it("marks the redirect no-store, so no other country is served it", async () => {
+    // The response is decided per viewer. Cached, it would be handed to the
+    // next viewer from anywhere, and a French redirect would answer a German.
+    withRules(countryRedirect("FR"));
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("FR")
+        .build(),
+    )) as CloudFrontResultResponse;
+
+    expect(result.headers?.["cache-control"]?.[0]?.value).toBe(
+      "max-age=0, no-cache, no-store",
+    );
+  });
+
+  it("excludes the listed countries when negated", async () => {
+    withRules(countryRedirect("US", true));
+
+    const excluded = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("US")
+        .build(),
+    )) as CloudFrontResultResponse;
+    expect(excluded.status).toBeUndefined();
+
+    const redirected = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("FR")
+        .build(),
+    )) as CloudFrontResultResponse;
+    expect(redirected.status).toBe("302");
+  });
+
+  it("does NOT re-evaluate an ordinary redirect at origin-request", async () => {
+    // The boundary this whole split rests on. viewer-request already had its
+    // chance at this rule; running it again here would make it fire on cache
+    // misses only, so the same URL would redirect or not depending on whether
+    // CloudFront happened to hold the page.
+    withRules(redirectRule());
+
+    const result = await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/old-landing")
+        .withViewerCountry("FR")
+        .build(),
+    );
+
+    expect((result as CloudFrontResultResponse).status).toBeUndefined();
+    expect((result as CloudFrontRequest).uri).toBe("/old-landing");
+  });
+
+  it("takes the redirect over a rewrite that also matches", async () => {
+    // Priority must not depend on which event evaluated the rule. At
+    // viewer-request a redirect always wins by running first; that has to hold
+    // here too.
+    withRules(
+      countryRedirect("FR"),
+      rewriteRule({
+        matches: [
+          { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+        ],
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("FR")
+        .build(),
+    )) as CloudFrontResultResponse;
+
+    expect(result.status).toBe("302");
+  });
+
+  it("falls through to the rewrite when no geo redirect matches", async () => {
+    withRules(countryRedirect("US"), rewriteRule());
+
+    const result = await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .withViewerCountry("FR")
+        .build(),
+    );
+
+    expect((result as CloudFrontResultResponse).status).toBeUndefined();
+    expect((result as CloudFrontRequest).uri).toBe("/api/v1/legacy");
+  });
+});
+
 describe("resilience", () => {
   it("passes the request through when the query throws", async () => {
     const failing = new FakeRepository();

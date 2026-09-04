@@ -2,10 +2,10 @@
 
 The Lambda@Edge data plane (ER-102). **One** function, associated twice on your distribution:
 
-| Association    | Sort key prefix | Behavior                                                               |
-| -------------- | --------------- | ---------------------------------------------------------------------- |
-| viewer-request | `REDIRECT#`     | Returns a 301/302 response on match                                    |
-| origin-request | `REWRITE#`      | Rewrites `uri`/`querystring` and/or switches `request.origin` on match |
+| Association    | Sort key prefix                                        | Behavior                                                                                                       |
+| -------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| viewer-request | `REDIRECT#`                                            | Returns a 301/302 response on match                                                                            |
+| origin-request | `REWRITE#`, and `REDIRECT#` with a `country` condition | Rewrites `uri`/`querystring` and/or switches `request.origin` on match; answers the 301/302 for a geo redirect |
 
 It dispatches on `cf.config.eventType`, so both associations point at the same published version. Any other event type passes through untouched.
 
@@ -15,7 +15,8 @@ Extracted from `edge-platform-functions-cdn`'s `src/snippets/dynamodb-redirect/`
 
 1. `Query(pk = <the viewer's hostname>, begins_with(sk, "REDIRECT#" | "REWRITE#"))`
    — see [the host a rule is keyed on](#the-host-a-rule-is-keyed-on).
-2. Rules with `disabled: true` are dropped.
+2. Rules with `disabled: true` are dropped, and so are rules the current event
+   cannot evaluate — see [the country a rule can be keyed on](#the-country-a-rule-can-be-keyed-on).
 3. Remaining rules are evaluated in ascending sort-key order (`REDIRECT#00010` before `REDIRECT#00100`) — lower priority number wins.
 4. The **first** rule whose `matches` **all** pass is applied; the rest are ignored.
 5. No match → the request passes through unmodified.
@@ -50,6 +51,63 @@ keeps a single-association distribution behaving as it did, and rules written by
 the console are keyed on hostnames, so none of them match under it. Reaching
 origin-request with nothing stamped logs a warning, once per execution
 environment.
+
+## The country a rule can be keyed on
+
+A `country` match condition tests the viewer's country, as an ISO 3166-1 alpha-2
+code, against a space-separated list — `"BE FR"` means Belgium or France, and
+`negate: true` turns the list into an exclusion.
+
+The value comes from CloudFront's own `CloudFront-Viewer-Country` header, and
+**two deployment conditions have to hold** before it carries anything:
+
+**1. The distribution must ask for the header**, in a cache policy or an origin
+request policy. CloudFront does not add it otherwise. Prefer a **cache policy**:
+the header then belongs to the cache key, so a response that varies by country
+cannot be served to the wrong country. An origin request policy forwards the
+value without splitting the cache, which is fine for logging and wrong for
+routing.
+
+This module publishes the function; it does not own your distribution, so this
+is yours to configure. Note the cost: a country in the cache key means up to one
+cached copy per country per URL, so a lower hit ratio and more origin traffic.
+`examples/infra` uses `Managed-CachingDisabled`, where nothing is cached and the
+question does not arise.
+
+**2. The rule must be evaluated at origin-request.** CloudFront works the
+country out _after_ the viewer-request event, so at viewer-request the header is
+either absent or something the viewer sent itself. A viewer-request function
+that sets it makes CloudFront answer the viewer with a 502.
+
+So `getParams` reads the header at origin-request only — the same trust rule as
+the viewer host — and a redirect carrying a `country` condition is deferred to
+origin-request, where it answers its 301/302 like viewer-request would. The
+response is `no-store`, so a redirect decided from one viewer's country is never
+handed to the next.
+
+Only those redirects move. An ordinary redirect is evaluated at viewer-request
+and **not** re-evaluated at origin-request: that event runs on cache misses
+only, so a rule firing there would redirect or not depending on whether
+CloudFront happened to hold the page. `readsCountry` in `rules-service.ts` is
+the whole test, and it reads the rule rather than the request precisely so that
+enabling the header cannot change how any existing rule behaves.
+
+### An unknown country skips the rule
+
+When the country is unknown — the wrong event, or a distribution that never asks
+for the header — a rule that reads it is **skipped**, not evaluated.
+
+This is not tidiness. Evaluated against an empty country the comparison fails,
+and `negate` then inverts that failure into a match: a rule meaning "redirect
+everyone except France" would fire for every request, France included. One rule
+would take the site down. Skipping makes the same rule inert instead, which is
+why `RequestParams.country` is optional rather than defaulting to `""` — absent
+means "unknown", which is not the same as "known, and not France".
+
+A country condition is also not a security control. IP geolocation is an
+indication, and a VPN defeats it in seconds. For a legal or licensing block, use
+the distribution's own `geo_restriction`, which answers a 403 before any of this
+code runs.
 
 ## The query string on a rewrite
 
