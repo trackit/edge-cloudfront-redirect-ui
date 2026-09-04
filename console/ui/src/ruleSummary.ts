@@ -7,13 +7,23 @@ import type { MatchCondition, Rule } from "./api";
  * any future confirmation dialog should all describe a rule the same way.
  */
 
-/** `path equals /old`, or `header:x-env not contains staging`. */
+/** `path equals /old`, `header:x-env not contains staging`, `country in BE, FR`. */
 export const describeMatch = (match: MatchCondition): string => {
+  const negated = match.negate === true ? "not " : "";
+
+  // A country condition reads as set membership, because that is what it is:
+  // its `equals` operator is only `equals` because the edge splits the value on
+  // spaces and matches any variant. Rendering the stored form
+  // (`country equals BE FR`) would describe the encoding rather than the rule.
+  if (match.matchType === "country") {
+    const codes = match.matchValue.split(" ").filter((code) => code !== "");
+    return `country ${negated}in ${codes.join(", ")}`;
+  }
+
   const subject =
     match.matchType === "header"
       ? `header:${match.headerName ?? "?"}`
       : match.matchType;
-  const negated = match.negate === true ? "not " : "";
   return `${subject} ${negated}${match.matchOperator} ${match.matchValue}`;
 };
 

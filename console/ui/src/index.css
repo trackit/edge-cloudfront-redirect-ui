@@ -2221,3 +2221,10 @@ button {
   border-color: rgba(255, 207, 92, 0.5);
   background: rgba(255, 207, 92, 0.12);
 }
+
+/* A country condition replaces the Operator and Value columns with the picker,
+   so the row stacks instead of sitting in three columns. */
+.match-grid-geo {
+  display: grid;
+  gap: 12px;
+}

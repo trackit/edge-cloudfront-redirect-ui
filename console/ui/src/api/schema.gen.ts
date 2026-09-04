@@ -350,7 +350,13 @@ export interface components {
     match: {
       /** @enum {unknown} */
       matchType:
-        "path" | "hostname" | "protocol" | "regex" | "header" | "cookie";
+        | "path"
+        | "hostname"
+        | "protocol"
+        | "regex"
+        | "header"
+        | "cookie"
+        | "country";
       /** @enum {unknown} */
       matchOperator: "equals" | "contains" | "regex";
       matchValue: string;
@@ -358,7 +364,7 @@ export interface components {
       caseSensitive?: boolean;
       /** @description Required when matchType is "header"; disallowed otherwise. */
       headerName?: string;
-    };
+    } & (unknown & unknown);
     /** Redirect rule item (erMatchRule) */
     "redirect-rule.schema": {
       /** @description Host, e.g. www.example.com. DynamoDB partition key. */
