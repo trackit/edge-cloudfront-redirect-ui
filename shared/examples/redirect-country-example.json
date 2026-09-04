@@ -1,0 +1,25 @@
+{
+  "pk": "www.example.com",
+  "sk": "REDIRECT#00200",
+  "type": "erMatchRule",
+  "statusCode": 302,
+  "redirectURL": "https://www.example.fr/boutique",
+  "useIncomingQueryString": true,
+  "matches": [
+    {
+      "matchType": "path",
+      "matchOperator": "equals",
+      "matchValue": "/shop",
+      "negate": false,
+      "caseSensitive": false
+    },
+    {
+      "matchType": "country",
+      "matchOperator": "equals",
+      "matchValue": "BE FR",
+      "negate": false,
+      "caseSensitive": false
+    }
+  ],
+  "disabled": false
+}
