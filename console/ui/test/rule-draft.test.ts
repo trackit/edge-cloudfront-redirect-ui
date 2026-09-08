@@ -241,6 +241,11 @@ describe("validateDraft — cookie name", () => {
   it.each([
     { what: "missing", cookieName: undefined },
     { what: "blank", cookieName: "   " },
+    // The mistake the field invites: a `Cookie` header reads `locale=nl`, so the
+    // whole pair gets pasted. Stored, it names a cookie nobody sends.
+    { what: "a whole name=value pair", cookieName: "locale=nl" },
+    { what: "two cookies", cookieName: "locale=nl; region=be" },
+    { what: "spaced", cookieName: "ab test" },
   ])("rejects a cookie condition whose name is $what", ({ cookieName }) => {
     const details = validateDraft(
       withMatch({ matchType: "cookie", matchValue: "on", cookieName }),

@@ -152,6 +152,14 @@ const S3_DEFAULTS: S3Draft = {
 const ABSOLUTE_URL = /^https?:\/\//i;
 
 /**
+ * A cookie name, and only the name. RFC 6265 forbids separators in one, so `=`,
+ * `;`, `,` and whitespace cannot appear — which is also exactly what gets pasted
+ * when someone copies a whole `name=value` pair into the field. Mirrors the
+ * `cookieName` pattern in `shared/redirect-rule.schema.json`, which is the gate.
+ */
+const VALID_COOKIE_NAME = /^[^\s=;,]+$/;
+
+/**
  * Whether a regex is free of catastrophic backtracking (ReDoS), via `safe-regex`.
  * An unparseable pattern is treated as safe here — its invalidity is reported
  * separately — so a single value never draws two overlapping errors.
@@ -330,14 +338,24 @@ export const validateDraft = (
     }
     // A cookie condition without its name would be compared against the whole
     // `Cookie` header, so it could only ever fail or match the wrong visitor.
-    if (
-      match.matchType === "cookie" &&
-      (match.cookieName ?? "").trim() === ""
-    ) {
-      details.push({
-        path: `/matches/${at}/cookieName`,
-        message: "is required for a cookie condition",
-      });
+    if (match.matchType === "cookie") {
+      const cookieName = (match.cookieName ?? "").trim();
+      if (cookieName === "") {
+        details.push({
+          path: `/matches/${at}/cookieName`,
+          message: "is required for a cookie condition",
+        });
+      } else if (!VALID_COOKIE_NAME.test(cookieName)) {
+        // A `Cookie` header reads `locale=nl`, so this field invites the whole
+        // pair. Saved, it names a cookie no viewer sends and the rule never
+        // fires — silently. Said here rather than discovered in production.
+        details.push({
+          path: `/matches/${at}/cookieName`,
+          message:
+            'must be the cookie name alone, with no "=", ";" or space. For ' +
+            "`locale=nl`, the name is `locale` and `nl` goes in the value",
+        });
+      }
     }
     // Either is regex mode at the edge: a `regex` operator, or a `regex` match
     // type. Checking only the operator lets a `matchType: "regex"` with an

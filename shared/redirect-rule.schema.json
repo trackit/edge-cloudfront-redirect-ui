@@ -54,7 +54,9 @@
         "cookieName": {
           "type": "string",
           "minLength": 1,
-          "description": "Required when matchType is \"cookie\"; disallowed otherwise."
+          "pattern": "^[^\\s=;,]+$",
+          "description": "Required when matchType is \"cookie\"; disallowed otherwise. The name alone, never \"name=value\".",
+          "$comment": "RFC 6265 forbids separators in a cookie name, so `=`, `;`, `,` and whitespace cannot appear in one. The pattern is here for a second reason: a `Cookie` header reads `locale=nl`, so someone filling in a field labelled \"cookie name\" will paste the whole pair. Stored, that name matches nothing a viewer ever sends, and the rule silently never fires — the same class of failure the field was added to remove."
         }
       },
       "allOf": [

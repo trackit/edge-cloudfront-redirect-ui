@@ -187,8 +187,11 @@ export default function MatchConditions({ matches, onChange }: Props) {
                 }
               />
               <p className="hint">
-                The value above is compared against this cookie alone, not
-                against the whole Cookie header. Names are case sensitive.
+                The name only, not <span className="mono">name=value</span>. A
+                visitor sending <span className="mono">Cookie: locale=nl</span>{" "}
+                matches the name <span className="mono">locale</span> with{" "}
+                <span className="mono">nl</span> as the value above. Names are
+                case sensitive.
               </p>
             </div>
           )}

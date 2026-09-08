@@ -358,7 +358,7 @@ export interface components {
       caseSensitive?: boolean;
       /** @description Required when matchType is "header"; disallowed otherwise. */
       headerName?: string;
-      /** @description Required when matchType is "cookie"; disallowed otherwise. */
+      /** @description Required when matchType is "cookie"; disallowed otherwise. The name alone, never "name=value". */
       cookieName?: string;
     } & (unknown & unknown);
     /** Redirect rule item (erMatchRule) */

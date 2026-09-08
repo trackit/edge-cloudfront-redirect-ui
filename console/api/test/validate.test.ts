@@ -90,6 +90,18 @@ describe("validateRule", () => {
     expect(() => validateRule(cookieMatch())).toThrowError(ApiError);
   });
 
+  it.each([
+    ["a whole name=value pair", "locale=nl"],
+    ["several cookies", "locale=nl; region=be"],
+    ["a space", "ab test"],
+  ])("rejects a cookie name that is %s", (_case, cookieName) => {
+    // RFC 6265 forbids separators in a cookie name, and a name carrying one
+    // matches nothing a viewer sends: the rule would be stored and never fire.
+    expect(() => validateRule(cookieMatch({ cookieName }))).toThrowError(
+      ApiError,
+    );
+  });
+
   /**
    * A schema conditional makes Ajv report twice: the missing field, and the fact
    * that the branch it sits in failed. The second names nothing and gives the
