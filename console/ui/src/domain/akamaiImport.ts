@@ -44,7 +44,8 @@ export type SourceFormat =
 
 /**
  * `ok` imports cleanly, `warning` imports but lost something in translation,
- * `skipped` cannot be imported (it failed `validateDraft`).
+ * `skipped` cannot be imported (it failed `validateDraft`, or the source used a
+ * construct this model cannot represent).
  */
 export type RowStatus = "ok" | "warning" | "skipped";
 
@@ -56,8 +57,15 @@ export interface ParsedRow {
   /** The host this rule imports into: the target, or its own hostname condition. */
   host: string;
   status: RowStatus;
-  /** Why it was skipped, or what the mapping had to drop (for a warning). */
+  /** What the mapping had to drop, or noted, without preventing the import. */
   messages: string[];
+  /**
+   * Why the row cannot be imported at all: a source construct this model has no
+   * faithful equivalent for. Separate from `messages` because dropping a
+   * condition from an AND *widens* a rule — the import would silently apply to
+   * more traffic than the source did — so it is a refusal, not a caveat.
+   */
+  blocked: string[];
   draft: RedirectDraft;
   /** The API body — present only when the row is importable (status !== "skipped"). */
   input?: RuleInput;
@@ -85,6 +93,8 @@ interface Candidate {
   host: string;
   draft: RedirectDraft;
   messages: string[];
+  /** Untranslatable source constructs — non-empty refuses the row. See `ParsedRow.blocked`. */
+  drops?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -820,8 +830,12 @@ export function parseExport(text: string, opts: ParseOptions): ImportPreview {
     const draft = candidate.draft;
     draft.priority = String(nextProvisional(candidate.host));
     const validation = validateDraft(draft, []);
+    const blocked = candidate.drops ?? [];
+    // Two independent reasons to refuse: the draft is not a valid rule, or the
+    // source said something this model cannot say. Either is a refusal, so a row
+    // is importable only when both are empty.
     const status: RowStatus =
-      validation.length > 0
+      validation.length > 0 || blocked.length > 0
         ? "skipped"
         : candidate.messages.length > 0
           ? "warning"
@@ -833,6 +847,7 @@ export function parseExport(text: string, opts: ParseOptions): ImportPreview {
       host: candidate.host,
       status,
       messages: candidate.messages,
+      blocked,
       draft,
       input: status === "skipped" ? undefined : toRuleInput(draft),
       validation,

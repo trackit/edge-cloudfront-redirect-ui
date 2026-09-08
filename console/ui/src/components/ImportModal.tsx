@@ -72,6 +72,9 @@ const noteFor = (row: ParsedRow): string => {
         .map((detail) => `${detail.path} ${detail.message}`)
         .join(", ");
     }
+    // A row refused for what the source said, not for what the draft is: the
+    // reason is the only thing that tells the user which line to redo by hand.
+    if (row.blocked.length > 0) return row.blocked.join(", ");
   }
   return row.messages.join(", ");
 };
