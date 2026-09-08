@@ -11,7 +11,7 @@ These schemas model the exact DynamoDB **item** shape the edge reads, derived fr
 
 - **Match conditions** use `matchType` / `matchOperator` / `matchValue` (+ optional `negate`, `caseSensitive`, `headerName`). `matchType ∈ {path, hostname, protocol, regex, header, cookie}`, `matchOperator ∈ {equals, contains, regex}`. `headerName` is required iff `matchType` is `header`.
 - **`forwardSettings.origin`** (rewrite) is a discriminated union — exactly one of `s3` / `custom` — mirroring the CloudFront `request.origin` structure from `@types/aws-lambda` (the edge assigns it straight through). See both example items.
-- **`disabled`** is optional and reserved for a future "toggle off" feature; the source runtime does **not** honor it yet, so ER-101 must skip `disabled: true` rules or it's a no-op.
+- **`disabled`** is optional and reserved for a future "toggle off" feature; the source runtime does **not** honor it yet, so CF-7 must skip `disabled: true` rules or it's a no-op.
 
 ## Files
 
@@ -27,7 +27,7 @@ These schemas model the exact DynamoDB **item** shape the edge reads, derived fr
 **Keys**
 
 - `pk` (string) — the host, e.g. `www.example.com`. **Always lowercase.** DNS is case-insensitive but a partition key is not, so the console API lowercases every host it stores or looks up; two cases of one name would otherwise be two partitions, only one of which a request can match.
-- `sk` (string) — `TYPE#priority` where `TYPE ∈ {REDIRECT, REWRITE}` and priority is a **zero-padded 5-digit integer** (e.g. `REDIRECT#00100`). Lower number = higher priority. Priority must be **unique per host per type** — the API enforces this (ER-204); the format itself is enforced by the `sk` `pattern` in each schema.
+- `sk` (string) — `TYPE#priority` where `TYPE ∈ {REDIRECT, REWRITE}` and priority is a **zero-padded 5-digit integer** (e.g. `REDIRECT#00100`). Lower number = higher priority. Priority must be **unique per host per type** — the API enforces this; the format itself is enforced by the `sk` `pattern` in each schema.
 
 **The host marker (not a rule)**
 
@@ -45,4 +45,4 @@ Anything else reading a whole partition has to choose: listing a host's rules sk
 
 **Propagation**
 
-Edge cache TTL means a rule change takes effect in **~1 minute**. The UI must communicate this (ER-306 / editors).
+Edge cache TTL means a rule change takes effect in **~1 minute**. The UI communicates this in the editors.

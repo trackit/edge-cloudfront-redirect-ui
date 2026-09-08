@@ -4,9 +4,9 @@ A Terraform module that gives any existing CloudFront distribution dynamic, Dyna
 
 ## Modules
 
-- `modules/table/` — DynamoDB rules table (ER-101, done): `pk`/`sk`, PAY_PER_REQUEST, PITR, single region. See its README.
+- `modules/table/` — DynamoDB rules table (CF-7, done): `pk`/`sk`, PAY_PER_REQUEST, PITR, single region. See its README.
 
-## Planned module contract (spec for ER-102..103 — table done)
+## Planned module contract (spec for CF-8..103 — table done)
 
 **Inputs:** table name/prefix, table region, tags. Nothing about any CloudFront distribution.
 
@@ -23,6 +23,6 @@ A Terraform module that gives any existing CloudFront distribution dynamic, Dyna
 ## Constraints
 
 - Lambda@Edge must deploy in `us-east-1` → the module needs a `us-east-1` provider alias.
-- Lambda@Edge has no native env vars. **Config strategy (ER-102 decision): bake at build time.** Terraform owns the table, so at package time it renders `{ tableName, tableRegion }` into a generated config (e.g. `edge-config.generated.ts`) bundled into the Lambda zip and imported by the handler. A config change re-publishes a new L@E version (required anyway) which propagates to the edge — no runtime lookup. Rejected alternatives: env vars (unsupported on L@E); SSM/runtime fetch (per-cold-start latency + extra IAM for static config); CloudFront origin custom headers (origin-request only, and would require touching the consumer's distribution — violates the contract).
+- Lambda@Edge has no native env vars. **Config strategy (CF-8 decision): bake at build time.** Terraform owns the table, so at package time it renders `{ tableName, tableRegion }` into a generated config (e.g. `edge-config.generated.ts`) bundled into the Lambda zip and imported by the handler. A config change re-publishes a new L@E version (required anyway) which propagates to the edge — no runtime lookup. Rejected alternatives: env vars (unsupported on L@E); SSM/runtime fetch (per-cold-start latency + extra IAM for static config); CloudFront origin custom headers (origin-request only, and would require touching the consumer's distribution — violates the contract).
 - The rewrite handler may switch `request.origin` to a different s3/custom origin at runtime — consumers don't need to declare extra origins.
 - No `aws_cloudfront_distribution` resource may ever live in this module — demo distributions belong in `examples/` only.

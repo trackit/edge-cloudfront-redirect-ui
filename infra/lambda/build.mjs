@@ -4,7 +4,7 @@ import { build } from "esbuild";
 
 /**
  * Packages the handler for Lambda@Edge. Terraform drives this at apply time
- * (ER-103), but it also runs standalone (`npm run build`) for local checks.
+ * (CF-9), but it also runs standalone (`npm run build`) for local checks.
  *
  * Two outputs land in the output directory:
  *   - index.js            the bundled handler

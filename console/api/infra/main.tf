@@ -114,7 +114,7 @@ data "aws_iam_policy_document" "registry" {
   # `roleArn` bridges that gap — the API assumes the role to reach that target's
   # rules table, so no Terraform change is needed per target. Empty by default:
   # with no patterns the API can only reach tables its own policy covers, which
-  # today is none, so rule operations (ER-203) need this set. Keep the patterns
+  # today is none, so rule operations (CF-13) need this set. Keep the patterns
   # as narrow as the naming convention allows.
   dynamic "statement" {
     for_each = length(var.assumable_role_arns) > 0 ? [1] : []

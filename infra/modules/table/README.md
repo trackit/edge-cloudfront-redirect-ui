@@ -1,4 +1,4 @@
-# `table` — DynamoDB rules table (ER-101)
+# `table` — DynamoDB rules table (CF-7)
 
 Reusable Terraform module that creates the DynamoDB table the Lambda@Edge reads
 routing rules from. The table is the only interface between the control plane

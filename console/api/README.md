@@ -1,6 +1,6 @@
 # @cloudfront-redirect-rules/api
 
-The control-plane console API (ER-201). A single Node 22 Lambda behind an HTTP
+The control-plane console API (CF-11). A single Node 22 Lambda behind an HTTP
 API Gateway (v2) that manages redirect/rewrite rules in DynamoDB. It is a client
 of the rules table — it only ever writes rules the [Lambda@Edge](../../infra/lambda)
 reads; the two never talk directly.
@@ -11,17 +11,17 @@ shapes are never redefined here.
 
 ## Routes
 
-| Method               | Path                                          | Status                        |
-| -------------------- | --------------------------------------------- | ----------------------------- |
-| `GET`                | `/health`                                     | ✅ implemented                |
-| `GET` / `POST`       | `/targets`                                    | ✅ implemented (ER-202)       |
-| `GET`/`PUT`/`DELETE` | `/targets/{id}`                               | ✅ implemented (ER-202)       |
-| `GET` / `POST`       | `/targets/{targetId}/hosts/{host}/rules`      | ✅ implemented (ER-203)       |
-| `GET`/`PUT`/`DELETE` | `/targets/{targetId}/hosts/{host}/rules/{sk}` | ✅ implemented (ER-203)       |
-| `PATCH`              | `/targets/{targetId}/hosts/{host}/rules/{sk}` | ✅ `disabled` toggle (ER-203) |
+| Method               | Path                                          | Status                       |
+| -------------------- | --------------------------------------------- | ---------------------------- |
+| `GET`                | `/health`                                     | ✅ implemented               |
+| `GET` / `POST`       | `/targets`                                    | ✅ implemented (CF-12)       |
+| `GET`/`PUT`/`DELETE` | `/targets/{id}`                               | ✅ implemented (CF-12)       |
+| `GET` / `POST`       | `/targets/{targetId}/hosts/{host}/rules`      | ✅ implemented (CF-13)       |
+| `GET`/`PUT`/`DELETE` | `/targets/{targetId}/hosts/{host}/rules/{sk}` | ✅ implemented (CF-13)       |
+| `PATCH`              | `/targets/{targetId}/hosts/{host}/rules/{sk}` | ✅ `disabled` toggle (CF-13) |
 
 Rule routes are scoped to a **target** (a DynamoDB table from the targets
-registry, ER-202) and a **host** (the partition key), and write to that target's
+registry, CF-12) and a **host** (the partition key), and write to that target's
 table.
 
 The server owns both keys. A request body carries the rule's fields plus a
@@ -70,7 +70,7 @@ All four run in CI.
 ## Deploy
 
 Terraform lives in [`infra/`](infra) — HTTP API Gateway + Lambda + IAM + logs.
-See its [README](infra/README.md), and `cognito.tf` beside it for auth (ER-205):
+See its [README](infra/README.md), and `cognito.tf` beside it for auth (CF-23):
 a Cognito user pool, and a JWT authorizer that refuses a request at the gateway
 before it reaches the Lambda. Four routes stay public — `/health`, and the three
 `/auth` routes that issue the token in the first place.

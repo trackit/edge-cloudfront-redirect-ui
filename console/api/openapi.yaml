@@ -9,8 +9,8 @@ info:
     redefined here.
 
 
-    The targets registry (ER-202), rules CRUD with the `disabled` toggle
-    (ER-203) and authentication (ER-205) are implemented. Every operation
+    The targets registry (CF-12), rules CRUD with the `disabled` toggle
+    (CF-13) and authentication (CF-23) are implemented. Every operation
     requires a Cognito access token except the four noted as unauthenticated:
     `/health`, and the three `/auth` routes that issue a token in the first
     place.
@@ -661,7 +661,7 @@ components:
       name: targetId
       in: path
       required: true
-      description: Target (DynamoDB table) id from the targets registry (ER-202).
+      description: Target (DynamoDB table) id from the targets registry (CF-12).
       schema:
         type: string
         minLength: 1
