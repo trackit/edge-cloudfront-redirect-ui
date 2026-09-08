@@ -1,8 +1,8 @@
 /**
  * The value of one named cookie, out of the single header holding them all.
  *
- * A viewer sends `Cookie: session=a1b2c3; region=london; ab_test=on`, so a
- * condition that names `ab_test` has to be compared against `on` and nothing
+ * A viewer sends `Cookie: session=a1b2c3; region=london; locale=nl`, so a
+ * condition that names `locale` has to be compared against `nl` and nothing
  * else. Comparing against the whole line is what made a cookie condition either
  * never match (`equals`) or match unrelated cookies (`contains`).
  *

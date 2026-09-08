@@ -431,27 +431,17 @@ describe("parseExport — matchRules JSON", () => {
   });
 
   /**
-   * A cookie condition names its cookie; a `MatchCondition` cannot hold that
-   * name, so the edge would compare the value against the entire `Cookie` header.
-   * Refused either way — and the second shape shows why it matters: keeping only
-   * the path would redirect everyone instead of the test group.
+   * Akamai keeps a cookie condition's name in `name`, the same field a header
+   * condition uses. It is what makes the condition mean anything: without it the
+   * edge could only compare against the whole `Cookie` header.
    */
-  it.each([
-    { what: "alone", extra: [] as unknown[] },
-    {
-      what: "next to a path condition",
-      extra: [
-        { matchType: "path", matchOperator: "equals", matchValue: "/ab" },
-      ] as unknown[],
-    },
-  ])("refuses a cookie condition $what", ({ extra }) => {
+  it("carries a cookie condition's name into cookieName", () => {
     const json = JSON.stringify([
       {
         name: "ab",
         redirectURL: "/variant-b",
         statusCode: 302,
         matches: [
-          ...extra,
           {
             matchType: "cookie",
             name: "ab_test",
@@ -465,8 +455,34 @@ describe("parseExport — matchRules JSON", () => {
       filename: "rules.json",
       defaultHost: HOST,
     });
+    expect(preview.rows[0].status).toBe("ok");
+    expect(asRedirect(preview.rows[0].input).matches[0]).toMatchObject({
+      matchType: "cookie",
+      cookieName: "ab_test",
+      matchValue: "on",
+    });
+  });
+
+  it("refuses a cookie condition that names no cookie", () => {
+    const json = JSON.stringify([
+      {
+        name: "ab",
+        redirectURL: "/variant-b",
+        statusCode: 302,
+        matches: [
+          { matchType: "path", matchOperator: "equals", matchValue: "/ab" },
+          { matchType: "cookie", matchOperator: "equals", matchValue: "on" },
+        ],
+      },
+    ]);
+    const preview = parseExport(json, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
+    // Keeping the path alone would redirect every visitor instead of the test
+    // group, so the row is refused rather than widened.
     expect(preview.rows[0].status).toBe("skipped");
-    expect(preview.rows[0].blocked.join(" ")).toMatch(/cookie/);
+    expect(preview.rows[0].blocked.join(" ")).toMatch(/no cookie name/);
   });
 
   it("carries a header condition's name into headerName", () => {

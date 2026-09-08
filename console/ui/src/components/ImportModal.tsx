@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { IconArrow, IconCheck, IconClose, IconInfo, IconUpload } from "./icons";
 import { isVacuousMatch, parseExport } from "../domain/akamaiImport";
+import { matchSubject } from "../domain/ruleSummary";
 import type {
   ImportPreview,
   ParsedRow,
@@ -77,11 +78,9 @@ const fromLabel = (draft: RedirectDraft): string => {
   if (lead.matchType === "path" && lead.matchOperator !== "regex") {
     return lead.matchValue;
   }
-  const name =
-    lead.matchType === "header" && lead.headerName
-      ? `header:${lead.headerName}`
-      : lead.matchType;
-  return `${name} ${lead.matchValue}`;
+  // Same subject the rule list uses, so a condition reads the same in the
+  // preview and in the list it will land in.
+  return `${matchSubject(lead)} ${lead.matchValue}`;
 };
 
 /** The right-aligned note on a row: why it was skipped, or what it lost. */

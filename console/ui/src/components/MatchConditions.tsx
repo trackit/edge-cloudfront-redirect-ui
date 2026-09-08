@@ -94,13 +94,18 @@ export default function MatchConditions({ matches, onChange }: Props) {
                   const matchType = event.target
                     .value as MatchCondition["matchType"];
                   // `headerName` is required when the type is `header` and
-                  // rejected otherwise, so it is added and dropped with the type
-                  // rather than left behind to fail validation on save.
+                  // rejected otherwise, `cookieName` likewise for `cookie`, so
+                  // each is added and dropped with the type rather than left
+                  // behind to fail validation on save.
                   update(at, {
                     matchType,
                     headerName:
                       matchType === "header"
                         ? (match.headerName ?? "")
+                        : undefined,
+                    cookieName:
+                      matchType === "cookie"
+                        ? (match.cookieName ?? "")
                         : undefined,
                   });
                 }}
@@ -165,6 +170,25 @@ export default function MatchConditions({ matches, onChange }: Props) {
               <p className="hint">
                 Required for a header condition, and rejected for any other
                 type.
+              </p>
+            </div>
+          )}
+
+          {match.matchType === "cookie" && (
+            <div className="field">
+              <label htmlFor={`match-cookie-${at}`}>Cookie name</label>
+              <input
+                id={`match-cookie-${at}`}
+                className="input mono"
+                placeholder="locale"
+                value={match.cookieName ?? ""}
+                onChange={(event) =>
+                  update(at, { cookieName: event.target.value })
+                }
+              />
+              <p className="hint">
+                The value above is compared against this cookie alone, not
+                against the whole Cookie header. Names are case sensitive.
               </p>
             </div>
           )}

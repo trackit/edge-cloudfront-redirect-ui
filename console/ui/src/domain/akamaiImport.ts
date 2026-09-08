@@ -665,21 +665,14 @@ const mapSimpleCsv = (text: string, host: string): Candidate[] => {
   });
 };
 
-/**
- * Our match types that an Akamai `matches[]` entry can map onto directly.
- *
- * `cookie` is deliberately absent. An Akamai cookie condition names the cookie it
- * tests (`ab_test` equals `on`), and a `MatchCondition` has nowhere to put that
- * name, so the edge compares the value against the whole `Cookie` header:
- * `equals` then never matches, and `contains` matches unrelated cookies. Until
- * the model carries a cookie name, the honest answer is to refuse the row.
- */
+/** Our match types that an Akamai `matches[]` entry can map onto directly. */
 const PASSTHROUGH_MATCH_TYPES = new Set<MatchCondition["matchType"]>([
   "path",
   "hostname",
   "protocol",
   "regex",
   "header",
+  "cookie",
 ]);
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -726,7 +719,17 @@ const mapJsonMatch = (
   if (type === "header") {
     match.headerName = str(entry.name) || str(entry.headerName);
   }
-  return { match, messages: resolved.messages, drops: resolved.drops };
+  const drops = [...resolved.drops];
+  if (type === "cookie") {
+    // Akamai carries the cookie's name in `name`. Without it the condition
+    // cannot be expressed at all, so the row is refused rather than imported as
+    // a comparison against the whole `Cookie` header.
+    match.cookieName = str(entry.name) || str(entry.cookieName);
+    if (match.cookieName === "") {
+      drops.push("cookie condition has no cookie name to match on");
+    }
+  }
+  return { match, messages: resolved.messages, drops };
 };
 
 /**

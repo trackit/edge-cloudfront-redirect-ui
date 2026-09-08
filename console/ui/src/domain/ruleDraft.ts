@@ -328,6 +328,17 @@ export const validateDraft = (
         message: "is required for a header condition",
       });
     }
+    // A cookie condition without its name would be compared against the whole
+    // `Cookie` header, so it could only ever fail or match the wrong visitor.
+    if (
+      match.matchType === "cookie" &&
+      (match.cookieName ?? "").trim() === ""
+    ) {
+      details.push({
+        path: `/matches/${at}/cookieName`,
+        message: "is required for a cookie condition",
+      });
+    }
     // Either is regex mode at the edge: a `regex` operator, or a `regex` match
     // type. Checking only the operator lets a `matchType: "regex"` with an
     // invalid pattern through to the server.
@@ -476,6 +487,7 @@ const FIELD_LABELS: Record<string, string> = {
 const MATCH_FIELD_LABELS: Record<string, string> = {
   matchValue: "value",
   headerName: "header name",
+  cookieName: "cookie name",
 };
 
 export const labelForPath = (path: string): string => {
@@ -579,9 +591,10 @@ export const toRuleInput = (draft: RuleDraft): RuleInput => {
 /**
  * Drops the fields the schema rejects rather than sending them falsy.
  *
- * `headerName` is forbidden unless the type is `header`, and the schemas are
- * `additionalProperties: false`, so an `undefined` left on the object would be
- * serialised away by `JSON.stringify` — but a `""` would not, and that is a 400.
+ * `headerName` is forbidden unless the type is `header`, `cookieName` unless it
+ * is `cookie`, and the schemas are `additionalProperties: false`. An `undefined`
+ * left on the object would be serialised away by `JSON.stringify` — but a `""`
+ * would not, and that is a 400.
  */
 const cleanMatch = (match: MatchCondition): MatchCondition => {
   const base: MatchCondition = {
@@ -592,7 +605,11 @@ const cleanMatch = (match: MatchCondition): MatchCondition => {
     caseSensitive: match.caseSensitive === true,
   };
 
-  return match.matchType === "header"
-    ? { ...base, headerName: (match.headerName ?? "").trim() }
-    : base;
+  if (match.matchType === "header") {
+    return { ...base, headerName: (match.headerName ?? "").trim() };
+  }
+  if (match.matchType === "cookie") {
+    return { ...base, cookieName: (match.cookieName ?? "").trim() };
+  }
+  return base;
 };

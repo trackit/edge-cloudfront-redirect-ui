@@ -7,14 +7,24 @@ import type { MatchCondition, Rule } from "../api";
  * any future confirmation dialog should all describe a rule the same way.
  */
 
+/**
+ * What a condition is *about*: `path`, or the named thing it tests.
+ *
+ * A header and a cookie condition are meaningless without the name, so a summary
+ * that leaves it out cannot tell two of them apart — `cookie equals on` could be
+ * the A/B test or the consent banner. Exported because the import preview leads
+ * its rows with the same subject, and there is one wording for a rule.
+ */
+export const matchSubject = (match: MatchCondition): string => {
+  if (match.matchType === "header") return `header:${match.headerName ?? "?"}`;
+  if (match.matchType === "cookie") return `cookie:${match.cookieName ?? "?"}`;
+  return match.matchType;
+};
+
 /** `path equals /old`, or `header:x-env not contains staging`. */
 export const describeMatch = (match: MatchCondition): string => {
-  const subject =
-    match.matchType === "header"
-      ? `header:${match.headerName ?? "?"}`
-      : match.matchType;
   const negated = match.negate === true ? "not " : "";
-  return `${subject} ${negated}${match.matchOperator} ${match.matchValue}`;
+  return `${matchSubject(match)} ${negated}${match.matchOperator} ${match.matchValue}`;
 };
 
 /** All of a rule's conditions on one line, or the fact that it has none. */

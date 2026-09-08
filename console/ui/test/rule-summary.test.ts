@@ -67,6 +67,18 @@ describe("describeMatch", () => {
       match({ matchType: "header", matchValue: "prod" }),
       "header:? equals prod",
     ],
+    [
+      // Without the name, two cookie conditions are indistinguishable in a list:
+      // `cookie equals on` could be the A/B test or the consent banner.
+      "a cookie, prefixed with its name",
+      match({ matchType: "cookie", cookieName: "ab_test", matchValue: "on" }),
+      "cookie:ab_test equals on",
+    ],
+    [
+      "a cookie missing its name",
+      match({ matchType: "cookie", matchValue: "on" }),
+      "cookie:? equals on",
+    ],
   ])("renders %s", (_case, condition, expected) => {
     expect(describeMatch(condition)).toBe(expected);
   });

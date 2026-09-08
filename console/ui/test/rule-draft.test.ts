@@ -226,6 +226,63 @@ describe("validateDraft — regex", () => {
   });
 });
 
+/**
+ * A cookie condition is only meaningful with the name of the cookie it tests,
+ * exactly like a header condition. The name also has to survive the trip to the
+ * API body, and must not be sent on a condition whose type would have the schema
+ * reject it.
+ */
+describe("validateDraft — cookie name", () => {
+  const withMatch = (over: Partial<Rule["matches"][number]>): RewriteDraft => {
+    const draft = draftFromRule(customRewriteRule()) as RewriteDraft;
+    return { ...draft, matches: [match(over)] };
+  };
+
+  it.each([
+    { what: "missing", cookieName: undefined },
+    { what: "blank", cookieName: "   " },
+  ])("rejects a cookie condition whose name is $what", ({ cookieName }) => {
+    const details = validateDraft(
+      withMatch({ matchType: "cookie", matchValue: "on", cookieName }),
+      [],
+    );
+    expect(has(details, "/matches/0/cookieName")).toBe(true);
+  });
+
+  it("accepts one that names its cookie", () => {
+    const details = validateDraft(
+      withMatch({
+        matchType: "cookie",
+        matchValue: "on",
+        cookieName: "ab_test",
+      }),
+      [],
+    );
+    expect(has(details, "/matches/0/cookieName")).toBe(false);
+  });
+
+  it("sends the name for a cookie condition and drops it for any other type", () => {
+    const cookie = toRuleInput(
+      withMatch({
+        matchType: "cookie",
+        matchValue: "on",
+        cookieName: " ab_test ",
+      }),
+    );
+    expect(cookie.matches[0]).toMatchObject({ cookieName: "ab_test" });
+
+    const path = toRuleInput(
+      withMatch({
+        matchType: "path",
+        matchValue: "/old",
+        cookieName: "ab_test",
+      }),
+    );
+    // `additionalProperties: false` on the schema, so sending it here is a 400.
+    expect(path.matches[0]).not.toHaveProperty("cookieName");
+  });
+});
+
 describe("validateDraft — custom origin ranges", () => {
   const withCustom = (over: Partial<CustomDraft>): RewriteDraft => {
     const draft = draftFromRule(customRewriteRule()) as RewriteDraft;
@@ -295,6 +352,7 @@ describe("labelForPath", () => {
     ["/priority", "Priority"],
     ["/matches/0/matchValue", "Condition 1 value"],
     ["/matches/2/headerName", "Condition 3 header name"],
+    ["/matches/1/cookieName", "Condition 2 cookie name"],
     // A server path this UI does not produce is shown, not hidden.
     ["/something/else", "/something/else"],
   ])("maps %s to %s", (path, label) => {
