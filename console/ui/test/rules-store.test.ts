@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { asApiError, takenPriorities } from "../src/domain/rules";
+import {
+  asApiError,
+  ruleFingerprint,
+  takenPriorities,
+} from "../src/domain/rules";
 import { ApiError } from "../src/api";
-import type { Rule } from "../src/api";
+import type { RedirectRuleInput, Rule } from "../src/api";
 
 /**
  * The pure half of the rules module. The hook itself — loading, the in-place
@@ -38,6 +42,66 @@ describe("takenPriorities", () => {
 
   it("is empty when the type has no rules", () => {
     expect(takenPriorities([], "erMatchRule")).toEqual([]);
+  });
+});
+
+/**
+ * What makes two rules "the same rule" — the test an import uses to leave an
+ * existing rule alone instead of creating a second one. It has to ignore where a
+ * rule sits, because a re-imported rule lands at a different priority, and it has
+ * to notice any difference in what the rule *does*, or a re-import would silently
+ * skip a rule the source has since changed.
+ */
+describe("ruleFingerprint", () => {
+  const redirect = (over: Partial<RedirectRuleInput> = {}): RedirectRuleInput =>
+    ({
+      type: "erMatchRule",
+      priority: 100,
+      statusCode: 301,
+      redirectURL: "/new",
+      useIncomingQueryString: false,
+      matches: [
+        { matchType: "path", matchOperator: "equals", matchValue: "/old" },
+      ],
+      ...over,
+    }) as RedirectRuleInput;
+
+  it.each([
+    ["priority", { priority: 900 }],
+    ["disabled", { disabled: true }],
+  ])(
+    "ignores %s, which says where a rule sits, not what it does",
+    (_c, over) => {
+      expect(ruleFingerprint(redirect(over))).toBe(ruleFingerprint(redirect()));
+    },
+  );
+
+  it.each([
+    ["the status code", { statusCode: 302 as const }],
+    ["the target", { redirectURL: "/other" }],
+    ["the query-string flag", { useIncomingQueryString: true }],
+    [
+      "a condition",
+      {
+        matches: [
+          { matchType: "path", matchOperator: "equals", matchValue: "/other" },
+        ],
+      },
+    ],
+    ["the number of conditions", { matches: [] }],
+  ])("separates rules that differ by %s", (_c, over) => {
+    expect(ruleFingerprint(redirect(over))).not.toBe(
+      ruleFingerprint(redirect()),
+    );
+  });
+
+  it("matches a stored rule against the input that would recreate it", () => {
+    const stored = {
+      ...redirect(),
+      pk: "www.example.com",
+      sk: "REDIRECT#00100",
+    } as unknown as Rule;
+    expect(ruleFingerprint(stored)).toBe(ruleFingerprint(redirect()));
   });
 });
 

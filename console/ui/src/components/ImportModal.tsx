@@ -7,7 +7,11 @@ import type {
   SourceFormat,
 } from "../domain/akamaiImport";
 import type { RedirectDraft } from "../domain/ruleDraft";
-import type { ImportItem, ImportOutcome } from "../domain/rules";
+import type {
+  ImportItem,
+  ImportOutcome,
+  ImportProgress,
+} from "../domain/rules";
 
 interface Props {
   /** The distribution rules are imported into, named in the subtitle. */
@@ -16,7 +20,10 @@ interface Props {
   hosts: string[];
   /** The host selected by default — the one the console was showing. */
   defaultHost: string;
-  onImport: (items: ImportItem[]) => Promise<ImportOutcome>;
+  onImport: (
+    items: ImportItem[],
+    onProgress?: (progress: ImportProgress) => void,
+  ) => Promise<ImportOutcome>;
   /** Called on close after a run created at least one rule, to refresh counts. */
   onImported: () => void;
   onClose: () => void;
@@ -119,6 +126,11 @@ export default function ImportModal({
   busyRef.current = busy;
   const [dragover, setDragover] = useState(false);
   const [result, setResult] = useState<ImportOutcome | undefined>(undefined);
+  // One request per rule, so a batch of any size takes a while: the count is the
+  // only thing that distinguishes "working" from "stuck".
+  const [progress, setProgress] = useState<ImportProgress | undefined>(
+    undefined,
+  );
 
   /**
    * Refreshing the sidebar counts (`onImported`) reloads the host list, which
@@ -153,7 +165,11 @@ export default function ImportModal({
 
   const items: ImportItem[] = preview.rows
     .filter((row) => row.input !== undefined)
-    .map((row) => ({ host: row.host, input: row.input! }));
+    .map((row) => ({
+      host: row.host,
+      input: row.input!,
+      sourceIndex: row.index,
+    }));
   const hasFormat = preview.format !== "unrecognized";
   const done = result !== undefined;
   // The picker always offers the default host, even if the list has not loaded.
@@ -178,8 +194,9 @@ export default function ImportModal({
   const doImport = async (): Promise<void> => {
     if (busy || done || items.length === 0) return;
     setBusy(true);
+    setProgress({ done: 0, total: items.length });
     try {
-      setResult(await onImport(items));
+      setResult(await onImport(items, setProgress));
     } finally {
       setBusy(false);
     }
@@ -430,15 +447,25 @@ export default function ImportModal({
               <strong>
                 Imported {result.created}{" "}
                 {result.created === 1 ? "rule" : "rules"}.
+                {result.duplicates > 0 &&
+                  ` ${result.duplicates} already existed and ${
+                    result.duplicates === 1 ? "was" : "were"
+                  } left alone.`}
               </strong>
               {result.failures.length > 0 && (
                 <ul>
                   {result.failures.map((failure) => (
-                    <li key={failure.index}>
-                      Row {failure.index + 1}: {failure.message}
+                    <li key={failure.sourceIndex}>
+                      Row {failure.sourceIndex}: {failure.message}
                     </li>
                   ))}
                 </ul>
+              )}
+              {result.failures.length > 0 && (
+                <p>
+                  Import the same file again to retry: rules already created are
+                  recognised and skipped.
+                </p>
               )}
             </div>
           )}
@@ -462,7 +489,7 @@ export default function ImportModal({
             >
               <IconCheck size={16} />
               {busy
-                ? "Importing…"
+                ? `Importing ${progress?.done ?? 0}/${progress?.total ?? items.length}…`
                 : `Import ${items.length} ${items.length === 1 ? "rule" : "rules"}`}
             </button>
           )}

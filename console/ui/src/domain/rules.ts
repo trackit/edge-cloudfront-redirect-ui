@@ -22,17 +22,57 @@ export interface GroupedRules {
 export interface ImportItem {
   host: string;
   input: RuleInput;
+  /**
+   * Which line of the source file this came from. Carried through so a failure
+   * names the line the user can go and look at: the batch skips the rows it
+   * refused, so its own positions stopped matching the file at the first skip.
+   */
+  sourceIndex: number;
 }
 
 /**
- * The tally an import returns: how many rules were created, and which items (by
- * their position in the batch) the API refused, with why. A partial success is
+ * The tally an import returns: how many rules were created, how many were
+ * already there, and which rows the API refused, with why. A partial success is
  * the expected shape, not an error — some rows can land while others fail.
  */
 export interface ImportOutcome {
   created: number;
-  failures: { index: number; message: string }[];
+  /** Rules an identical one already existed for, so nothing was written. */
+  duplicates: number;
+  failures: { sourceIndex: number; message: string }[];
 }
+
+/** How far along a run is, for a caller that wants to show it. */
+export interface ImportProgress {
+  done: number;
+  total: number;
+}
+
+/**
+ * A rule's content, as one comparable string — everything except where it sits.
+ *
+ * Priority, `pk`, `sk` and `disabled` are deliberately out: they say where a rule
+ * lives and whether it is on, not what it does. Two rules with the same
+ * fingerprint would redirect identically, so importing the second is a duplicate
+ * — which is what makes re-running an interrupted import safe rather than
+ * doubling everything that already landed.
+ */
+export const ruleFingerprint = (rule: Rule | RuleInput): string =>
+  JSON.stringify([
+    rule.type,
+    "statusCode" in rule ? rule.statusCode : null,
+    "redirectURL" in rule ? rule.redirectURL : null,
+    "useIncomingQueryString" in rule ? rule.useIncomingQueryString : null,
+    "forwardSettings" in rule ? rule.forwardSettings : null,
+    (rule.matches ?? []).map((match) => [
+      match.matchType,
+      match.matchOperator,
+      match.matchValue,
+      match.headerName ?? null,
+      match.negate === true,
+      match.caseSensitive === true,
+    ]),
+  ]);
 
 const byPriority = (a: Rule, b: Rule): number =>
   priorityOf(a.sk) - priorityOf(b.sk);
@@ -194,64 +234,90 @@ export function useRules(targetId: string, host: string) {
    *
    * Sequential, not `Promise.all` — the priorities within a host are consecutive,
    * and firing them at once would race the server's uniqueness check. A failure
-   * does not abort the run: each is caught and reported by its position in the
-   * batch, so one rejection does not cost the rows after it. One refetch at the
-   * end reflects the true final state; `mutate`'s per-write refetch would fire
-   * once per rule.
+   * does not abort the run: each is caught and reported against its source line,
+   * so one rejection does not cost the rows after it. One refetch at the end
+   * reflects the true final state; `mutate`'s per-write refetch would fire once
+   * per rule.
+   *
+   * A rule identical to one the host already has is counted and skipped rather
+   * than created again. That is what makes the run repeatable: an import cut off
+   * halfway — a closed tab, an API that went away — is finished by importing the
+   * same file again, which writes only what is missing instead of doubling
+   * everything that already landed.
    */
   const importRules = useCallback(
-    async (items: ImportItem[]): Promise<ImportOutcome> => {
+    async (
+      items: ImportItem[],
+      onProgress?: (progress: ImportProgress) => void,
+    ): Promise<ImportOutcome> => {
       const failures: ImportOutcome["failures"] = [];
       let created = 0;
+      let duplicates = 0;
+      let done = 0;
 
       // Grouped on the normalized host: two spellings of one host are one
       // partition, so grouping on the raw string would read it twice and hand
       // both groups the same starting priority — a collision on every write
       // after the first.
-      const byHost = new Map<string, { index: number; input: RuleInput }[]>();
-      items.forEach((item, index) => {
+      const byHost = new Map<string, ImportItem[]>();
+      items.forEach((item) => {
         const key = hostKey(item.host);
         const group = byHost.get(key) ?? [];
-        group.push({ index, input: item.input });
+        group.push(item);
         byHost.set(key, group);
       });
 
       for (const [ruleHost, group] of byHost) {
         let cursor = 0;
         const used = new Set<number>();
+        const present = new Set<string>();
         try {
           const existing = await api.rules.list(targetId, ruleHost);
           for (const priority of takenPriorities(existing, "erMatchRule")) {
             used.add(priority);
           }
           if (used.size > 0) cursor = Math.max(...used) + 1;
+          for (const rule of existing) present.add(ruleFingerprint(rule));
         } catch {
-          // Could not read the host's rules — start from zero and let any real
-          // collision surface as a per-row failure below rather than aborting.
+          // Could not read the host's rules — start from zero, treat nothing as
+          // already present, and let any real collision surface as a per-row
+          // failure below rather than aborting.
         }
 
-        for (const { index, input } of group) {
+        for (const { input, sourceIndex } of group) {
+          done++;
+          const fingerprint = ruleFingerprint(input);
+          if (present.has(fingerprint)) {
+            duplicates++;
+            onProgress?.({ done, total: items.length });
+            continue;
+          }
+
           while (used.has(cursor)) cursor++;
           const priority = cursor++;
           used.add(priority);
           try {
             await api.rules.create(targetId, ruleHost, { ...input, priority });
             created++;
+            // Added as we go, so two identical rows in one file produce one rule
+            // instead of two.
+            present.add(fingerprint);
           } catch (caught) {
             const err = asApiError(caught, "Could not create this rule");
             failures.push({
-              index,
+              sourceIndex,
               message:
                 err.code === "RULE_EXISTS"
                   ? "priority already in use (created concurrently?)"
                   : err.message,
             });
           }
+          onProgress?.({ done, total: items.length });
         }
       }
 
       await load();
-      return { created, failures };
+      return { created, duplicates, failures };
     },
     [targetId, load],
   );

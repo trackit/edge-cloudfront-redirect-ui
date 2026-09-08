@@ -107,6 +107,43 @@ test("pastes an export, previews it, and imports the ready rows", async ({
   await expect(page.getByText("/news")).toBeVisible();
 });
 
+/**
+ * Re-importing the same file is how an interrupted run is finished, so it has to
+ * be safe: the rules that landed are recognised and left alone instead of being
+ * created a second time at a fresh priority, where nothing would flag them.
+ */
+test("re-importing the same export creates nothing twice", async ({
+  page,
+  api,
+}) => {
+  await openHostWithRules(page, api);
+
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByPlaceholder(/Paste an Edge Redirector/).fill(csv);
+  await page.getByRole("button", { name: /Import 2 rules/ }).click();
+  await expect(page.getByText("Imported 2 rules.")).toBeVisible();
+  await page
+    .locator(".modal-foot")
+    .getByRole("button", { name: "Close" })
+    .click();
+
+  const postsAfterFirst = api.calls.filter(
+    (call) => call.method === "POST" && /\/rules$/.test(call.url),
+  ).length;
+
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByPlaceholder(/Paste an Edge Redirector/).fill(csv);
+  await page.getByRole("button", { name: /Import 2 rules/ }).click();
+
+  await expect(page.getByText("Imported 0 rules.")).toBeVisible();
+  await expect(page.getByText(/2 already existed/)).toBeVisible();
+  expect(
+    api.calls.filter(
+      (call) => call.method === "POST" && /\/rules$/.test(call.url),
+    ),
+  ).toHaveLength(postsAfterFirst);
+});
+
 test("routes a hostname-conditioned rule to its own host", async ({
   page,
   api,
