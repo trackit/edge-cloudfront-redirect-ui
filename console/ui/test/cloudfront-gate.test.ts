@@ -95,9 +95,23 @@ describe("basic auth", () => {
     expect(response.headers?.["cache-control"]?.value).toBe("no-store");
   });
 
-  it("challenges the API path too, not just the SPA", () => {
-    // The console being behind auth is worth little if /api/targets is not.
-    expect((request("/api/targets", "") as CfResponse).statusCode).toBe(401);
+  it("lets an API path through without a basic credential", () => {
+    // Deliberate: the JWT authorizer on the HTTP API owns this surface, and
+    // challenging here would break the console rather than protect it — see the
+    // bearer case below.
+    expect(isResponse(request("/api/targets", ""))).toBe(false);
+  });
+
+  it("passes a bearer token through instead of rejecting it", () => {
+    // The regression this file exists to catch. The console sends its access
+    // token in the same header basic auth uses, so a credential comparison here
+    // 401s every authenticated call at the edge — the API never sees the token,
+    // and the browser is prompted for a password it already gave.
+    const bearer = "Bearer eyJhbGciOiJSUzI1NiJ9.e30.signature";
+    const result = request("/api/targets", bearer);
+
+    expect(isResponse(result)).toBe(false);
+    expect((result as CfRequest).headers.authorization.value).toBe(bearer);
   });
 
   it("lets the right credential through", () => {

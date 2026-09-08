@@ -31,8 +31,8 @@ run "one_function_on_both_behaviors" {
   command = plan
 
   # CloudFront allows a single viewer-request function per behavior, and the API
-  # path must be gated as well — the SPA being behind auth is worth little if
-  # /api/targets is not.
+  # behavior needs the function too — it is what strips the /api prefix before
+  # the request reaches the HTTP API.
   assert {
     condition     = length(aws_cloudfront_distribution.this.default_cache_behavior[0].function_association) == 1
     error_message = "the SPA behavior must carry the gate function"
