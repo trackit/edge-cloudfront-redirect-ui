@@ -1,4 +1,4 @@
-# examples/infra — one-command data plane (ER-104)
+# examples/infra — one-command data plane (CF-10)
 
 A single `terraform apply` stands up the whole data plane — DynamoDB table,
 Lambda@Edge, and a CloudFront distribution with the function attached — so you

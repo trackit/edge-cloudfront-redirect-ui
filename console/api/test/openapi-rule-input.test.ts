@@ -11,7 +11,7 @@ import { PRIORITY_MAX, PRIORITY_MIN } from "../src/lib/rule-keys.js";
  * has no `sk` yet and carries a `priority` the stored item must never have, and
  * draft-07 cannot express that as a `$ref` to the shared schemas. So the field
  * list is hand-written — and nothing but this test stops it drifting from the
- * schemas the API actually validates against, which is how the SPA (ER-301) ends
+ * schemas the API actually validates against, which is how the SPA ends
  * up with a generated client that omits a field the server requires, or rejects
  * a value the server accepts.
  *
@@ -124,7 +124,7 @@ describe.each(cases)("%s matches the shared schema", (name, shared) => {
   it("defines every hand-copied field exactly as the item schema does", () => {
     // The field names matching is not enough: `statusCode`'s enum and
     // `redirectURL`'s minLength are copied values. Widen the shared enum in
-    // ER-204 and, without this, the server would accept a status code the
+    // validated, and without this the server would accept a status code the
     // generated client refuses to send.
     for (const [field, definition] of Object.entries(input?.properties ?? {})) {
       if (NOT_COMPARABLE.has(field)) continue;

@@ -1,6 +1,6 @@
 /**
  * Shape of `edge-config.generated.ts`, which Terraform renders into the Lambda
- * zip at package time (ER-102). The generated file is gitignored; this example
+ * zip at package time (CF-8). The generated file is gitignored; this example
  * is the committed record of its shape.
  *
  * Lambda@Edge does not support environment variables, so the table coordinates

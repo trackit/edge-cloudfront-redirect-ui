@@ -1,4 +1,4 @@
-# modules/edge — Lambda@Edge packaging + IAM (ER-103)
+# modules/edge — Lambda@Edge packaging + IAM (CF-9)
 
 Packages, publishes, and grants read access to the [redirect/rewrite
 handler](../../lambda), and hands back a qualified version ARN. It does **not**

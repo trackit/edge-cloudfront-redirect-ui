@@ -173,7 +173,7 @@ run "function_name_rejects_bad_chars" {
 }
 
 # =============================================================================
-# Reaching a target's table (ER-202)
+# Reaching a target's table (CF-12)
 # =============================================================================
 
 run "registry_table_is_protected_by_default" {
@@ -256,7 +256,7 @@ run "rejects_a_bare_wildcard_assumable_role" {
   command = plan
 
   # A bare "*" would let anyone who can register a target point the API at any
-  # role in any account. Auth (ER-205) narrows who that is; it does not make the
+  # role in any account. Auth (CF-23) narrows who that is; it does not make the
   # grant itself any narrower, which is why this validation still matters.
   variables {
     assumable_role_arns = ["*"]

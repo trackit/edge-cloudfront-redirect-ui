@@ -341,7 +341,7 @@ function HostWorkspace({
         </div>
       </header>
 
-      {/* ER-306: a write is not live when it returns. Stated once, next to the
+      {/* A write is not live when it returns. Stated once, next to the
           list, rather than only inside the editor — it also explains a deletion
           that still redirects. */}
       <p className="propagation">

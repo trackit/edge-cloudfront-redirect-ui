@@ -28,7 +28,7 @@ override_module {
 }
 
 # =============================================================================
-# Lambda@Edge associations (ER-103 #2)
+# Lambda@Edge associations (CF-9 #2)
 # =============================================================================
 
 run "both_associations_attached" {
@@ -57,7 +57,7 @@ run "both_associations_attached" {
 }
 
 # =============================================================================
-# Origin selection (ER-103 #5)
+# Origin selection (CF-9 #5)
 # =============================================================================
 
 run "placeholder_origin_by_default" {

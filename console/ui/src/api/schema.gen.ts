@@ -135,7 +135,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
       };
       cookie?: never;
@@ -172,7 +172,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -201,7 +201,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -236,7 +236,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -624,7 +624,7 @@ export interface components {
   parameters: {
     /** @description Target id. */
     TargetPathId: string;
-    /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+    /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
     TargetId: string;
     /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
     Host: string;
@@ -886,7 +886,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
       };
       cookie?: never;
@@ -915,7 +915,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
       };
       cookie?: never;
@@ -950,7 +950,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -980,7 +980,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -1011,7 +1011,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -1048,7 +1048,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -1081,7 +1081,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -1120,7 +1120,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -1152,7 +1152,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];

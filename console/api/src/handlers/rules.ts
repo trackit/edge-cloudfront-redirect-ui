@@ -10,7 +10,7 @@ const ruleNotFound = (host: string, sk: string): ApiError =>
   ApiError.notFound(`No rule "${sk}" for host "${host}" in this target`);
 
 /**
- * Priority is unique per host per type because it *is* the sort key. ER-204 owns
+ * Priority is unique per host per type because it *is* the sort key. Validation owns
  * the friendly form of this; what matters here is that the write was refused
  * rather than silently overwriting the rule already at that priority.
  */
