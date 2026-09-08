@@ -127,6 +127,35 @@ describe("parseExport — Edge Redirector CSV", () => {
     });
   });
 
+  /**
+   * `?` is a literal in an Akamai match value, and the edge treats it as one
+   * (`checkAkamaiVariant` escapes it). Reading it as a single-character wildcard
+   * would both widen the match and hand `$1` the `?` character itself.
+   */
+  it("treats ? as a literal, so only * drives a capture", () => {
+    const preview = parseExport(
+      [
+        "ruleName,matchURL,redirectURL,result.statusCode",
+        "Q,/promo?id=5,/new/\\1,302",
+        "S,/old/*,/new/\\1,301",
+      ].join("\n"),
+      { filename: "e.csv", defaultHost: HOST },
+    );
+
+    // No `*`, so nothing is rewritten: the value keeps its literal `?` and the
+    // target's `$1` has no group to draw from, which is worth saying.
+    expect(asRedirect(preview.rows[0].input).matches[0]).toMatchObject({
+      matchOperator: "equals",
+      matchValue: "/promo?id=5",
+    });
+    expect(preview.rows[0].messages.join(" ")).toMatch(/captures one/);
+
+    expect(asRedirect(preview.rows[1].input).matches[0]).toMatchObject({
+      matchOperator: "regex",
+      matchValue: "^/old/(.*)$",
+    });
+  });
+
   it("reduces an absolute match URL to its path, with a warning", () => {
     const preview = parseExport(
       "ruleName,matchURL,redirectURL,result.statusCode\nA,http://www.example.com/old,/new,301",

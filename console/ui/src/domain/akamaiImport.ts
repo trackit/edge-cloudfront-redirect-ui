@@ -186,17 +186,23 @@ export function detectFormat(input: {
 // ---------------------------------------------------------------------------
 
 /**
- * Escapes a glob so only `*` and `?` stay special, then anchors it.
+ * Escapes a glob so only `*` stays special, then anchors it.
  *
- * Each wildcard becomes a *capturing* group so an Akamai redirect target that
- * reinjects the piece it matched (`\1`, `\2` …) has something to reinject. A
- * capturing group matches exactly what `.*` / `.` matched, so this never changes
- * *what* a rule matches — it only makes the captured pieces available.
+ * `*` becomes a *capturing* group so an Akamai redirect target that reinjects the
+ * piece it matched (`\1`, `\2` …) has something to reinject. A capturing group
+ * matches exactly what `.*` matched, so this never changes *what* a rule matches
+ * — it only makes the captured pieces available.
+ *
+ * The escape class is the one `checkAkamaiVariant` uses at the edge, character
+ * for character, and for the same reason: `?` is a literal in an Akamai match
+ * value, not a single-character wildcard. Treating it as one here would make the
+ * same value mean two different things depending on whether the import rewrote
+ * it, and would spend the `$1` slot on the `?` itself.
+ * See `infra/lambda/src/lib/check-akamai-variant.ts`.
  */
 const wildcardToRegex = (glob: string): string => {
-  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  const body = escaped.replace(/\*/g, "(.*)").replace(/\?/g, "(.)");
-  return `^${body}$`;
+  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+  return `^${escaped.replace(/\*/g, "(.*)")}$`;
 };
 
 /**
@@ -204,10 +210,10 @@ const wildcardToRegex = (glob: string): string => {
  * decision the importer makes about match syntax.
  *
  * Our edge already speaks Akamai for `contains` / `equals`: at runtime it splits
- * a value on spaces into alternatives and expands `*` within each (contains
- * unanchored, equals anchored — see `checkAkamaiVariant`). So values are passed
- * through VERBATIM and the runtime does the work; there is no growing list of
- * glob/space/operator quirks to translate here.
+ * a value on spaces into alternatives and expands `*` within each — and only `*`
+ * — (contains unanchored, equals anchored, see `checkAkamaiVariant`). So values
+ * are passed through VERBATIM and the runtime does the work; there is no growing
+ * list of glob/space/operator quirks to translate here.
  *
  * The one thing native matching cannot do is feed a captured group back into the
  * redirect. So when — and only when — a rule's target reinjects a capture
@@ -228,7 +234,7 @@ const resolveMatchValue = (
     return { matchOperator: "regex", matchValue: value, messages: [] };
   }
 
-  if (captureMode && /[*?]/.test(value)) {
+  if (captureMode && value.includes("*")) {
     const messages = [
       "wildcard translated to a capturing regular expression to feed the redirect",
     ];
@@ -312,6 +318,22 @@ const capturesAGroup = (match: MatchCondition): boolean =>
   match.matchOperator === "regex" && /\((?!\?)/.test(match.matchValue);
 
 /**
+ * Warns when a target reinjects a capture no condition provides.
+ *
+ * `$1` with nothing to fill it resolves to an empty string at the edge, so the
+ * redirect silently drops the part of the path it was supposed to carry over.
+ * Shared by every format: the target is rewritten to `$1` form in one place, so
+ * the check belongs in one place too.
+ */
+const captureWarnings = (draft: RedirectDraft): string[] =>
+  usesCapture(draft.redirectURL) && !draft.matches.some(capturesAGroup)
+    ? [
+        "redirect target reinjects a captured group ($1 …) but no condition " +
+          "captures one — it may resolve to an empty string",
+      ]
+    : [];
+
+/**
  * Builds a redirect draft from a target URL, status and conditions.
  *
  * Akamai backreferences in the target are rewritten to the edge's `$1` form
@@ -393,11 +415,12 @@ const mapEdgeRedirectorCsv = (text: string, host: string): Candidate[] => {
       captureMode,
     );
     const { statusCode, messages: statusMsg } = mapStatus(cell(row, statusAt));
+    const draft = redirectDraft(target, statusCode, [match]);
     return {
       label,
       host,
-      draft: redirectDraft(target, statusCode, [match]),
-      messages: [...matchMsg, ...statusMsg],
+      draft,
+      messages: [...matchMsg, ...statusMsg, ...captureWarnings(draft)],
     };
   });
 };
@@ -424,11 +447,12 @@ const mapSimpleCsv = (text: string, host: string): Candidate[] => {
       captureMode,
     );
     const { statusCode, messages: statusMsg } = mapStatus(cell(row, statusAt));
+    const draft = redirectDraft(target, statusCode, [match]);
     return {
       label,
       host,
-      draft: redirectDraft(target, statusCode, [match]),
-      messages: [...matchMsg, ...statusMsg],
+      draft,
+      messages: [...matchMsg, ...statusMsg, ...captureWarnings(draft)],
     };
   });
 };
@@ -590,17 +614,8 @@ const mapMatchRule = (
     messages.push(...mapped.messages);
   }
 
-  // `redirectDraft` has already rewritten Akamai's `\1` backreferences to the
-  // edge's `$1` form. A target that reinjects a capture but has no capturing
-  // condition to fill it resolves to an empty string at the edge — flag it
-  // rather than import a redirect that silently drops part of the path.
   const draft = redirectDraft(target, status.statusCode, matches);
-  if (usesCapture(draft.redirectURL) && !matches.some(capturesAGroup)) {
-    messages.push(
-      "redirect target reinjects a captured group ($1 …) but no condition " +
-        "captures one — it may resolve to an empty string",
-    );
-  }
+  messages.push(...captureWarnings(draft));
 
   // Honour the source's query-string flag; absent leaves the draft default.
   const keepQueryString = firstBoolean(
