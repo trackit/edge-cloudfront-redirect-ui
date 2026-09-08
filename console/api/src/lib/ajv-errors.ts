@@ -30,6 +30,33 @@ export interface ValidationDetail {
 const BOOKKEEPING_KEYWORDS = new Set(["if", "then", "else"]);
 
 /**
+ * What a `pattern` failure says instead of the pattern, by field name.
+ *
+ * Ajv can only report the regex it failed — `must match pattern "^[^\s=;,]+$"` —
+ * which tells a person nothing about what to type. The console never shows it,
+ * because `validateDraft` refuses first with its own wording, but a direct API
+ * caller has only this. So the fields whose format is easy to get wrong carry a
+ * sentence, phrased like the console's; `params.pattern` still goes out for a
+ * client that would rather build its own text. Anything not listed keeps Ajv's
+ * message, which is at least precise.
+ */
+const PATTERN_MESSAGES: Record<string, string> = {
+  cookieName:
+    'must be the cookie name alone, with no "=", ";" or space: for the ' +
+    "cookie locale=nl, the name is locale and nl is the value",
+};
+
+/** Ajv's message, or a human one when we have better wording for the field. */
+const messageFor = (error: ErrorObject): string => {
+  if (error.keyword === "pattern") {
+    const field = error.instancePath.split("/").pop() ?? "";
+    const friendly = PATTERN_MESSAGES[field];
+    if (friendly !== undefined) return friendly;
+  }
+  return error.message ?? "invalid";
+};
+
+/**
  * Ajv errors → the `details` array of our standard error envelope.
  *
  * `params` is passed through because Ajv puts the offending field there, not in
@@ -48,7 +75,7 @@ export const formatAjvErrors = (
   const all = meaningful.length > 0 ? meaningful : raw;
   const details: ValidationDetail[] = all.slice(0, MAX_DETAILS).map((e) => ({
     path: e.instancePath || "(root)",
-    message: e.message ?? "invalid",
+    message: messageFor(e),
     ...(e.params && Object.keys(e.params).length > 0
       ? { params: e.params as Record<string, unknown> }
       : {}),

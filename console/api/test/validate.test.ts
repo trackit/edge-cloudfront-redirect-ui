@@ -102,6 +102,21 @@ describe("validateRule", () => {
     );
   });
 
+  it("says what to type instead of showing the pattern", () => {
+    // Ajv alone would answer `must match pattern "^[^\s=;,]+$"`, which names no
+    // fix. The pattern still travels in `params` for a client that wants it.
+    try {
+      validateRule(cookieMatch({ cookieName: "locale=nl" }));
+      expect.unreachable();
+    } catch (err) {
+      const [detail] = (err as ApiError).details as ValidationDetail[];
+      expect(detail.path).toBe("/matches/0/cookieName");
+      expect(detail.message).toMatch(/cookie name alone/);
+      expect(detail.message).not.toMatch(/pattern/);
+      expect(detail.params).toMatchObject({ pattern: expect.any(String) });
+    }
+  });
+
   /**
    * A schema conditional makes Ajv report twice: the missing field, and the fact
    * that the branch it sits in failed. The second names nothing and gives the
