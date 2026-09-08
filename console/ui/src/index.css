@@ -2250,6 +2250,13 @@ button {
   background: var(--red-glow);
   border-color: rgba(255, 107, 107, 0.3);
 }
+/* The "and N more" line: a note about the list, not a row of it. */
+.import-row.is-more {
+  border-style: dashed;
+  background: none;
+  color: var(--text-muted);
+  justify-content: center;
+}
 .import-dot {
   flex: none;
   width: 8px;

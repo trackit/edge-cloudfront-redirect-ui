@@ -930,17 +930,27 @@ const policyIndexNote = (text: string): string | null => {
  */
 /**
  * A ceiling on the input we will parse. Both PapaParse and `JSON.parse` load the
- * whole string into memory, so a huge paste/file would freeze the tab; a real
- * Edge Redirector export of thousands of rules stays comfortably under this.
+ * whole string into memory, so a huge paste/file would freeze the tab.
  */
-const MAX_IMPORT_BYTES = 50 * 1024 * 1024;
+const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+
+/**
+ * A ceiling on the number of rules, which is the figure that actually costs
+ * something: the count drives the mapping, the preview render, and one HTTP
+ * request each at import time. Bytes only bound the parse. A real Edge Redirector
+ * policy stays well under this; anything above it is a file that wants splitting.
+ */
+const MAX_IMPORT_ROWS = 5000;
+
+// How many rows the preview *renders* is a display concern, and lives with the
+// modal that renders them — every row is still parsed and imported.
 
 export function parseExport(text: string, opts: ParseOptions): ImportPreview {
   if (text.length > MAX_IMPORT_BYTES) {
     const mb = Math.round(text.length / (1024 * 1024));
     return emptyPreview(
       "unrecognized",
-      `Import is too large (~${mb} MB, limit 50 MB). Split it into smaller ` +
+      `Import is too large (~${mb} MB, limit 10 MB). Split it into smaller ` +
         `exports and import them separately.`,
     );
   }
@@ -970,6 +980,16 @@ export function parseExport(text: string, opts: ParseOptions): ImportPreview {
     return emptyPreview(
       format,
       `Could not read the ${format} export: ${reason}`,
+    );
+  }
+
+  if (candidates.length > MAX_IMPORT_ROWS) {
+    return emptyPreview(
+      format,
+      `That export holds ${candidates.length} rules (limit ` +
+        `${MAX_IMPORT_ROWS}). Split it and import the parts separately: each ` +
+        `rule is one request, so a batch this size would take a long time and ` +
+        `could not be followed.`,
     );
   }
 

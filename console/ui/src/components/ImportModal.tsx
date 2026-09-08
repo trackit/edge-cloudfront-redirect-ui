@@ -32,6 +32,13 @@ const FORMAT_LABEL: Record<SourceFormat, string> = {
 const ACCEPT = ".csv,.json,.txt";
 
 /**
+ * How many rows the preview renders. Every row is still parsed, counted in the
+ * summary and imported — this only keeps the list from putting thousands of DOM
+ * nodes on the page, which is what made a large export feel like a frozen tab.
+ */
+const PREVIEW_ROW_LIMIT = 200;
+
+/**
  * The condition a preview row leads with.
  *
  * Normally the path condition. But when the redirect reinjects a capture
@@ -373,7 +380,7 @@ export default function ImportModal({
 
               <h3 className="import-preview-title">Preview</h3>
               <ul className="import-rows">
-                {preview.rows.map((row) => {
+                {preview.rows.slice(0, PREVIEW_ROW_LIMIT).map((row) => {
                   const note = noteFor(row);
                   return (
                     <li
@@ -405,6 +412,12 @@ export default function ImportModal({
                     </li>
                   );
                 })}
+                {preview.rows.length > PREVIEW_ROW_LIMIT && (
+                  <li className="import-row is-more">
+                    {preview.rows.length - PREVIEW_ROW_LIMIT} more rows not
+                    shown. All of them are counted above and will be imported.
+                  </li>
+                )}
               </ul>
             </>
           )}

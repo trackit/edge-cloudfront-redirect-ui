@@ -966,15 +966,42 @@ describe("parseExport — ReDoS guard", () => {
   });
 });
 
-describe("parseExport — file size guard", () => {
+describe("parseExport — size guards", () => {
   it("rejects an oversized import instead of parsing it", () => {
-    const huge = "x".repeat(50 * 1024 * 1024 + 1);
+    const huge = "x".repeat(10 * 1024 * 1024 + 1);
     const preview = parseExport(huge, {
       filename: "big.csv",
       defaultHost: HOST,
     });
     expect(preview.rows).toEqual([]);
     expect(preview.error).toMatch(/too large/i);
+  });
+
+  /**
+   * Bytes bound the parse, rule count bounds everything after it: the mapping,
+   * the rows on the page, and one HTTP request per rule at import time. A file
+   * can be small and still ask for far too much.
+   */
+  it("rejects an import with more rules than one batch should carry", () => {
+    const rows = ["source,target"];
+    for (let i = 0; i < 5001; i++) rows.push(`/old-${i},/new-${i}`);
+    const preview = parseExport(rows.join("\n"), {
+      filename: "many.csv",
+      defaultHost: HOST,
+    });
+    expect(preview.rows).toEqual([]);
+    expect(preview.error).toMatch(/5001 rules \(limit 5000\)/);
+  });
+
+  it("accepts a batch at the limit", () => {
+    const rows = ["source,target"];
+    for (let i = 0; i < 5000; i++) rows.push(`/old-${i},/new-${i}`);
+    const preview = parseExport(rows.join("\n"), {
+      filename: "many.csv",
+      defaultHost: HOST,
+    });
+    expect(preview.error).toBeUndefined();
+    expect(preview.rows).toHaveLength(5000);
   });
 });
 
