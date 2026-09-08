@@ -749,6 +749,67 @@ describe("parseExport — host routing", () => {
     expect(preview.rows[0].status).toBe("ok");
   });
 
+  /**
+   * A real export guards on the host two ways: with a `hostname` condition, which
+   * names a partition and therefore routes, or with a regex over the full URL,
+   * which cannot route because it may describe a pattern of hosts. The second
+   * kind lands on the target host and can never match there — it imports
+   * cleanly, reads as ok, and does nothing. So it is called out.
+   */
+  const fullUrlGuard = (pattern: string): string =>
+    JSON.stringify([
+      {
+        name: "domain move",
+        redirectURL: "https://www.brand-a.example/nl",
+        statusCode: 301,
+        matches: [
+          { matchType: "path", matchOperator: "contains", matchValue: "/ /*" },
+          { matchType: "regex", matchOperator: "equals", matchValue: pattern },
+        ],
+      },
+    ]);
+
+  it("names the host to import into, rather than leaving the regex to read", () => {
+    const preview = parseExport(
+      fullUrlGuard("https://(www\\.)?www.brand-b.example/.*"),
+      { filename: "rules.json", defaultHost: HOST },
+    );
+    const row = preview.rows[0];
+    expect(row.status).toBe("warning");
+    // The optional group is dropped and the escapes removed, so the note can
+    // name a host the user can pick in the target-host menu.
+    expect(row.messages.join(" ")).toBe(
+      "this rule only fires on requests to www.brand-b.example, not on " +
+        "www.example.com, because its regex compares the whole URL. Select " +
+        "www.brand-b.example as the target host to import it.",
+    );
+  });
+
+  it("falls back to a note with no host when the pattern is unreadable", () => {
+    const preview = parseExport(
+      fullUrlGuard("https://(a|b)\\.example\\.(com|net)/.*"),
+      { filename: "rules.json", defaultHost: HOST },
+    );
+    const messages = preview.rows[0].messages.join(" ");
+    expect(messages).toMatch(/only fires on requests to the host its regex/);
+    // Naming the wrong host would be worse than naming none.
+    expect(messages).not.toMatch(/Select/);
+  });
+
+  it.each([
+    { what: "the target host itself", pattern: `https://${HOST}/old/(.*)` },
+    {
+      what: "an optional www prefix",
+      pattern: "https://(www\\.)?example\\.com/.*",
+    },
+  ])("stays quiet when the pattern accepts $what", ({ pattern }) => {
+    const preview = parseExport(fullUrlGuard(pattern), {
+      filename: "rules.json",
+      defaultHost: pattern.includes("(www") ? "www.example.com" : HOST,
+    });
+    expect(preview.rows[0].messages.join(" ")).not.toMatch(/never fire/);
+  });
+
   it("counts the distinct hosts a file spans", () => {
     const json = JSON.stringify([
       { name: "a", matchURL: "/old-home", redirectURL: "/x", statusCode: 301 },
@@ -915,6 +976,13 @@ describe("parseExport — Akamai construct coverage (golden, anonymised)", () =>
       matchType: "regex",
       matchOperator: "regex",
     });
+    // This is the domain-move shape: the old host lives in the regex, not in a
+    // `hostname` condition, so the rule lands on the target host and can never
+    // match there. Importable, but only useful imported into `old.example.com`,
+    // which is what the note has to say.
+    expect(row.messages.join(" ")).toMatch(
+      /only fires on requests to old.example.com, not on www.example.com/,
+    );
   });
 });
 

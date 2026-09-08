@@ -321,6 +321,92 @@ const mapMatchUrl = (
 };
 
 /**
+ * Mirrors `isFullUrlRegex` at the edge: a pattern that mentions a scheme or `://`
+ * is tested against the whole URL, host included, rather than against the path.
+ * See `infra/lambda/src/lib/is-full-url-regex.ts`.
+ */
+const isFullUrlRegex = (pattern: string): boolean =>
+  /^\^?https?/.test(pattern) || pattern.includes("://");
+
+/**
+ * The host part of a full-URL pattern: everything between `://` and the next `/`.
+ *
+ * Empty or absent means no opinion. A warning nobody can act on is worse than no
+ * warning, so every reader below gives up rather than guesses.
+ */
+const hostBodyOf = (pattern: string): string | null => {
+  const scheme = pattern.indexOf("://");
+  if (scheme === -1) return null;
+  const rest = pattern.slice(scheme + 3);
+  const slash = rest.indexOf("/");
+  const body = slash === -1 ? rest : rest.slice(0, slash);
+  return body === "" ? null : body;
+};
+
+/** That host part as an anchored regex, to test a candidate host against. */
+const hostPatternOf = (pattern: string): RegExp | null => {
+  const body = hostBodyOf(pattern);
+  if (body === null) return null;
+  try {
+    return new RegExp(`^${body}$`, "i");
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The host a full-URL pattern names, in plain text, so a warning can say which
+ * host to import into instead of leaving the user to read the regex.
+ *
+ * Optional groups are dropped (`(www\.)?shop.example.com` names
+ * `shop.example.com`) and escapes removed. What comes out has to look like a
+ * single host, or this returns null: naming the wrong host would be worse than
+ * naming none.
+ */
+const namedHostOf = (pattern: string): string | null => {
+  const body = hostBodyOf(pattern);
+  if (body === null) return null;
+  const plain = body.replace(/\([^()]*\)\?/g, "").replace(/\\/g, "");
+  return ROUTABLE_HOST.test(plain) ? plain : null;
+};
+
+/**
+ * Warns when a rule guards on a host inside a regex rather than with a
+ * `hostname` condition, and that host is not the one the rule is landing on.
+ *
+ * Rules are stored per host and only consulted for requests to that host, while a
+ * full-URL regex is tested against the URL the viewer asked for. So a rule
+ * demanding `shop.example.com` that sits under `www.example.com` needs two things
+ * that can never both be true: it imports cleanly, reads as ok, and never fires.
+ *
+ * Only a `hostname` condition can route, because it names one partition. A regex
+ * may describe a *pattern* of hosts, so the importer will not route on it — it
+ * says which host to pick instead.
+ */
+const foreignHostWarnings = (
+  matches: MatchCondition[],
+  host: string,
+): string[] =>
+  matches.flatMap((match) => {
+    if (match.matchOperator !== "regex" || !isFullUrlRegex(match.matchValue)) {
+      return [];
+    }
+    const hostPattern = hostPatternOf(match.matchValue);
+    if (hostPattern === null || hostPattern.test(host)) return [];
+
+    const named = namedHostOf(match.matchValue);
+    return [
+      named === null
+        ? `this rule only fires on requests to the host its regex names, not ` +
+          `on ${host}, because the regex compares the whole URL. Import it ` +
+          `with that host selected as the target.`
+        : `this rule only fires on requests to ${named}, not on ${host}, ` +
+          `because its regex compares the whole URL. Select ${named} as the ` +
+          `target host to import it.`,
+    ];
+  });
+
+/**
  * What each source status code becomes, and what that costs.
  *
  * The model stores 301 or 302, so 307/308 have to be mapped — but onto their
@@ -750,6 +836,9 @@ const mapMatchRule = (
 
   const draft = redirectDraft(target, status.statusCode, matches);
   messages.push(...captureWarnings(draft));
+  // After the loop, so `host` is final: a hostname condition may route the rule
+  // from a line below the regex that guards on a host.
+  messages.push(...foreignHostWarnings(matches, host));
 
   // Honour the source's query-string flag; absent leaves the draft default.
   const keepQueryString = firstBoolean(
