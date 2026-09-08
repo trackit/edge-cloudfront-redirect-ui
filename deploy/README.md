@@ -1,7 +1,8 @@
 # Deploying an environment from CI
 
 `DEPLOY.md` at the repo root is the by-hand path: three stacks, applied in order,
-each one's outputs feeding the next. This directory is that same deploy with a
+each one's outputs feeding the next — and then the control plane once more, for
+the one value that only exists after the console is up. This directory is that same deploy with a
 runner behind it. No new deployment design — remote state, a role, and a name set
 that cannot collide with anything else on the account.
 
@@ -56,6 +57,10 @@ function.
 Scoping them to the environment rather than the repository is what stops a
 workflow on another branch from assuming the role.
 
+All three are variables; the pipeline needs no secret. It authenticates by OIDC,
+and the console's own sign-in is Cognito's, so there is no credential for this
+workflow to hold.
+
 ## What the workflow does
 
 1. Calls `ci.yml`. A push to `dev` does not run CI on its own, so without this the
@@ -73,12 +78,14 @@ workflow on another branch from assuming the role.
 6. Writes the console URL, the demo site, the distribution id, the table name,
    its region and the user pool id into the job summary.
 
-It does **not** create sign-in accounts. `console/api/infra/seed-users.sh` prints
-the passwords it generates, once, and a CI log is the wrong place for them — run
-it by hand against the pool id in the summary.
-
 That last step is not a nicety. The console's connect screen is per-browser
 `localStorage`, so everyone who opens the URL types those values in by hand.
+
+It does **not** create sign-in accounts. `console/api/infra/seed-users.sh` prints
+the passwords it generates once, and a CI log is the wrong place for them — run it
+by hand against the pool id in the summary. It is the one manual step left, and
+it comes back after every sweep: a rebuilt pool is an empty pool, so a console
+that was working on Friday has no accounts on Monday.
 
 ## Things that will bite
 
@@ -94,6 +101,11 @@ That last step is not a nicety. The console's connect screen is per-browser
   one. A collision fails the apply and the only fix is a different value. A sweep
   releases the name with the pool, but not always immediately, so a rebuild
   straight after one can need a retry.
+- **Sign-in is briefly broken during a deploy.** The first stack 2 apply resets
+  the callback list to its localhost default, and the second one puts the console
+  back on it. Someone signing in between the two is refused with
+  `redirect_mismatch`. The alternative is a hand-maintained domain in the tfvars,
+  and the sweep changes that domain every week.
 - **The first run is 30-40 minutes**, because two of the three stacks create
   CloudFront distributions. Later runs are 10-20, and any change to the edge
   function republishes a version and triggers another distribution deploy.
