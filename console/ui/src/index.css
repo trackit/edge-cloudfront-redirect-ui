@@ -2062,6 +2062,13 @@ button {
 .match .field {
   margin-bottom: 0;
 }
+/* The header or cookie name field sits between the three-column grid and the
+   flags. `.match .field` clears every margin, and neither neighbour carries one
+   on that side, so without this the label is glued to the inputs above it. Same
+   12px as the header above and the flags below, to keep one rhythm in the card. */
+.match-grid + .field {
+  margin-top: 12px;
+}
 .match-flags {
   display: flex;
   gap: 7px;
