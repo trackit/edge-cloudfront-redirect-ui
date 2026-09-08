@@ -62,15 +62,24 @@ latter, including during `terraform test`, where it would override the defaults 
 suite asserts on.
 
 The distribution takes **5–15 minutes** to deploy, so the URL will not answer
-immediately. `console/api/infra` has to be applied first — its `api_endpoint`
-output is an input here.
+immediately. `console/api/infra` has to be applied first — its `api_endpoint`,
+`cognito_domain` and `user_pool_client_id` outputs are inputs here.
+
+Then apply `console/api/infra` a **second** time, with this stack's `console_url`
+in its `auth_callback_urls`. Cognito only redirects back to a URL it already
+knows, and that URL does not exist until the distribution does. The second apply
+changes the app client alone — no distribution deploy, so it is quick.
 
 To check the API is reachable through the distribution:
 
 ```bash
-curl -i -u 'demo:<password>' "$(terraform output -raw console_url)/api/health"
+curl -i "$(terraform output -raw console_url)/api/health"
 # → {"status":"ok"}
 ```
+
+No credential on that one: `/api/*` is exempt from the basic-auth gate, because
+the console's bearer token travels in the same header. The JWT authorizer on the
+HTTP API is what guards those routes.
 
 ## Build and upload
 
@@ -96,6 +105,8 @@ Consequences worth knowing:
 | Name                  | Type   | Default             | Description                                               |
 | --------------------- | ------ | ------------------- | --------------------------------------------------------- |
 | `api_endpoint`        | string | —                   | `console/api/infra`'s output. Host only, no path.         |
+| `cognito_domain`      | string | —                   | Same stack's output. Baked in as `VITE_COGNITO_DOMAIN`.   |
+| `cognito_client_id`   | string | —                   | Same stack's `user_pool_client_id`. Not a secret.         |
 | `basic_auth_username` | string | —                   | No colons (basic auth splits on the first one).           |
 | `basic_auth_password` | string | —                   | Minimum 12 characters. Sensitive, but see above.          |
 | `name`                | string | `edgeroute-console` | Prefixes the bucket, the function and the tags.           |

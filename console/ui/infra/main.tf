@@ -108,10 +108,21 @@ resource "null_resource" "publish" {
     # try(): a consumer who skips the install may have no lockfile, and a missing
     # file would fail the whole plan.
     lockfile = try(filesha256("${local.monorepo_root}/package-lock.json"), "")
+    # Baked into the bundle, so a pool that was replaced has to republish it —
+    # the sources are unchanged in that case and nothing else here would notice.
+    cognito_domain    = var.cognito_domain
+    cognito_client_id = var.cognito_client_id
   }
 
   provisioner "local-exec" {
     working_dir = local.monorepo_root
+    # Vite copies any VITE_-prefixed variable out of the process environment into
+    # the bundle, and the environment wins over a .env file — so an operator's
+    # local .env cannot quietly point a deployed console at their own pool.
+    environment = {
+      VITE_COGNITO_DOMAIN    = var.cognito_domain
+      VITE_COGNITO_CLIENT_ID = var.cognito_client_id
+    }
     command = join(" && ", compact([
       local.install_command == "" ? "" : local.install_command,
       local.build_command,

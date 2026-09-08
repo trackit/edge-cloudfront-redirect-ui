@@ -21,6 +21,8 @@ variables {
   api_endpoint        = "https://abc123.execute-api.us-east-1.amazonaws.com"
   basic_auth_username = "demo"
   basic_auth_password = "not-the-real-one"
+  cognito_domain      = "https://edgeroute-test.auth.us-east-1.amazoncognito.com"
+  cognito_client_id   = "1example23clientid45"
 }
 
 # =============================================================================

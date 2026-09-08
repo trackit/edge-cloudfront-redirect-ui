@@ -21,6 +21,35 @@ variable "api_endpoint" {
   }
 }
 
+variable "cognito_domain" {
+  type        = string
+  description = "Hosted UI the console signs in through — the `cognito_domain` output of console/api/infra. Baked into the bundle as VITE_COGNITO_DOMAIN."
+
+  validation {
+    # Same shape as api_endpoint, and for a related reason: the SPA appends
+    # /oauth2/authorize to this, so a value carrying a path builds a URL that
+    # fails at Cognito rather than here.
+    condition     = can(regex("^https://[a-z0-9.-]+/?$", var.cognito_domain))
+    error_message = "cognito_domain must be https:// followed by a host and nothing else, e.g. https://edgeroute-dev.auth.us-east-1.amazoncognito.com."
+  }
+}
+
+variable "cognito_client_id" {
+  type        = string
+  description = "App client the console presents as — the `user_pool_client_id` output of console/api/infra. Baked into the bundle as VITE_COGNITO_CLIENT_ID. Not a secret: it is in every authorize URL, and the secret it pairs with never leaves the API's Lambda."
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{1,128}$", var.cognito_client_id))
+    error_message = "cognito_client_id must be a Cognito app client id: 1-128 lowercase letters and digits."
+  }
+}
+
+# Neither of the two above has a default, and that is deliberate. `authConfig()`
+# throws when either is missing, so the SPA would build clean and then fail on
+# load; a placeholder would be worse still, sending the browser to a URL that
+# fails at Cognito where the cause is invisible. Failing the plan names the
+# variable instead.
+
 variable "basic_auth_username" {
   type        = string
   description = "Username for the console's basic-auth prompt. Login is post-MVP; this is what keeps an unauthenticated console off the open internet."
