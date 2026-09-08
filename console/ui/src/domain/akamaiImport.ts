@@ -523,6 +523,7 @@ const mapMatchRule = (
   const rule = Object.keys(wrapped).length > 0 ? wrapped : outer;
   const result = asRecord(rule.result);
   const messages: string[] = [];
+  const drops: string[] = [];
 
   // The target may sit on the rule or in a `result` block, under any of a few
   // names — Edge Redirector variants differ. A value found anywhere but
@@ -554,9 +555,12 @@ const mapMatchRule = (
 
   let host = defaultHost;
   let matches: MatchCondition[] = [];
-  if (Array.isArray(rule.matches)) {
+  // An empty `matches` is not a set of conditions, it is the absence of one — so
+  // it must fall through to `matchURL` rather than short-circuit it, or a rule
+  // carrying both would import with no condition at all and match every request.
+  if (rawMatches.length > 0) {
     let routed = false;
-    for (const rawMatch of rule.matches) {
+    for (const rawMatch of rawMatches) {
       const entry = asRecord(rawMatch);
       const type = str(entry.matchType).toLowerCase();
 
@@ -571,7 +575,10 @@ const mapMatchRule = (
 
       const mapped = mapJsonMatch(entry, type, captureMode);
       if (mapped === null) {
-        messages.push(`match type "${type || "?"}" not supported`);
+        // Refused, not warned. Conditions AND together, so dropping one widens
+        // the rule: "path /api AND method GET" would become "path /api" and
+        // redirect the POSTs too. Drop them all and it matches every request.
+        drops.push(`match type "${type || "?"}" cannot be translated`);
       } else {
         matches.push(mapped.match);
         messages.push(...mapped.messages);
@@ -607,6 +614,7 @@ const mapMatchRule = (
     host,
     draft,
     messages,
+    drops,
   };
 };
 

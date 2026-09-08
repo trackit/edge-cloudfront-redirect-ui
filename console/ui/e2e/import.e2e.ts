@@ -122,8 +122,9 @@ test("routes a hostname-conditioned rule to its own host", async ({
     page.getByRole("heading", { name: "www.example.com" }),
   ).toBeVisible();
 
-  // Three rules for the target host, one carrying its own hostname condition
-  // (→ support.example.com), one broken (→ skipped).
+  // Two rules for the target host, one carrying its own hostname condition
+  // (→ support.example.com), one broken and one whose `method` condition cannot
+  // be translated (→ both skipped).
   const json = JSON.stringify([
     {
       name: "Home",
@@ -167,8 +168,8 @@ test("routes a hostname-conditioned rule to its own host", async ({
   // The preview announces the two hosts the file spans.
   await expect(page.getByText("2 hosts")).toBeVisible();
 
-  await page.getByRole("button", { name: /Import 4 rules/ }).click();
-  await expect(page.getByText("Imported 4 rules.")).toBeVisible();
+  await page.getByRole("button", { name: /Import 3 rules/ }).click();
+  await expect(page.getByText("Imported 3 rules.")).toBeVisible();
 
   const posts = api.calls.filter(
     (call) => call.method === "POST" && /\/rules$/.test(call.url),
@@ -180,9 +181,10 @@ test("routes a hostname-conditioned rule to its own host", async ({
     c.url.includes("/hosts/support.example.com/rules"),
   );
 
-  // Three rules landed on the target host, and the hostname-conditioned one was
-  // routed to support.example.com instead — the broken row was never posted.
-  expect(toWww).toHaveLength(3);
+  // Two rules landed on the target host, and the hostname-conditioned one was
+  // routed to support.example.com instead — the broken row and the untranslatable
+  // one were never posted.
+  expect(toWww).toHaveLength(2);
   expect(toSupport).toHaveLength(1);
   expect(toSupport[0].body).toMatchObject({
     redirectURL: "https://help.example.com",

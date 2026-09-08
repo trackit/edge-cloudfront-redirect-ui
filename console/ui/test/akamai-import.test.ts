@@ -333,13 +333,49 @@ describe("parseExport — matchRules JSON", () => {
     });
   });
 
-  it("drops an unsupported condition to a warning, matching any request", () => {
+  /**
+   * Conditions AND together, so a dropped one widens the rule rather than
+   * narrowing it. Both shapes are refused: the mixed rule would redirect the
+   * POSTs it used to leave alone, and the single-condition one would match every
+   * request on the host — a redirect loop when the target sits on that host.
+   */
+  it.each([
+    {
+      what: "the only condition",
+      matches: [{ matchType: "method", matchValue: "GET" }],
+    },
+    {
+      what: "one condition of several",
+      matches: [
+        { matchType: "path", matchOperator: "equals", matchValue: "/api" },
+        { matchType: "method", matchValue: "GET" },
+      ],
+    },
+  ])("refuses a rule when a condition is $what and cannot be translated", ({
+    matches,
+  }) => {
+    const json = JSON.stringify([
+      { name: "api", redirectURL: "/api/v2", statusCode: 301, matches },
+    ]);
+    const preview = parseExport(json, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
+    const row = preview.rows[0];
+    expect(row.status).toBe("skipped");
+    expect(row.input).toBeUndefined();
+    expect(row.blocked.join(" ")).toMatch(/match type "method"/);
+    expect(preview.summary).toMatchObject({ ready: 0, skipped: 1 });
+  });
+
+  it("uses matchURL when matches is present but empty", () => {
     const json = JSON.stringify([
       {
-        name: "api",
-        redirectURL: "/api/v2",
+        name: "empty",
+        matchURL: "/old",
+        redirectURL: "/new",
         statusCode: 301,
-        matches: [{ matchType: "method", matchValue: "GET" }],
+        matches: [],
       },
     ]);
     const preview = parseExport(json, {
@@ -347,11 +383,10 @@ describe("parseExport — matchRules JSON", () => {
       defaultHost: HOST,
     });
     const row = preview.rows[0];
-    expect(row.status).toBe("warning");
-    expect(row.messages.join(" ")).toMatch(/match type "method" not supported/);
-    // The only condition was unmappable, so nothing is left to match on — the
-    // rule is still importable and applies to every request.
-    expect(asRedirect(row.input).matches).toHaveLength(0);
+    expect(row.status).toBe("ok");
+    expect(asRedirect(row.input).matches).toMatchObject([
+      { matchType: "path", matchOperator: "equals", matchValue: "/old" },
+    ]);
   });
 });
 
