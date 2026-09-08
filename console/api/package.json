@@ -19,12 +19,14 @@
     "@aws-sdk/client-sts": "^3.1017.0",
     "@aws-sdk/lib-dynamodb": "^3.1017.0",
     "@cloudfront-redirect-rules/shared": "*",
-    "ajv": "^8.17.0"
+    "ajv": "^8.17.0",
+    "safe-regex": "^2.1.1"
   },
   "devDependencies": {
     "@redocly/cli": "^1.25.0",
     "@types/aws-lambda": "^8.10.161",
     "@types/node": "^20.19.43",
+    "@types/safe-regex": "^1.1.6",
     "@vitest/coverage-v8": "^2.1.9",
     "esbuild": "^0.24.0",
     "tsx": "^4.19.0",

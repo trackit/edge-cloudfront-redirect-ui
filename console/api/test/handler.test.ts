@@ -115,6 +115,43 @@ describe("handler", () => {
     });
   });
 
+  /**
+   * The edge runs a rule's regular expressions on every request that reaches it,
+   * so a pattern it cannot run safely must not be stored. The console checks the
+   * same two things before sending, but that is a courtesy: anything that is not
+   * the console writes straight here, which is why the guard has to be on this
+   * side too.
+   */
+  const withRegex = (matchValue: string): string =>
+    JSON.stringify({
+      priority: 900,
+      type: "erMatchRule",
+      statusCode: 301,
+      redirectURL: "/x",
+      matches: [{ matchType: "regex", matchOperator: "regex", matchValue }],
+    });
+
+  it.each([
+    ["catastrophic backtracking", "(a+)+$"],
+    ["a pattern that does not compile", "^/old/("],
+  ])("400s a rule whose regex has %s", async (_case, matchValue) => {
+    const res = await handler(event("POST", RULES, withRegex(matchValue)));
+
+    expect(res.statusCode).toBe(400);
+    expect(parse(res.body)).toMatchObject({
+      error: {
+        code: "VALIDATION_ERROR",
+        details: [{ path: "/matches/0/matchValue" }],
+      },
+    });
+  });
+
+  it("accepts a regex the edge can run", async () => {
+    const res = await handler(event("POST", RULES, withRegex("^/old/(.*)$")));
+
+    expect(res.statusCode).toBe(201);
+  });
+
   it("serializes a read route's JSON body", async () => {
     const res = await handler(event("GET", RULES));
 

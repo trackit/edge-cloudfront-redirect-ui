@@ -66,30 +66,42 @@ describe("ruleFingerprint", () => {
       ...over,
     }) as RedirectRuleInput;
 
-  it.each([
-    ["priority", { priority: 900 }],
-    ["disabled", { disabled: true }],
-  ])(
+  const cases = (
+    rows: [string, Partial<RedirectRuleInput>][],
+  ): [string, Partial<RedirectRuleInput>][] => rows;
+
+  it.each(
+    cases([
+      ["priority", { priority: 900 }],
+      ["disabled", { disabled: true }],
+    ]),
+  )(
     "ignores %s, which says where a rule sits, not what it does",
     (_c, over) => {
       expect(ruleFingerprint(redirect(over))).toBe(ruleFingerprint(redirect()));
     },
   );
 
-  it.each([
-    ["the status code", { statusCode: 302 as const }],
-    ["the target", { redirectURL: "/other" }],
-    ["the query-string flag", { useIncomingQueryString: true }],
-    [
-      "a condition",
-      {
-        matches: [
-          { matchType: "path", matchOperator: "equals", matchValue: "/other" },
-        ],
-      },
-    ],
-    ["the number of conditions", { matches: [] }],
-  ])("separates rules that differ by %s", (_c, over) => {
+  it.each(
+    cases([
+      ["the status code", { statusCode: 302 }],
+      ["the target", { redirectURL: "/other" }],
+      ["the query-string flag", { useIncomingQueryString: true }],
+      [
+        "a condition",
+        {
+          matches: [
+            {
+              matchType: "path",
+              matchOperator: "equals",
+              matchValue: "/other",
+            },
+          ],
+        },
+      ],
+      ["the number of conditions", { matches: [] }],
+    ]),
+  )("separates rules that differ by %s", (_c, over) => {
     expect(ruleFingerprint(redirect(over))).not.toBe(
       ruleFingerprint(redirect()),
     );
