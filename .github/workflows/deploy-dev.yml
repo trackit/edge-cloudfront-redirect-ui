@@ -36,9 +36,8 @@ jobs:
   deploy:
     needs: checks
     runs-on: ubuntu-latest
-    # Holds AWS_DEPLOY_ROLE_ARN / AWS_REGION / STATE_BUCKET as variables and
-    # BASIC_AUTH_PASSWORD as a secret, and scopes them to this environment so a
-    # workflow on another branch cannot assume the role.
+    # Holds AWS_DEPLOY_ROLE_ARN / AWS_REGION / STATE_BUCKET as variables, scoped
+    # to this environment so a workflow on another branch cannot assume the role.
     environment: sandbox-dev
     # Two of the three stacks create CloudFront distributions. A cold rebuild
     # after a sweep is 30-40 minutes; a normal merge is 10-20.
@@ -111,16 +110,22 @@ jobs:
           terraform -chdir=console/api/infra apply -auto-approve \
             -var-file=../../../deploy/dev/control-plane.tfvars
 
-      - name: Carry the API endpoint forward
+      # The pool travels with the endpoint: both are baked into the SPA at build
+      # time, so stack 3 cannot build without them. Neither is a secret — the
+      # client id is in every authorize URL, and the client secret it pairs with
+      # stays in the API's Lambda.
+      - name: Carry the API endpoint and the pool forward
         run: |
           endpoint=$(terraform -chdir=console/api/infra output -raw api_endpoint)
-          echo "TF_VAR_api_endpoint=$endpoint" >> "$GITHUB_ENV"
+          domain=$(terraform -chdir=console/api/infra output -raw cognito_domain)
+          client_id=$(terraform -chdir=console/api/infra output -raw user_pool_client_id)
+          {
+            echo "TF_VAR_api_endpoint=$endpoint"
+            echo "TF_VAR_cognito_domain=$domain"
+            echo "TF_VAR_cognito_client_id=$client_id"
+          } >> "$GITHUB_ENV"
 
       - name: Stack 3 — console
-        env:
-          # Rendered into the CloudFront Function and stored in state, so it is a
-          # gate rather than a secret — but it is still not something to commit.
-          TF_VAR_basic_auth_password: ${{ secrets.BASIC_AUTH_PASSWORD }}
         run: |
           terraform -chdir=console/ui/infra init \
             -backend-config="bucket=${{ vars.STATE_BUCKET }}" \
@@ -129,6 +134,27 @@ jobs:
             -backend-config="use_lockfile=true"
           terraform -chdir=console/ui/infra apply -auto-approve \
             -var-file=../../../deploy/dev/console.tfvars
+
+      # Cognito only redirects back to a URL it has been told about, and the
+      # console's domain does not exist until the stack above has applied — so
+      # the callback list is the one input that cannot be threaded forward on the
+      # way past. Applying stack 2 again sets it; the app client is all that
+      # changes, so this is a minute, not another distribution deploy.
+      #
+      # It does leave a window. The stack 2 apply above resets the list to the
+      # localhost default, so a sign-in mid-deploy fails until this step lands.
+      # The alternative is a hand-maintained domain in the tfvars, and the sweep
+      # changes that domain every week — this is the better of the two.
+      #
+      # localhost stays in both lists so `npm run dev` can sign in against the
+      # dev pool rather than needing one of its own.
+      - name: Point Cognito at the deployed console
+        run: |
+          console_url=$(terraform -chdir=console/ui/infra output -raw console_url)
+          terraform -chdir=console/api/infra apply -auto-approve \
+            -var-file=../../../deploy/dev/control-plane.tfvars \
+            -var "auth_callback_urls=[\"$console_url/auth/callback\",\"http://localhost:5180/auth/callback\"]" \
+            -var "auth_logout_urls=[\"$console_url/login\",\"http://localhost:5180/login\"]"
 
       # dev mirrors the branch, so resetting it to a known state each deploy is
       # the behaviour we want. The script reads the table, its region and the host
@@ -156,6 +182,9 @@ jobs:
             echo "| Distribution id | \`$(terraform -chdir=examples/infra output -raw cloudfront_distribution_id)\` |"
             echo "| Rules table | \`$(terraform -chdir=examples/infra output -raw table_name)\` |"
             echo "| Region | \`$(terraform -chdir=examples/infra output -raw table_region)\` |"
+            echo "| User pool | \`$(terraform -chdir=console/api/infra output -raw user_pool_id)\` |"
             echo
             echo "The CloudFront domain changes every time the sandbox is swept — copy it from here, do not bookmark it."
+            echo
+            echo "Sign-in accounts are not created by this workflow — the seed script prints their passwords once, and a CI log is the wrong place for that. Run \`./seed-users.sh\` in \`console/api/infra\` against the pool above."
           } >> "$GITHUB_STEP_SUMMARY"
