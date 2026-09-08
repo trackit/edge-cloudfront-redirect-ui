@@ -7,7 +7,7 @@ is the only reason the order matters.
 1. Data plane      examples/infra      DynamoDB rules table + Lambda@Edge
                                        + a demo CloudFront distribution
 2. Control plane   console/api/infra   API Gateway + Lambda + targets registry
-3. Console         console/ui/infra    S3 + CloudFront + basic-auth gate,
+3. Console         console/ui/infra    S3 + CloudFront + gate function,
                                        serving the SPA and /api/* together
 ```
 
@@ -82,10 +82,10 @@ cd ../../console/ui/infra
 cp sandbox.tfvars.example sandbox.tfvars
 ```
 
-Edit `sandbox.tfvars`: the `api_endpoint` from step 2, and the username and
-password the console will prompt for. The credential ends up in the CloudFront
-Function's code and in Terraform state, so use a throwaway one — see
-[the module's README](console/ui/infra/README.md#the-credential-is-not-a-secret).
+Edit `sandbox.tfvars` with three values from step 2: `api_endpoint`,
+`cognito_domain` and `cognito_client_id`. All three are baked into the SPA at
+build time, and none is a secret — the client id travels in every authorize URL,
+and the client secret it pairs with never leaves the API's Lambda.
 
 ```bash
 terraform init
@@ -123,12 +123,12 @@ CloudWatch in the region you curled from, where a missing hostname stamp is logg
 
 ```bash
 cd ../../console/ui/infra
-curl -i -u '<username>:<password>' "$(terraform output -raw console_url)/api/health"
+curl -i "$(terraform output -raw console_url)/api/health"
 # → {"status":"ok"}
 ```
 
-**The console, end to end.** Open `console_url`, enter the credential at the
-browser prompt, then on the connect screen enter:
+**The console, end to end.** Open `console_url`, sign in, then on the connect
+screen enter:
 
 | Field           | Value                                    |
 | --------------- | ---------------------------------------- |
@@ -160,8 +160,9 @@ cd ../../console/api/infra && terraform destroy -var-file=sandbox.tfvars
 cd ../../examples/infra    && terraform destroy
 ```
 
-The two console stacks need their var file on destroy as well — `api_endpoint` and
-the credential have no defaults, so Terraform stops and asks for them otherwise.
+The two console stacks need their var file on destroy as well — `api_endpoint`,
+the Cognito values and `cognito_domain_prefix` have no defaults, so Terraform
+stops and asks for them otherwise.
 
 Two things will interrupt this:
 
@@ -176,16 +177,16 @@ Two things will interrupt this:
 
 DynamoDB on-demand, Lambda@Edge and CloudFront have no fixed cost, so an idle
 deployment is effectively free. Both distributions are `PriceClass_100`. Destroy
-when you are done anyway — there is no reason to leave a console with a basic-auth
-password on the internet.
+when you are done anyway.
 
 ## Known gaps
 
 These are accepted for the MVP demo, not oversights:
 
-- **The API Gateway URL is reachable directly.** The basic-auth prompt only covers
-  requests arriving through CloudFront, so anyone with the API's URL can read and
-  write rules. Real auth is post-MVP.
+- **The API Gateway URL is reachable directly**, and always was — CloudFront is
+  not in front of it in any enforcing sense. That is no longer a gap: the JWT
+  authorizer runs at the gateway, so a request that arrives at the execute-api
+  URL is refused exactly as one arriving through CloudFront is.
 - **The console's connect screen is per browser.** No server-side profile, so
   there is nothing to pre-configure for other people.
 - **Nothing is cached** on the console distribution, deliberately, so a redeploy

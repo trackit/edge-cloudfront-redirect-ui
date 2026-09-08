@@ -5,26 +5,19 @@ import { beforeAll, describe, expect, it } from "vitest";
 /**
  * Tests the CloudFront Function that fronts the console distribution.
  *
- * The function lives in `infra/gate.js.tftpl` because Terraform renders the
- * credential into it, so it is not importable: the template is read, the one
- * placeholder is substituted, and the result is evaluated here. That keeps the
- * test honest about what gets deployed — a hand-copied version of the logic would
- * pass while the deployed file was broken.
+ * The file Terraform deploys is read and evaluated here rather than imported —
+ * it is a script with a global `handler`, not a module. That keeps the test
+ * honest about what gets deployed: a hand-copied version of the logic would pass
+ * while the deployed file was broken.
  *
  * What this cannot check is whether CloudFront accepts the file. The runtime is
  * not ES2015+ everywhere and there is no local emulator, so the deployed function
  * is only proven by `aws cloudfront test-function` or a real request.
  *
- * It lives in this workspace because the template is deployed by this workspace's
+ * It lives in this workspace because the file is deployed by this workspace's
  * infra and this is the workspace with a test runner.
  */
-const TEMPLATE = fileURLToPath(
-  new URL("../infra/gate.js.tftpl", import.meta.url),
-);
-
-const USERNAME = "demo";
-const PASSWORD = "correct-horse-battery";
-const CREDENTIAL = Buffer.from(`${USERNAME}:${PASSWORD}`).toString("base64");
+const GATE = fileURLToPath(new URL("../infra/gate.js", import.meta.url));
 
 interface CfHeaders {
   [name: string]: { value: string };
@@ -46,76 +39,48 @@ type Handler = (event: { request: CfRequest }) => CfRequest | CfResponse;
 let handler: Handler;
 
 beforeAll(() => {
-  const rendered = readFileSync(TEMPLATE, "utf8")
-    // What Terraform's templatefile() does: the one variable, then the `$$`
-    // escape that lets the file document `${...}` without being interpolated.
-    .replace(/\$\{credential\}/g, CREDENTIAL)
-    .replace(/\$\$\{/g, "${");
+  const source = readFileSync(GATE, "utf8");
 
-  // The template is a script, not a module: evaluate it and hand back `handler`.
-  handler = new Function(`${rendered}\nreturn handler;`)() as Handler;
+  // A script, not a module: evaluate it and hand back `handler`.
+  handler = new Function(`${source}\nreturn handler;`)() as Handler;
 });
 
-const request = (uri: string, authorization = `Basic ${CREDENTIAL}`) =>
+const request = (uri: string, authorization?: string) =>
   handler({
     request: {
       uri,
       headers:
-        authorization === "" ? {} : { authorization: { value: authorization } },
+        authorization === undefined
+          ? {}
+          : { authorization: { value: authorization } },
     },
   });
 
 const isResponse = (result: CfRequest | CfResponse): result is CfResponse =>
   "statusCode" in result;
 
-describe("basic auth", () => {
-  it("challenges a request with no Authorization header", () => {
-    const result = request("/console", "");
+describe("what it refuses", () => {
+  it("refuses nothing — every request is forwarded or rewritten", () => {
+    // There is no gate here any more. Cognito and the API Gateway authorizer
+    // decide who may do what; this function only rewrites paths, so nothing it
+    // sees should come back as a response of its own.
+    const uris = ["/", "/console", "/api/targets", "/assets/index-a1b2c3.js"];
 
-    expect(isResponse(result)).toBe(true);
-    const response = result as CfResponse;
-    expect(response.statusCode).toBe(401);
-    // Without this the browser renders the body instead of prompting.
-    expect(response.headers?.["www-authenticate"]?.value).toMatch(
-      /^Basic realm=/,
-    );
+    for (const uri of uris) {
+      expect(isResponse(request(uri))).toBe(false);
+    }
   });
 
-  it("challenges a wrong credential", () => {
-    const wrong = Buffer.from(`${USERNAME}:wrong`).toString("base64");
-
-    expect(
-      (request("/console", `Basic ${wrong}`) as CfResponse).statusCode,
-    ).toBe(401);
-  });
-
-  it("does not let a 401 be cached, so a fixed credential is not shadowed", () => {
-    const response = request("/console", "") as CfResponse;
-
-    expect(response.headers?.["cache-control"]?.value).toBe("no-store");
-  });
-
-  it("lets an API path through without a basic credential", () => {
-    // Deliberate: the JWT authorizer on the HTTP API owns this surface, and
-    // challenging here would break the console rather than protect it — see the
-    // bearer case below.
-    expect(isResponse(request("/api/targets", ""))).toBe(false);
-  });
-
-  it("passes a bearer token through instead of rejecting it", () => {
-    // The regression this file exists to catch. The console sends its access
-    // token in the same header basic auth uses, so a credential comparison here
-    // 401s every authenticated call at the edge — the API never sees the token,
-    // and the browser is prompted for a password it already gave.
+  it("passes a bearer token through untouched", () => {
+    // The regression that made removing basic auth necessary: the console sends
+    // its access token in the header basic auth used, so a credential
+    // comparison here 401s every authenticated call at the edge — the API never
+    // sees the token, and the browser is prompted for a password it has given.
     const bearer = "Bearer eyJhbGciOiJSUzI1NiJ9.e30.signature";
     const result = request("/api/targets", bearer);
 
     expect(isResponse(result)).toBe(false);
     expect((result as CfRequest).headers.authorization.value).toBe(bearer);
-  });
-
-  it("lets the right credential through", () => {
-    expect(isResponse(request("/console"))).toBe(false);
   });
 });
 

@@ -134,17 +134,19 @@ resource "null_resource" "publish" {
 
 # --- The gate ---------------------------------------------------------------
 
-# One function, attached to both behaviors: basic auth, the /api prefix strip,
-# and the SPA fallback. See gate.js.tftpl for why it is one function.
+# One function, attached to both behaviors: the /api prefix strip and the SPA
+# fallback. See gate.js for why it is one function.
+#
+# `file` rather than `templatefile`: the credential was the only value ever
+# interpolated, so with Cognito doing the deciding there is nothing left to
+# render and the file is plain JavaScript the test can read as-is.
 resource "aws_cloudfront_function" "gate" {
   name    = "${var.name}-gate"
   runtime = "cloudfront-js-2.0"
-  comment = "Basic auth, /api prefix strip, SPA fallback for ${var.name}"
+  comment = "/api prefix strip, SPA fallback for ${var.name}"
   publish = true
 
-  code = templatefile("${path.module}/gate.js.tftpl", {
-    credential = base64encode("${var.basic_auth_username}:${var.basic_auth_password}")
-  })
+  code = file("${path.module}/gate.js")
 }
 
 # --- Distribution -----------------------------------------------------------

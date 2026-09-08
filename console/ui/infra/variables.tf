@@ -50,29 +50,6 @@ variable "cognito_client_id" {
 # fails at Cognito where the cause is invisible. Failing the plan names the
 # variable instead.
 
-variable "basic_auth_username" {
-  type        = string
-  description = "Username for the console's basic-auth prompt. Login is post-MVP; this is what keeps an unauthenticated console off the open internet."
-
-  validation {
-    # Basic auth sends `user:password` base64-encoded, so a colon in the username
-    # moves where the password starts and nothing can log in.
-    condition     = length(var.basic_auth_username) > 0 && !strcontains(var.basic_auth_username, ":")
-    error_message = "basic_auth_username must be non-empty and must not contain a colon."
-  }
-}
-
-variable "basic_auth_password" {
-  type        = string
-  sensitive   = true
-  description = "Password for the console's basic-auth prompt. Ends up in the CloudFront Function's code and in state — treat it as a demo credential, not a secret."
-
-  validation {
-    condition     = length(var.basic_auth_password) >= 12
-    error_message = "basic_auth_password must be at least 12 characters. It guards a console that can rewrite live traffic, and it is the only thing doing so."
-  }
-}
-
 variable "ui_source_dir" {
   type        = string
   default     = null

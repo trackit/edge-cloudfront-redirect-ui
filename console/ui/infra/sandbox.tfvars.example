@@ -22,15 +22,6 @@ api_endpoint = "https://REPLACE_ME.execute-api.us-east-1.amazonaws.com"
 cognito_domain    = "https://REPLACE_ME.auth.us-east-1.amazoncognito.com"
 cognito_client_id = "REPLACE_ME"
 
-# The basic-auth credential the console prompts for. Login is post-MVP; this is
-# what keeps an unauthenticated console off the open internet.
-#
-# It is rendered into the CloudFront Function's code and stored in state, and
-# anyone with cloudfront:GetFunction can read it back. Treat it as a demo
-# credential: don't reuse a password from anywhere else.
-basic_auth_username = "demo"
-basic_auth_password = "REPLACE_ME_at_least_12_chars"
-
 # `npm ci` at the repo root deletes and reinstalls node_modules, which wipes your
 # working install mid-apply. "npm install" keeps it; "" skips installing entirely
 # and builds with whatever is there.
