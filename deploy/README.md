@@ -37,8 +37,8 @@ API Gateway, Lambda and CloudFront permissions it needs `iam:CreateRole`,
 `iam:PutRolePolicy` and `iam:PassRole`; `lambda:EnableReplication` and
 `iam:CreateServiceLinkedRole` for the Lambda@Edge replicator; `cognito-idp:*` on
 the console's user pool, its domain and its app client, which stack 2 creates;
-and `cloudfront:CreateFunction` and `cloudfront:PublishFunction` for the
-basic-auth gate.
+and `cloudfront:CreateFunction` and `cloudfront:PublishFunction` for the gate
+function.
 
 > **This is the one piece that must outlive the sweep.** Everything else is rebuilt
 > by the next run; the role is what the run authenticates with. If the sweeper does
@@ -47,12 +47,11 @@ basic-auth gate.
 
 **3. A `sandbox-dev` environment** in the repository settings, holding:
 
-|                       |                                           |
-| --------------------- | ----------------------------------------- |
-| `AWS_DEPLOY_ROLE_ARN` | variable — the role from step 2           |
-| `AWS_REGION`          | variable — `us-east-1`                    |
-| `STATE_BUCKET`        | variable — the bucket from step 1         |
-| `BASIC_AUTH_PASSWORD` | **secret** — what the console prompts for |
+|                       |                                   |
+| --------------------- | --------------------------------- |
+| `AWS_DEPLOY_ROLE_ARN` | variable — the role from step 2   |
+| `AWS_REGION`          | variable — `us-east-1`            |
+| `STATE_BUCKET`        | variable — the bucket from step 1 |
 
 Scoping them to the environment rather than the repository is what stops a
 workflow on another branch from assuming the role.

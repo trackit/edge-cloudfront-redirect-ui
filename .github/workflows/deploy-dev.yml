@@ -36,9 +36,8 @@ jobs:
   deploy:
     needs: checks
     runs-on: ubuntu-latest
-    # Holds AWS_DEPLOY_ROLE_ARN / AWS_REGION / STATE_BUCKET as variables and
-    # BASIC_AUTH_PASSWORD as a secret, and scopes them to this environment so a
-    # workflow on another branch cannot assume the role.
+    # Holds AWS_DEPLOY_ROLE_ARN / AWS_REGION / STATE_BUCKET as variables, scoped
+    # to this environment so a workflow on another branch cannot assume the role.
     environment: sandbox-dev
     # Two of the three stacks create CloudFront distributions. A cold rebuild
     # after a sweep is 30-40 minutes; a normal merge is 10-20.
@@ -127,10 +126,6 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Stack 3 — console
-        env:
-          # Rendered into the CloudFront Function and stored in state, so it is a
-          # gate rather than a secret — but it is still not something to commit.
-          TF_VAR_basic_auth_password: ${{ secrets.BASIC_AUTH_PASSWORD }}
         run: |
           terraform -chdir=console/ui/infra init \
             -backend-config="bucket=${{ vars.STATE_BUCKET }}" \
