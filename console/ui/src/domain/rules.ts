@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, isRedirect, priorityOf } from "../api";
+import { hostKey } from "./hostRoutes";
 import type { Rule, RuleInput } from "../api";
 
 /**
@@ -203,11 +204,16 @@ export function useRules(targetId: string, host: string) {
       const failures: ImportOutcome["failures"] = [];
       let created = 0;
 
+      // Grouped on the normalized host: two spellings of one host are one
+      // partition, so grouping on the raw string would read it twice and hand
+      // both groups the same starting priority — a collision on every write
+      // after the first.
       const byHost = new Map<string, { index: number; input: RuleInput }[]>();
       items.forEach((item, index) => {
-        const group = byHost.get(item.host) ?? [];
+        const key = hostKey(item.host);
+        const group = byHost.get(key) ?? [];
         group.push({ index, input: item.input });
-        byHost.set(item.host, group);
+        byHost.set(key, group);
       });
 
       for (const [ruleHost, group] of byHost) {

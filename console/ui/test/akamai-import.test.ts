@@ -380,22 +380,23 @@ describe("parseExport — matchRules JSON", () => {
         { matchType: "method", matchValue: "GET" },
       ],
     },
-  ])("refuses a rule when a condition is $what and cannot be translated", ({
-    matches,
-  }) => {
-    const json = JSON.stringify([
-      { name: "api", redirectURL: "/api/v2", statusCode: 301, matches },
-    ]);
-    const preview = parseExport(json, {
-      filename: "rules.json",
-      defaultHost: HOST,
-    });
-    const row = preview.rows[0];
-    expect(row.status).toBe("skipped");
-    expect(row.input).toBeUndefined();
-    expect(row.blocked.join(" ")).toMatch(/match type "method"/);
-    expect(preview.summary).toMatchObject({ ready: 0, skipped: 1 });
-  });
+  ])(
+    "refuses a rule when a condition is $what and cannot be translated",
+    ({ matches }) => {
+      const json = JSON.stringify([
+        { name: "api", redirectURL: "/api/v2", statusCode: 301, matches },
+      ]);
+      const preview = parseExport(json, {
+        filename: "rules.json",
+        defaultHost: HOST,
+      });
+      const row = preview.rows[0];
+      expect(row.status).toBe("skipped");
+      expect(row.input).toBeUndefined();
+      expect(row.blocked.join(" ")).toMatch(/match type "method"/);
+      expect(preview.summary).toMatchObject({ ready: 0, skipped: 1 });
+    },
+  );
 
   it("uses matchURL when matches is present but empty", () => {
     const json = JSON.stringify([
@@ -563,6 +564,62 @@ describe("parseExport — host routing", () => {
     expect(row.host).toBe("support.example.com");
     expect(row.draft.matches).toHaveLength(0);
     expect(asRedirect(row.input).matches).toHaveLength(0);
+  });
+
+  /**
+   * A hostname condition is a match, not a name. `*.example.com` or a pair of
+   * space-separated alternatives cannot be a partition key — the edge looks up
+   * the literal host the viewer sent — so routing them would file the rule under
+   * a name no request carries. They stay conditions instead, and say so.
+   */
+  it.each([
+    { what: "a wildcard", value: "*.example.com" },
+    { what: "alternatives", value: "shop.example.com help.example.com" },
+  ])("keeps a hostname that is $what as a condition", ({ value }) => {
+    const json = JSON.stringify([
+      {
+        name: "h",
+        redirectURL: "https://a.example.com/",
+        statusCode: 301,
+        matches: [
+          { matchType: "hostname", matchOperator: "equals", matchValue: value },
+        ],
+      },
+    ]);
+    const preview = parseExport(json, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
+    const row = preview.rows[0];
+    expect(row.host).toBe(HOST);
+    expect(row.status).toBe("warning");
+    expect(row.messages.join(" ")).toMatch(/not a single host/);
+    expect(asRedirect(row.input).matches).toMatchObject([
+      { matchType: "hostname", matchValue: value },
+    ]);
+  });
+
+  it("lowercases the host it routes to, so one host stays one partition", () => {
+    const json = JSON.stringify([
+      {
+        name: "h",
+        redirectURL: "https://help.example.com",
+        statusCode: 301,
+        matches: [
+          {
+            matchType: "hostname",
+            matchOperator: "equals",
+            matchValue: "Support.Example.COM",
+          },
+        ],
+      },
+    ]);
+    const preview = parseExport(json, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
+    expect(preview.rows[0].host).toBe("support.example.com");
+    expect(preview.rows[0].status).toBe("ok");
   });
 
   it("counts the distinct hosts a file spans", () => {

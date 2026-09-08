@@ -1,4 +1,5 @@
 import Papa from "papaparse";
+import { hostKey } from "./hostRoutes";
 import {
   emptyMatch,
   emptyRedirect,
@@ -514,16 +515,52 @@ const mapJsonMatch = (
   return { match, messages: resolved.messages };
 };
 
-/** A positive `hostname equals` condition names the partition, so it routes. */
+/**
+ * Whether a hostname value can be a partition key a request will ever match.
+ *
+ * An Akamai hostname condition is a *match*: it may hold a `*` or several
+ * space-separated alternatives. A partition key is a literal — the edge looks up
+ * the host the viewer sent — so turning `*.example.com` into one would store the
+ * rule under a name no request ever carries: present in the console, invisible to
+ * traffic. `console/api/src/lib/validate-host.ts` is the authority on the shape;
+ * this mirrors its `LABEL` so the importer refuses the same values the API would.
+ */
+const ROUTABLE_HOST =
+  /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+
+/** What a positive `hostname equals` condition means for where the rule lands. */
+type HostRouting =
+  /** It names one addressable host: that becomes the partition. */
+  | { kind: "route"; host: string }
+  /** It is a match, not a name: it stays a condition, with its limit stated. */
+  | { kind: "keep"; note: string }
+  /** Not a routing candidate — negated, fuzzy, or another match type. */
+  | null;
+
+/**
+ * A positive `hostname equals` condition names the partition, so it routes —
+ * but only when it names a single addressable host. Anything else stays a
+ * condition, which the edge evaluates correctly, globs and alternatives included.
+ */
 const hostRoute = (
   entry: Record<string, unknown>,
   type: string,
-): string | null => {
+): HostRouting => {
   if (type !== "hostname" || entry.negate === true) return null;
   const operator = str(entry.matchOperator).toLowerCase();
   if (operator !== "" && operator !== "equals") return null;
-  const value = str(entry.matchValue).trim();
-  return value === "" ? null : value;
+  // Lowercased here, not just at the API: the raw value is what groups the batch
+  // by host at write time, so two spellings would otherwise read the same
+  // partition twice and hand out the same priorities.
+  const value = hostKey(str(entry.matchValue).trim());
+  if (value === "") return null;
+  if (ROUTABLE_HOST.test(value)) return { kind: "route", host: value };
+  return {
+    kind: "keep",
+    note:
+      `hostname "${value}" is a pattern, not a single host — kept as a ` +
+      `condition, so the rule only applies to traffic on the target host`,
+  };
 };
 
 /**
@@ -591,11 +628,12 @@ const mapMatchRule = (
       // First positive hostname condition becomes the host and drops out of
       // the conditions; a later one (or a negated / fuzzy one) stays a match.
       const route = hostRoute(entry, type);
-      if (route !== null && !routed) {
-        host = route;
+      if (route?.kind === "route" && !routed) {
+        host = route.host;
         routed = true;
         continue;
       }
+      if (route?.kind === "keep") messages.push(route.note);
 
       const mapped = mapJsonMatch(entry, type, captureMode);
       if (mapped === null) {
