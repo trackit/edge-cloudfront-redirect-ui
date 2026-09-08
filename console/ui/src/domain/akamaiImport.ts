@@ -207,6 +207,12 @@ const wildcardToRegex = (glob: string): string => {
 };
 
 /**
+ * The Akamai operators we can state in our model. An empty string counts: an
+ * export routinely omits `matchOperator`, and that means `equals`.
+ */
+const KNOWN_OPERATORS = new Set(["", "equals", "contains", "regex", "matches"]);
+
+/**
  * How a raw Akamai match value becomes our operator + value — the single
  * decision the importer makes about match syntax.
  *
@@ -228,11 +234,30 @@ const resolveMatchValue = (
   matchOperator: MatchCondition["matchOperator"];
   matchValue: string;
   messages: string[];
+  drops: string[];
 } => {
+  // An operator we have no equivalent for is refused, not approximated. Akamai
+  // has several (`exists`, `does_not_exist`, …) and folding them onto `equals`
+  // would quietly turn "the header is present" into "the header is exactly this"
+  // — a different rule that still looks imported.
+  if (!KNOWN_OPERATORS.has(operator)) {
+    return {
+      matchOperator: "equals",
+      matchValue: value,
+      messages: [],
+      drops: [`match operator "${operator}" cannot be translated`],
+    };
+  }
+
   // Already a regular expression (by operator, or a forced `regex` type) — never
   // translate it, or its `.*` / `?` would be mistaken for glob wildcards.
   if (operator === "regex" || operator === "matches") {
-    return { matchOperator: "regex", matchValue: value, messages: [] };
+    return {
+      matchOperator: "regex",
+      matchValue: value,
+      messages: [],
+      drops: [],
+    };
   }
 
   if (captureMode && value.includes("*")) {
@@ -249,6 +274,7 @@ const resolveMatchValue = (
       matchOperator: "regex",
       matchValue: wildcardToRegex(value),
       messages,
+      drops: [],
     };
   }
 
@@ -256,6 +282,7 @@ const resolveMatchValue = (
     matchOperator: operator === "contains" ? "contains" : "equals",
     matchValue: value,
     messages: [],
+    drops: [],
   };
 };
 
@@ -269,7 +296,7 @@ const resolveMatchValue = (
 const mapMatchUrl = (
   raw: string,
   captureMode: boolean,
-): { match: MatchCondition; messages: string[] } => {
+): { match: MatchCondition; messages: string[]; drops: string[] } => {
   const messages: string[] = [];
   let value = raw.trim();
 
@@ -290,7 +317,7 @@ const mapMatchUrl = (
   match.matchOperator = resolved.matchOperator;
   match.matchValue = resolved.matchValue;
   messages.push(...resolved.messages);
-  return { match, messages };
+  return { match, messages, drops: resolved.drops };
 };
 
 /**
@@ -464,10 +491,11 @@ const mapEdgeRedirectorCsv = (text: string, host: string): Candidate[] => {
     const target = cell(row, targetAt);
     const captureMode = usesCapture(toEdgeBackrefs(target));
     const label = cell(row, nameAt) || target || "rule";
-    const { match, messages: matchMsg } = mapMatchUrl(
-      cell(row, matchAt),
-      captureMode,
-    );
+    const {
+      match,
+      messages: matchMsg,
+      drops: matchDrops,
+    } = mapMatchUrl(cell(row, matchAt), captureMode);
     const status = mapStatus(cell(row, statusAt));
     const draft = redirectDraft(target, status.statusCode, [match]);
     const qs = cell(row, qsAt);
@@ -477,7 +505,7 @@ const mapEdgeRedirectorCsv = (text: string, host: string): Candidate[] => {
       host,
       draft,
       messages: [...matchMsg, ...status.messages, ...captureWarnings(draft)],
-      drops: status.drops,
+      drops: [...matchDrops, ...status.drops],
     };
   });
 };
@@ -499,10 +527,11 @@ const mapSimpleCsv = (text: string, host: string): Candidate[] => {
     const target = cell(row, targetAt);
     const captureMode = usesCapture(toEdgeBackrefs(target));
     const label = `${cell(row, sourceAt) || "(any)"} → ${target || "(none)"}`;
-    const { match, messages: matchMsg } = mapMatchUrl(
-      cell(row, sourceAt),
-      captureMode,
-    );
+    const {
+      match,
+      messages: matchMsg,
+      drops: matchDrops,
+    } = mapMatchUrl(cell(row, sourceAt), captureMode);
     const status = mapStatus(cell(row, statusAt));
     const draft = redirectDraft(target, status.statusCode, [match]);
     return {
@@ -510,7 +539,7 @@ const mapSimpleCsv = (text: string, host: string): Candidate[] => {
       host,
       draft,
       messages: [...matchMsg, ...status.messages, ...captureWarnings(draft)],
-      drops: status.drops,
+      drops: [...matchDrops, ...status.drops],
     };
   });
 };
@@ -546,7 +575,7 @@ const mapJsonMatch = (
   entry: Record<string, unknown>,
   type: string,
   captureMode: boolean,
-): { match: MatchCondition; messages: string[] } | null => {
+): { match: MatchCondition; messages: string[]; drops: string[] } | null => {
   if (!PASSTHROUGH_MATCH_TYPES.has(type as MatchCondition["matchType"])) {
     return null;
   }
@@ -569,7 +598,7 @@ const mapJsonMatch = (
   if (type === "header") {
     match.headerName = str(entry.name) || str(entry.headerName);
   }
-  return { match, messages: resolved.messages };
+  return { match, messages: resolved.messages, drops: resolved.drops };
 };
 
 /**
@@ -702,12 +731,14 @@ const mapMatchRule = (
       } else {
         matches.push(mapped.match);
         messages.push(...mapped.messages);
+        drops.push(...mapped.drops);
       }
     }
   } else if (str(rule.matchURL) !== "") {
     const mapped = mapMatchUrl(str(rule.matchURL), captureMode);
     matches = [mapped.match];
     messages.push(...mapped.messages);
+    drops.push(...mapped.drops);
   }
 
   const draft = redirectDraft(target, status.statusCode, matches);

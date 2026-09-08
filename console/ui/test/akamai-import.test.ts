@@ -393,6 +393,43 @@ describe("parseExport — matchRules JSON", () => {
     });
   });
 
+  /**
+   * Akamai has operators we cannot state — `exists` asks whether the header is
+   * there at all. Folding it onto `equals` would import a stricter rule under the
+   * same name, so it is refused. An absent operator is not one of those: an
+   * export routinely omits it, and it means `equals`.
+   */
+  it.each([
+    { operator: "exists", status: "skipped" },
+    { operator: "does_not_exist", status: "skipped" },
+    { operator: "contains", status: "ok" },
+    { operator: "", status: "ok" },
+  ])("refuses operator $operator: $status", ({ operator, status }) => {
+    const json = JSON.stringify([
+      {
+        name: "h",
+        redirectURL: "/new",
+        statusCode: 301,
+        matches: [
+          {
+            matchType: "header",
+            name: "X-Test",
+            matchOperator: operator,
+            matchValue: "1",
+          },
+        ],
+      },
+    ]);
+    const preview = parseExport(json, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
+    expect(preview.rows[0].status).toBe(status);
+    if (status === "skipped") {
+      expect(preview.rows[0].blocked.join(" ")).toMatch(operator);
+    }
+  });
+
   it("carries a header condition's name into headerName", () => {
     const json = JSON.stringify([
       {
