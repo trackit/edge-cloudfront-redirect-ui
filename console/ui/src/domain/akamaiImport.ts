@@ -544,14 +544,21 @@ const mapSimpleCsv = (text: string, host: string): Candidate[] => {
   });
 };
 
-/** Our match types that an Akamai `matches[]` entry can map onto directly. */
+/**
+ * Our match types that an Akamai `matches[]` entry can map onto directly.
+ *
+ * `cookie` is deliberately absent. An Akamai cookie condition names the cookie it
+ * tests (`ab_test` equals `on`), and a `MatchCondition` has nowhere to put that
+ * name, so the edge compares the value against the whole `Cookie` header:
+ * `equals` then never matches, and `contains` matches unrelated cookies. Until
+ * the model carries a cookie name, the honest answer is to refuse the row.
+ */
 const PASSTHROUGH_MATCH_TYPES = new Set<MatchCondition["matchType"]>([
   "path",
   "hostname",
   "protocol",
   "regex",
   "header",
-  "cookie",
 ]);
 
 const asRecord = (value: unknown): Record<string, unknown> =>

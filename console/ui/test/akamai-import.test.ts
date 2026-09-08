@@ -430,6 +430,45 @@ describe("parseExport — matchRules JSON", () => {
     }
   });
 
+  /**
+   * A cookie condition names its cookie; a `MatchCondition` cannot hold that
+   * name, so the edge would compare the value against the entire `Cookie` header.
+   * Refused either way — and the second shape shows why it matters: keeping only
+   * the path would redirect everyone instead of the test group.
+   */
+  it.each([
+    { what: "alone", extra: [] as unknown[] },
+    {
+      what: "next to a path condition",
+      extra: [
+        { matchType: "path", matchOperator: "equals", matchValue: "/ab" },
+      ] as unknown[],
+    },
+  ])("refuses a cookie condition $what", ({ extra }) => {
+    const json = JSON.stringify([
+      {
+        name: "ab",
+        redirectURL: "/variant-b",
+        statusCode: 302,
+        matches: [
+          ...extra,
+          {
+            matchType: "cookie",
+            name: "ab_test",
+            matchOperator: "equals",
+            matchValue: "on",
+          },
+        ],
+      },
+    ]);
+    const preview = parseExport(json, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
+    expect(preview.rows[0].status).toBe("skipped");
+    expect(preview.rows[0].blocked.join(" ")).toMatch(/cookie/);
+  });
+
   it("carries a header condition's name into headerName", () => {
     const json = JSON.stringify([
       {
