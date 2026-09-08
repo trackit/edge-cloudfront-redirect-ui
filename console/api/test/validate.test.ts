@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { validateRule } from "../src/lib/validate.js";
 import { ApiError } from "../src/lib/errors.js";
+import type { ValidationDetail } from "../src/lib/ajv-errors.js";
 
 const redirectRule = {
   pk: "www.example.com",
@@ -87,6 +88,27 @@ describe("validateRule", () => {
 
   it("rejects a cookie condition with no cookie name", () => {
     expect(() => validateRule(cookieMatch())).toThrowError(ApiError);
+  });
+
+  /**
+   * A schema conditional makes Ajv report twice: the missing field, and the fact
+   * that the branch it sits in failed. The second names nothing and gives the
+   * user nothing to change, so it does not reach the response.
+   */
+  it("reports the missing field once, without Ajv's branch bookkeeping", () => {
+    try {
+      validateRule(cookieMatch());
+      expect.unreachable();
+    } catch (err) {
+      const details = (err as ApiError).details as ValidationDetail[];
+      expect(details).toEqual([
+        {
+          path: "/matches/0",
+          message: "must have required property 'cookieName'",
+          params: { missingProperty: "cookieName" },
+        },
+      ]);
+    }
   });
 
   it("rejects a cookie name on a condition that is not a cookie", () => {

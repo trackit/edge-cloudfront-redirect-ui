@@ -16,6 +16,20 @@ export interface ValidationDetail {
 }
 
 /**
+ * Ajv's bookkeeping keywords, dropped from the details.
+ *
+ * A conditional in the schema — `headerName` is required iff the type is
+ * `header`, and the same for `cookieName` — makes Ajv report twice: once for the
+ * real problem ("must have required property 'cookieName'") and once to say the
+ * branch it sits in failed ('must match "then" schema'). The second is true and
+ * useless: it names no field and tells the user nothing to change. Only the
+ * bookkeeping is dropped, never a leaf error, so nothing actionable is hidden —
+ * and if a conditional ever fails with no leaf error to explain it, the fallback
+ * below still says something rather than answering with an empty list.
+ */
+const BOOKKEEPING_KEYWORDS = new Set(["if", "then", "else"]);
+
+/**
  * Ajv errors → the `details` array of our standard error envelope.
  *
  * `params` is passed through because Ajv puts the offending field there, not in
@@ -27,7 +41,11 @@ export interface ValidationDetail {
 export const formatAjvErrors = (
   errors: ErrorObject[] | null | undefined,
 ): ValidationDetail[] => {
-  const all = errors ?? [];
+  const raw = errors ?? [];
+  const meaningful = raw.filter((e) => !BOOKKEEPING_KEYWORDS.has(e.keyword));
+  // Unless that left nothing: a failure the client cannot see described at all
+  // is worse than one described awkwardly.
+  const all = meaningful.length > 0 ? meaningful : raw;
   const details: ValidationDetail[] = all.slice(0, MAX_DETAILS).map((e) => ({
     path: e.instancePath || "(root)",
     message: e.message ?? "invalid",
