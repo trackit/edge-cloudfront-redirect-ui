@@ -62,6 +62,15 @@ export interface ApiStub {
    * signed-out visitor sees.
    */
   signedInAs: (role: "editor" | "viewer" | undefined) => void;
+  /**
+   * Who the code exchange issues a session for, when a spec drives a real
+   * sign-in.
+   *
+   * Deliberately separate from `signedInAs`, which answers the boot refresh. A
+   * sign-in is precisely the case where the two differ: there is no cookie yet,
+   * so the refresh 401s, and this is what produces the session.
+   */
+  exchangeAs: (role: "editor" | "viewer") => void;
 }
 
 /**
@@ -111,6 +120,7 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
   let deleteHost: { status: number; body: unknown } | null = null;
   let rules: Rule[] = [];
   let role: "editor" | "viewer" | undefined = "editor";
+  let exchangeRole: "editor" | "viewer" = "editor";
 
   // A predicate, not the `**/api/**` glob that looks right: the app's own source
   // lives in `src/api/`, and in dev Vite serves those modules from URLs the glob
@@ -148,6 +158,22 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
                 }),
               },
         );
+        return;
+      }
+
+      // The code exchange, which the callback page makes on its way in. Answered
+      // independently of `role` above: a spec that drives a sign-in starts
+      // signed out, so that refresh 401s and this is the call that succeeds.
+      if (method === "POST" && url.pathname.endsWith("/auth/session")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            accessToken: "e2e-access",
+            idToken: fakeIdToken(exchangeRole),
+            expiresIn: 3600,
+          }),
+        });
         return;
       }
 
@@ -277,8 +303,36 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
     signedInAs: (next) => {
       role = next;
     },
+    exchangeAs: (next) => {
+      exchangeRole = next;
+    },
   };
 };
+
+/**
+ * Puts a login round trip in the tab, as `savePendingLogin` would have before
+ * the browser left for Cognito.
+ *
+ * Seeded rather than driven through the hosted UI, which is not ours to
+ * automate: what these specs are about is the return leg — the state check, the
+ * exchange, and where the browser ends up afterwards.
+ */
+export const seedPendingLogin = async (
+  page: Page,
+  pending: { verifier: string; state: string; returnTo: string },
+): Promise<void> => {
+  await page.addInitScript(
+    ([k, json]) => {
+      if (window.sessionStorage.getItem(k) === null) {
+        window.sessionStorage.setItem(k, json);
+      }
+    },
+    [PENDING_LOGIN_KEY, JSON.stringify(pending)] as const,
+  );
+};
+
+/** Matches `PENDING_KEY` in `src/auth/pkce.ts`. */
+const PENDING_LOGIN_KEY = "edgeroute.auth.pending";
 
 /**
  * Opens the console and waits for it to have actually loaded.

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
 import { api, setAuthTokenProvider } from "../api";
+import type { Session } from "../api";
 import { createSessionStore } from "./session";
 import type { SessionStore } from "./session";
 
@@ -18,6 +19,17 @@ export interface AuthState {
   status: AuthStatus;
   /** Claims from the id token: who is signed in and what they may do. */
   user?: { email?: string; groups: string[] };
+  /**
+   * Takes the session the code exchange just issued and treats the visitor as
+   * signed in.
+   *
+   * The callback holds a session nothing else can see: it was issued to that one
+   * request, and the bootstrap below has already run and answered "signed out"
+   * for this page load. Navigating on without handing it over walks straight
+   * into a guard still holding the old answer, which sends the browser back to
+   * /login — a sign-in that worked, discarded a tick later.
+   */
+  adoptSession: (session: Session) => void;
   /** Ends the session here and at the identity provider. */
   signOut: () => Promise<void>;
 }
@@ -84,6 +96,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const adoptSession = useCallback((issued: Session) => {
+    store.current?.adopt(issued);
+    setUser(userFrom(issued.idToken));
+    setStatus("signed-in");
+  }, []);
+
   const signOut = useCallback(async () => {
     store.current?.clear();
     setStatus("signed-out");
@@ -98,7 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ status, user, signOut }}>
+    <AuthContext.Provider value={{ status, user, adoptSession, signOut }}>
       {children}
     </AuthContext.Provider>
   );

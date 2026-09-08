@@ -3,6 +3,7 @@ import {
   expect,
   gotoConsole,
   host,
+  seedPendingLogin,
   seedStorage,
   test,
 } from "./fixtures";
@@ -103,6 +104,50 @@ test("an already-signed-in visitor who opens /login is sent on", async ({
   await page.goto("/login");
 
   await expect(page).toHaveURL(/\/console/);
+});
+
+test("a completed sign-in lands on the console, not back on the login page", async ({
+  page,
+  api,
+}) => {
+  // The regression this exists for. The exchange succeeded and set the cookie,
+  // but nothing handed the session to the provider — so the guard was still
+  // holding the "signed out" the boot refresh had returned a moment earlier,
+  // and sent the browser straight back to /login. A sign-in that worked, thrown
+  // away one tick later, looking exactly like a sign-in that failed.
+  api.signedInAs(undefined); // no cookie yet, so the boot refresh 401s
+  api.exchangeAs("editor");
+  api.setHosts([www]);
+  await seed(page);
+  await seedPendingLogin(page, {
+    verifier: "v-1",
+    state: "s-1",
+    returnTo: "/console",
+  });
+
+  await page.goto("/auth/callback?code=good-code&state=s-1");
+
+  await expect(page).toHaveURL(/\/console$/);
+  await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
+});
+
+test("a completed sign-in returns to the deep link that was asked for", async ({
+  page,
+  api,
+}) => {
+  api.signedInAs(undefined);
+  api.exchangeAs("editor");
+  api.setHosts([www]);
+  await seed(page);
+  await seedPendingLogin(page, {
+    verifier: "v-1",
+    state: "s-1",
+    returnTo: "/console/hosts/www.example.com",
+  });
+
+  await page.goto("/auth/callback?code=good-code&state=s-1");
+
+  await expect(page).toHaveURL(/\/console\/hosts\/www\.example\.com$/);
 });
 
 test("the callback refuses a code that did not come from this browser", async ({

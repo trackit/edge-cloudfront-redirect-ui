@@ -39,6 +39,14 @@ export interface SessionStore {
   token(): Promise<string | undefined>;
   /** Forces a renewal even if the current token still looks fresh. */
   renew(): Promise<string | undefined>;
+  /**
+   * Takes a session the API has just issued, without asking for another.
+   *
+   * The code exchange returns exactly what a refresh returns, so the sign-in
+   * callback is already holding a session — going back to the network to be
+   * told what it was just told is a slower way to fail in one more place.
+   */
+  adopt(issued: { accessToken: string; expiresIn: number }): void;
   /** Drops the in-memory token. The cookie is cleared by the API, not here. */
   clear(): void;
   /** What is held right now, without triggering a network call. */
@@ -61,16 +69,32 @@ export const createSessionStore = (
    */
   let inFlight: Promise<string | undefined> | undefined;
 
+  /**
+   * Bumped whenever the session is set or dropped by something other than the
+   * renewal in flight, so that renewal's answer can be discarded when it lands.
+   *
+   * The sign-in callback is what needs this. Its page load starts a refresh that
+   * is certain to fail — there is no cookie yet — and the code exchange finishes
+   * while that failure is still in the air. Without the guard the late 401 wipes
+   * the session that arrived in the meantime, and the console bounces to the
+   * login page holding a perfectly good token.
+   */
+  let generation = 0;
+
   const renew = (): Promise<string | undefined> => {
+    const started = generation;
+
     inFlight ??= api
       .refresh()
       .then(({ accessToken, expiresIn }) => {
+        if (started !== generation) return session?.accessToken;
         session = { accessToken, expiresAt: expiryFrom(expiresIn, now()) };
         return accessToken;
       })
       .catch(() => {
         // Not an error to report: "no session" is the ordinary answer for a
         // signed-out visitor, and the guard reads it from `current()`.
+        if (started !== generation) return session?.accessToken;
         session = undefined;
         return undefined;
       })
@@ -87,7 +111,14 @@ export const createSessionStore = (
       return renew();
     },
     renew,
+    adopt({ accessToken, expiresIn }) {
+      generation += 1;
+      session = { accessToken, expiresAt: expiryFrom(expiresIn, now()) };
+    },
     clear() {
+      // Also bumped here: a renewal that succeeds after a sign-out would
+      // otherwise restore the session it was told to drop.
+      generation += 1;
       session = undefined;
     },
     current: () => session,

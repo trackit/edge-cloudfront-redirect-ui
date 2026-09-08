@@ -129,6 +129,72 @@ describe("concurrent callers", () => {
   });
 });
 
+describe("adopt", () => {
+  it("takes a session without going back to the network", async () => {
+    const refresh = vi.fn();
+    const store_ = store(refresh);
+
+    store_.adopt({ accessToken: "a-exchange", expiresIn: 3600 });
+
+    expect(await store_.token()).toBe("a-exchange");
+    // The code exchange already returned this. Asking again would be a second
+    // round trip to learn what we were just told.
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("dates the token from the adopting clock", () => {
+    const store_ = store(vi.fn());
+
+    store_.adopt({ accessToken: "a-exchange", expiresIn: 3600 });
+
+    expect(store_.current()).toEqual({
+      accessToken: "a-exchange",
+      expiresAt: NOW + 3_600_000,
+    });
+  });
+
+  it("survives a refresh that fails after it", async () => {
+    // The sign-in callback in one line. The page load starts a refresh that is
+    // certain to 401 — there is no cookie yet — and the exchange lands while
+    // that failure is still in the air. The late failure must not win.
+    let reject!: (reason: Error) => void;
+    const refresh = vi.fn(
+      () =>
+        new Promise<{ accessToken: string; expiresIn: number }>((_, r) => {
+          reject = r;
+        }),
+    );
+    const store_ = store(refresh);
+
+    const booting = store_.token();
+    store_.adopt({ accessToken: "a-exchange", expiresIn: 3600 });
+    reject(new Error("no session"));
+
+    // The boot read is answered with the adopted token rather than nothing,
+    // because by the time it settles there genuinely is a session.
+    expect(await booting).toBe("a-exchange");
+    expect(store_.current()?.accessToken).toBe("a-exchange");
+  });
+
+  it("is not undone by a refresh that succeeds after a sign-out", async () => {
+    let resolve!: (value: { accessToken: string; expiresIn: number }) => void;
+    const refresh = vi.fn(
+      () =>
+        new Promise<{ accessToken: string; expiresIn: number }>((r) => {
+          resolve = r;
+        }),
+    );
+    const store_ = store(refresh);
+
+    const booting = store_.token();
+    store_.clear();
+    resolve({ accessToken: "a-late", expiresIn: 3600 });
+
+    await booting;
+    expect(store_.current()).toBeUndefined();
+  });
+});
+
 describe("clear", () => {
   it("drops the token so the next read refreshes", async () => {
     const refresh = vi

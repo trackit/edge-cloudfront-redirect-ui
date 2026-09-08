@@ -4,6 +4,7 @@ import Brand from "../components/Brand";
 import { api } from "../api";
 import { callbackUrl } from "../auth/config";
 import { takePendingLogin } from "../auth/pkce";
+import { useAuth } from "../auth/useAuth";
 
 /**
  * Where the provider sends the browser back to.
@@ -15,6 +16,7 @@ import { takePendingLogin } from "../auth/pkce";
 export default function AuthCallback() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const { adoptSession } = useAuth();
   const [error, setError] = useState<string>();
   // Strict Mode mounts effects twice in development, and an authorization code
   // is single-use: the second exchange would fail and show an error over a login
@@ -50,11 +52,15 @@ export default function AuthCallback() {
       }
 
       try {
-        await api.auth.session({
+        const issued = await api.auth.session({
           code,
           redirectUri: callbackUrl(),
           codeVerifier: pending.verifier,
         });
+        // Before navigating, not after: the guard on the way in reads the status
+        // this sets, and the bootstrap already answered "signed out" for this
+        // page load. Leaving without it is a sign-in that lands back on /login.
+        adoptSession(issued);
         // Replace, so Back does not return to a callback URL whose code is spent.
         navigate(pending.returnTo, { replace: true });
       } catch {
@@ -63,7 +69,7 @@ export default function AuthCallback() {
     };
 
     void run();
-  }, [params, navigate]);
+  }, [params, navigate, adoptSession]);
 
   return (
     <div className="login">
