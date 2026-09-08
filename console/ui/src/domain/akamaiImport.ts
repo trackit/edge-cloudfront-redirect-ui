@@ -293,17 +293,62 @@ const mapMatchUrl = (
   return { match, messages };
 };
 
-/** Status column → 301/302, warning on anything else. Accepts string or number. */
+/**
+ * What each source status code becomes, and what that costs.
+ *
+ * The model stores 301 or 302, so 307/308 have to be mapped — but onto their
+ * real equivalents, by permanence: 308 is the permanent one, 307 the temporary
+ * one. Both also guarantee the HTTP method survives the redirect, which 301/302
+ * do not, so the mapping is stated rather than silent.
+ *
+ * An absent code goes to 302 and not 301. A wrong 302 is retried on the next
+ * request; a wrong 301 is cached by the browser, often for good, so it outlives
+ * the fix. Guessing has to lean towards the recoverable side.
+ */
+const STATUS_MAP: Record<string, { statusCode: 301 | 302; note?: string }> = {
+  "": {
+    statusCode: 302,
+    note: "no status code in the source, defaulted to 302 (temporary)",
+  },
+  "301": { statusCode: 301 },
+  "302": { statusCode: 302 },
+  "307": {
+    statusCode: 302,
+    note: "307 mapped to 302 — same permanence, but the HTTP method is no longer preserved",
+  },
+  "308": {
+    statusCode: 301,
+    note: "308 mapped to 301 — same permanence, but the HTTP method is no longer preserved",
+  },
+  "303": {
+    statusCode: 302,
+    note: "303 mapped to 302 — close, but 303 also forces the follow-up to be a GET",
+  },
+};
+
+/**
+ * Status column → 301/302. Accepts string or number.
+ *
+ * A code with no equivalent at all is refused (`drops`) rather than guessed: a
+ * rule whose redirect semantics we invented is worse than a rule the user has to
+ * redo by hand knowingly.
+ */
 const mapStatus = (
   raw: string | number | undefined,
-): { statusCode: 301 | 302; messages: string[] } => {
+): { statusCode: 301 | 302; messages: string[]; drops: string[] } => {
   const trimmed = String(raw ?? "").trim();
-  if (trimmed === "302") return { statusCode: 302, messages: [] };
-  if (trimmed === "" || trimmed === "301")
-    return { statusCode: 301, messages: [] };
+  const mapped = STATUS_MAP[trimmed];
+  if (mapped === undefined) {
+    return {
+      statusCode: 302,
+      messages: [],
+      drops: [`status code ${trimmed} has no 301/302 equivalent`],
+    };
+  }
   return {
-    statusCode: 301,
-    messages: [`unsupported status code ${trimmed} — mapped to 301`],
+    statusCode: mapped.statusCode,
+    messages: mapped.note === undefined ? [] : [mapped.note],
+    drops: [],
   };
 };
 
@@ -423,15 +468,16 @@ const mapEdgeRedirectorCsv = (text: string, host: string): Candidate[] => {
       cell(row, matchAt),
       captureMode,
     );
-    const { statusCode, messages: statusMsg } = mapStatus(cell(row, statusAt));
-    const draft = redirectDraft(target, statusCode, [match]);
+    const status = mapStatus(cell(row, statusAt));
+    const draft = redirectDraft(target, status.statusCode, [match]);
     const qs = cell(row, qsAt);
     if (qs !== "") draft.keepQueryString = parseCsvBool(qs);
     return {
       label,
       host,
       draft,
-      messages: [...matchMsg, ...statusMsg, ...captureWarnings(draft)],
+      messages: [...matchMsg, ...status.messages, ...captureWarnings(draft)],
+      drops: status.drops,
     };
   });
 };
@@ -457,13 +503,14 @@ const mapSimpleCsv = (text: string, host: string): Candidate[] => {
       cell(row, sourceAt),
       captureMode,
     );
-    const { statusCode, messages: statusMsg } = mapStatus(cell(row, statusAt));
-    const draft = redirectDraft(target, statusCode, [match]);
+    const status = mapStatus(cell(row, statusAt));
+    const draft = redirectDraft(target, status.statusCode, [match]);
     return {
       label,
       host,
       draft,
-      messages: [...matchMsg, ...statusMsg, ...captureWarnings(draft)],
+      messages: [...matchMsg, ...status.messages, ...captureWarnings(draft)],
+      drops: status.drops,
     };
   });
 };
@@ -610,6 +657,7 @@ const mapMatchRule = (
       (result.statusCode as number | string | undefined),
   );
   messages.push(...status.messages);
+  drops.push(...status.drops);
 
   // A wildcard is rewritten into a capturing regex only when the target
   // reinjects a capture AND no explicit regex condition already provides one.

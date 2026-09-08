@@ -188,15 +188,42 @@ describe("parseExport — Edge Redirector CSV", () => {
     expect(preview.summary).toMatchObject({ ready: 2, skipped: 1 });
   });
 
-  it("maps an unsupported status code to 301, with a warning", () => {
+  /**
+   * 307/308 are mapped by *permanence*, which is what a browser caches on, and
+   * the loss of method preservation is stated. An absent code defaults to the
+   * temporary one: a wrong 302 is retried, a wrong 301 lives on in browser
+   * caches long after the rule is fixed. A code with no equivalent is refused
+   * rather than invented.
+   */
+  it.each([
+    { source: "301", statusCode: 301, note: undefined },
+    { source: "302", statusCode: 302, note: undefined },
+    { source: "308", statusCode: 301, note: /308 mapped to 301/ },
+    { source: "307", statusCode: 302, note: /307 mapped to 302/ },
+    { source: "303", statusCode: 302, note: /303 mapped to 302/ },
+    { source: "", statusCode: 302, note: /defaulted to 302/ },
+  ])("maps status $source to $statusCode", ({ source, statusCode, note }) => {
     const preview = parseExport(
-      "ruleName,matchURL,redirectURL,result.statusCode\nR,/a,/b,307",
+      `ruleName,matchURL,redirectURL,result.statusCode\nR,/a,/b,${source}`,
       { filename: "e.csv", defaultHost: HOST },
     );
     const row = preview.rows[0];
-    expect(row.status).toBe("warning");
-    expect(row.messages.join(" ")).toMatch(/307/);
-    expect(asRedirect(row.input).statusCode).toBe(301);
+    expect(asRedirect(row.input).statusCode).toBe(statusCode);
+    if (note === undefined) {
+      expect(row.status).toBe("ok");
+    } else {
+      expect(row.status).toBe("warning");
+      expect(row.messages.join(" ")).toMatch(note);
+    }
+  });
+
+  it("refuses a status code with no 301/302 equivalent", () => {
+    const preview = parseExport(
+      "ruleName,matchURL,redirectURL,result.statusCode\nR,/a,/b,200",
+      { filename: "e.csv", defaultHost: HOST },
+    );
+    expect(preview.rows[0].status).toBe("skipped");
+    expect(preview.rows[0].blocked.join(" ")).toMatch(/status code 200/);
   });
 
   /**
@@ -214,7 +241,9 @@ describe("parseExport — Edge Redirector CSV", () => {
       { filename: "e.csv", defaultHost: HOST },
     );
 
-    expect(asRedirect(preview.rows[0].input).useIncomingQueryString).toBe(false);
+    expect(asRedirect(preview.rows[0].input).useIncomingQueryString).toBe(
+      false,
+    );
     expect(asRedirect(preview.rows[1].input).useIncomingQueryString).toBe(true);
   });
 });
@@ -231,12 +260,15 @@ describe("parseExport — simple CSV", () => {
     expect(row.matches[0].matchValue).toBe("/a");
   });
 
-  it("defaults the status to 301 when the column is absent", () => {
+  it("defaults the status to a temporary 302 when the column is absent", () => {
     const preview = parseExport("source,target\n/a,/b", {
       filename: "map.csv",
       defaultHost: HOST,
     });
-    expect(asRedirect(preview.rows[0].input).statusCode).toBe(301);
+    // Temporary, not permanent: a guessed 301 would be cached by browsers and
+    // outlive the correction.
+    expect(asRedirect(preview.rows[0].input).statusCode).toBe(302);
+    expect(preview.rows[0].messages.join(" ")).toMatch(/defaulted to 302/);
   });
 });
 
