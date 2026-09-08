@@ -255,7 +255,9 @@ run "assume_role_grant_adds_nothing_else" {
 run "rejects_a_bare_wildcard_assumable_role" {
   command = plan
 
-  # With no auth until ER-205, "*" would let any caller point the API anywhere.
+  # A bare "*" would let anyone who can register a target point the API at any
+  # role in any account. Auth (ER-205) narrows who that is; it does not make the
+  # grant itself any narrower, which is why this validation still matters.
   variables {
     assumable_role_arns = ["*"]
   }

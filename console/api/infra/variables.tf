@@ -67,9 +67,10 @@ variable "assumable_role_arns" {
   default     = []
   description = "Role ARNs the API may assume to reach a target's rules table, matching the `roleArn` on registered targets. Empty means no sts:AssumeRole grant. A trailing * is allowed in the role name; the account must be literal. Keep these as narrow as your role-naming convention allows."
 
-  # The account must be spelled out. With no authentication until ER-205, a grant
-  # that spans accounts (`*` alone, or `arn:aws:iam::*:role/*`) would let any
-  # caller register a target pointing anywhere the API can reach. A trailing `*`
+  # The account must be spelled out. A grant that spans accounts (`*` alone, or
+  # `arn:aws:iam::*:role/*`) would let anyone who can register a target point it
+  # anywhere the API can reach. Auth (ER-205) decides who that is and stops at
+  # the editor role; it does not make a wildcard grant safe. A trailing `*`
   # in the role *name* is fine — that is how a naming convention is expressed.
   # `?` is rejected outright: IAM treats it as a single-character wildcard, so
   # `role/??????????????` matches every 14-character role, and no legal role or

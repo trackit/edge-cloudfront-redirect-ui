@@ -9,15 +9,21 @@ info:
     redefined here.
 
 
-    The targets registry (ER-202) and rules CRUD with the `disabled` toggle
-    (ER-203) are implemented. Authentication is ER-205 — the API is open until
-    then.
+    The targets registry (ER-202), rules CRUD with the `disabled` toggle
+    (ER-203) and authentication (ER-205) are implemented. Every operation
+    requires a Cognito access token except the four noted as unauthenticated:
+    `/health`, and the three `/auth` routes that issue a token in the first
+    place.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
 servers:
   - url: /
     description: Relative to the deployed HTTP API stage.
+# Applies to every operation. The four that issue or need no token override it
+# with `security: []` — a token cannot be a precondition for obtaining one.
+security:
+  - bearerAuth: []
 tags:
   - name: system
     description: Operational endpoints.
@@ -30,6 +36,7 @@ paths:
     get:
       operationId: getHealth
       summary: Liveness probe.
+      security: []
       description: Returns 200 while the API is serving. Unauthenticated.
       tags: [system]
       responses:
@@ -49,6 +56,7 @@ paths:
     post:
       operationId: createSession
       summary: Exchange an authorization code for a session.
+      security: []
       description: >-
         Completes the hosted-UI login. The refresh token is returned as an
         HttpOnly cookie rather than in the body, so it is never readable by
@@ -80,6 +88,7 @@ paths:
     post:
       operationId: refreshSession
       summary: Mint a new access token from the refresh cookie.
+      security: []
       description: >-
         Also how the console answers "am I signed in?" on load: nothing is kept
         in browser storage, so the only way to know is to ask. A 401 is the
@@ -102,6 +111,7 @@ paths:
     post:
       operationId: endSession
       summary: Clear the session and say where to finish signing out.
+      security: []
       description: >-
         Clears the refresh cookie and returns the identity provider's logout
         URL. Both halves are needed: the provider keeps its own session cookie,
@@ -628,6 +638,16 @@ paths:
         "502":
           $ref: "#/components/responses/TargetUnreachable"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        The Cognito access token from `/auth/session` or `/auth/refresh`, sent as
+        `Authorization: Bearer <token>`. Verified by the JWT authorizer on the
+        HTTP API, which refuses the request before it reaches the Lambda — so an
+        operation documented here as authenticated never runs without one.
   parameters:
     TargetPathId:
       name: id
