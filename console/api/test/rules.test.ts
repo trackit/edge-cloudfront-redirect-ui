@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { EDITOR } from "./principal-claims.js";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { handler } from "../src/handler.js";
 import {
@@ -77,8 +78,8 @@ const event = (
     headers: {},
     body: body === undefined ? undefined : JSON.stringify(body),
     isBase64Encoded: false,
-    requestContext: { http: { method } },
-  }) as APIGatewayProxyEventV2;
+    requestContext: { http: { method }, ...EDITOR },
+  }) as unknown as APIGatewayProxyEventV2;
 
 const parse = (body: string | undefined): unknown =>
   JSON.parse(body ?? "null") as unknown;

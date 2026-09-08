@@ -1,18 +1,29 @@
 import { Link } from "react-router-dom";
 import Brand from "../components/Brand";
+import ProfileMenu from "../components/ProfileMenu";
 import { IconArrow } from "../components/icons";
+import { useAuth } from "../auth/useAuth";
 
 /* Ticket: MVP - Front — Home page. Public landing page: what EdgeRoute is,
    the way into the console, and the two rule kinds explained in plain language. */
 export default function LandingPage() {
+  const { status } = useAuth();
+
   return (
     <div className="landing">
       {/* minimal nav — single way into the console */}
       <nav className="nav">
         <Brand />
-        <Link to="/console" className="btn btn-dark btn-sm">
-          Open console
-        </Link>
+        {/* The page is public, so this is the one place in the app that has to
+            render for both a visitor and a signed-in user. Nothing is shown
+            while the session is still unknown: a "Sign in" that turns into a
+            profile a moment later is worse than a beat of nothing. */}
+        <div className="nav-end">
+          <Link to="/console" className="btn btn-dark btn-sm">
+            Open console
+          </Link>
+          {status === "signed-in" && <ProfileMenu />}
+        </div>
       </nav>
 
       {/* Takes the height between nav and footer so the hero and tiles sit

@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { createRouter } from "../src/router.js";
 import type { ApiRequest } from "../src/context.js";
 
+// An editor by default: these cases are about matching and param handling, and
+// a request with no principal is refused before any of that is observable. The
+// authorization cases below build their own.
 const req = (over: Partial<ApiRequest> = {}): ApiRequest => ({
   method: "GET",
   path: "/",
@@ -9,6 +12,7 @@ const req = (over: Partial<ApiRequest> = {}): ApiRequest => ({
   query: {},
   headers: {},
   body: undefined,
+  principal: { sub: "user-1", groups: ["editor"] },
   ...over,
 });
 

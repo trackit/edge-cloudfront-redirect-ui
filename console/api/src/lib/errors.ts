@@ -8,6 +8,7 @@ import type { ApiResponse } from "../context.js";
  */
 export const ERROR_CODES = [
   "BAD_REQUEST",
+  "FORBIDDEN",
   "HOST_EXISTS",
   "INTERNAL",
   "INVALID_JSON",
@@ -16,6 +17,7 @@ export const ERROR_CODES = [
   "RULE_EXISTS",
   "TARGET_EXISTS",
   "TARGET_UNREACHABLE",
+  "UNAUTHORIZED",
   "UNKNOWN_TARGET",
   "VALIDATION_ERROR",
 ] as const;
@@ -57,5 +59,18 @@ export class ApiError extends Error {
 
   static methodNotAllowed(message: string): ApiError {
     return new ApiError(405, "METHOD_NOT_ALLOWED", message);
+  }
+
+  /** No usable identity on the request. The caller may retry after signing in. */
+  static unauthorized(message: string): ApiError {
+    return new ApiError(401, "UNAUTHORIZED", message);
+  }
+
+  /**
+   * A known caller who may not do this. Distinct from 401 on purpose: signing in
+   * again will not help, so the console must not offer that as the remedy.
+   */
+  static forbidden(message: string): ApiError {
+    return new ApiError(403, "FORBIDDEN", message);
   }
 }

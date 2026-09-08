@@ -84,6 +84,14 @@ export interface ForwardSettings {
 export const narrowForwardSettings = (rule: RewriteRule): ForwardSettings =>
   rule.forwardSettings as ForwardSettings;
 
+/**
+ * A signed-in session, as `/auth/session` and `/auth/refresh` return it.
+ *
+ * There is no refresh token here on purpose — it is set as an HttpOnly cookie so
+ * that script cannot read it, and repeating it in the body would undo that.
+ */
+export type Session = Schemas["Session"];
+
 /** One entry of an error's `details`, locating a bad field. */
 export type ValidationDetail = Schemas["ValidationDetail"];
 

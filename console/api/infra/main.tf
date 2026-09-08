@@ -226,6 +226,15 @@ resource "aws_lambda_function" "this" {
       {
         # AWS_REGION is injected by the runtime; only the table name is ours.
         TARGETS_TABLE_NAME = aws_dynamodb_table.targets.name
+
+        # The /auth routes exchange codes and refresh tokens against the pool,
+        # which means holding the client secret. It is an environment variable
+        # rather than a Secrets Manager lookup because it is read on every cold
+        # start and rotating it means recreating the client anyway.
+        COGNITO_USER_POOL_ID  = aws_cognito_user_pool.this.id
+        COGNITO_CLIENT_ID     = aws_cognito_user_pool_client.console.id
+        COGNITO_CLIENT_SECRET = aws_cognito_user_pool_client.console.client_secret
+        COGNITO_DOMAIN        = "https://${aws_cognito_user_pool_domain.this.domain}.auth.${data.aws_region.current.region}.amazoncognito.com"
       },
       # Omitted when empty so the API falls back to its built-in region list.
       length(var.allowed_regions) > 0
@@ -259,10 +268,15 @@ resource "aws_apigatewayv2_integration" "this" {
   payload_format_version = "2.0"
 }
 
+# Everything the public list in cognito.tf does not name. The authorizer 401s a
+# missing or invalid token before the Lambda is invoked; the router 403s a viewer
+# who is authenticated but not allowed to write.
 resource "aws_apigatewayv2_route" "default" {
-  api_id    = aws_apigatewayv2_api.this.id
-  route_key = "$default"
-  target    = "integrations/${aws_apigatewayv2_integration.this.id}"
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "$default"
+  target             = "integrations/${aws_apigatewayv2_integration.this.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
 resource "aws_apigatewayv2_stage" "default" {

@@ -1,7 +1,8 @@
 # console/ui/infra — hosting for the console
 
 Serves the built console SPA and the console API from **one** CloudFront
-distribution, behind a basic-auth prompt.
+distribution. Who may use it is Cognito's answer, not this module's — see
+`console/api/infra`.
 
 ```
                          ┌─ /api/*  ──► API Gateway (console/api/infra)
@@ -20,9 +21,9 @@ through CloudFront.
 ## The gate function
 
 One CloudFront Function on viewer-request, attached to both behaviors.
-CloudFront allows only one viewer-request function per behavior, so it does all
-three jobs: basic auth, stripping the `/api` prefix (the API serves `/health`, not
-`/api/health`), and returning `index.html` for client-side routes.
+CloudFront allows only one viewer-request function per behavior, so it does both
+jobs: stripping the `/api` prefix (the API serves `/health`, not `/api/health`),
+and returning `index.html` for client-side routes.
 
 The SPA fallback is done here rather than with `custom_error_response`, the usual
 recipe. Those are distribution-wide, so the API's own 404s — an unknown host or
@@ -31,15 +32,18 @@ report them as malformed JSON.
 
 Its logic is covered by
 [`console/ui/test/cloudfront-gate.test.ts`](../test/cloudfront-gate.test.ts),
-which renders this module's template and runs it. Whether CloudFront _accepts_ the
-file is only provable on deploy — there is no local runtime.
+which reads `gate.js` and runs it. Whether CloudFront _accepts_ the file is only
+provable on deploy — there is no local runtime.
 
-### The credential is not a secret
+### There used to be a basic-auth prompt here
 
-It is base64 (not a hash) in the function's code, and it is in Terraform state.
-Anyone with `cloudfront:GetFunction` can read it. It exists so an unauthenticated
-console is not on the open internet before real auth lands — nothing more. Use a
-throwaway password.
+It was a stopgap for the window before login existed, and it is gone. It only
+ever stood in front of the bundle and the login page — neither holds a secret,
+and the client id and Cognito domain baked into the bundle are public by design.
+It could not stand in front of `/api` at all, because the console's bearer token
+needs the header the credential used. Its password was also readable by anyone
+with `cloudfront:GetFunction`, so it protected little and cost a second prompt in
+front of the real one.
 
 ## Nothing is cached
 
@@ -62,15 +66,23 @@ latter, including during `terraform test`, where it would override the defaults 
 suite asserts on.
 
 The distribution takes **5–15 minutes** to deploy, so the URL will not answer
-immediately. `console/api/infra` has to be applied first — its `api_endpoint`
-output is an input here.
+immediately. `console/api/infra` has to be applied first — its `api_endpoint`,
+`cognito_domain` and `user_pool_client_id` outputs are inputs here.
+
+Then apply `console/api/infra` a **second** time, with this stack's `console_url`
+in its `auth_callback_urls`. Cognito only redirects back to a URL it already
+knows, and that URL does not exist until the distribution does. The second apply
+changes the app client alone — no distribution deploy, so it is quick.
 
 To check the API is reachable through the distribution:
 
 ```bash
-curl -i -u 'demo:<password>' "$(terraform output -raw console_url)/api/health"
+curl -i "$(terraform output -raw console_url)/api/health"
 # → {"status":"ok"}
 ```
+
+`/health` is public at the gateway, so that answers without a token. Every other
+route is behind the JWT authorizer.
 
 ## Build and upload
 
@@ -96,8 +108,8 @@ Consequences worth knowing:
 | Name                  | Type   | Default             | Description                                               |
 | --------------------- | ------ | ------------------- | --------------------------------------------------------- |
 | `api_endpoint`        | string | —                   | `console/api/infra`'s output. Host only, no path.         |
-| `basic_auth_username` | string | —                   | No colons (basic auth splits on the first one).           |
-| `basic_auth_password` | string | —                   | Minimum 12 characters. Sensitive, but see above.          |
+| `cognito_domain`      | string | —                   | Same stack's output. Baked in as `VITE_COGNITO_DOMAIN`.   |
+| `cognito_client_id`   | string | —                   | Same stack's `user_pool_client_id`. Not a secret.         |
 | `name`                | string | `edgeroute-console` | Prefixes the bucket, the function and the tags.           |
 | `price_class`         | string | `PriceClass_100`    | US/EU edges.                                              |
 | `ui_source_dir`       | string | `..`                | The `console/ui` workspace.                               |

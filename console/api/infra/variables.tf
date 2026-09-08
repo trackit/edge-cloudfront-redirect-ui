@@ -67,9 +67,10 @@ variable "assumable_role_arns" {
   default     = []
   description = "Role ARNs the API may assume to reach a target's rules table, matching the `roleArn` on registered targets. Empty means no sts:AssumeRole grant. A trailing * is allowed in the role name; the account must be literal. Keep these as narrow as your role-naming convention allows."
 
-  # The account must be spelled out. With no authentication until ER-205, a grant
-  # that spans accounts (`*` alone, or `arn:aws:iam::*:role/*`) would let any
-  # caller register a target pointing anywhere the API can reach. A trailing `*`
+  # The account must be spelled out. A grant that spans accounts (`*` alone, or
+  # `arn:aws:iam::*:role/*`) would let anyone who can register a target point it
+  # anywhere the API can reach. Auth (ER-205) decides who that is and stops at
+  # the editor role; it does not make a wildcard grant safe. A trailing `*`
   # in the role *name* is fine — that is how a naming convention is expressed.
   # `?` is rejected outright: IAM treats it as a single-character wildcard, so
   # `role/??????????????` matches every 14-character role, and no legal role or
@@ -110,4 +111,100 @@ variable "tags" {
   type        = map(string)
   default     = {}
   description = "Tags to apply to all resources."
+}
+
+variable "cognito_domain_prefix" {
+  type        = string
+  description = "Prefix for the Cognito hosted UI domain, giving <prefix>.auth.<region>.amazoncognito.com. No default: the prefix is globally unique across all AWS accounts, so any value shipped here would collide for the second person to apply this."
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$", var.cognito_domain_prefix))
+    error_message = "cognito_domain_prefix must be 3-63 characters of lowercase letters, digits and hyphens, and may not start or end with a hyphen (Cognito domain rules)."
+  }
+}
+
+variable "auth_callback_urls" {
+  type        = list(string)
+  default     = ["http://localhost:5180/auth/callback"]
+  description = "URLs Cognito may redirect to after a login. Defaults to the Vite dev server so a fresh pool is usable locally before anything is deployed; add the deployed console's /auth/callback when it exists. Cognito allows http only for localhost."
+
+  validation {
+    condition = alltrue([
+      for url in var.auth_callback_urls :
+      can(regex("^https://", url)) || can(regex("^http://localhost(:[0-9]+)?/", url))
+    ])
+    error_message = "each auth_callback_urls entry must be https, or http on localhost — Cognito rejects plain http anywhere else, and a redirect URI is where the authorization code lands."
+  }
+}
+
+variable "auth_logout_urls" {
+  type        = list(string)
+  default     = ["http://localhost:5180/login"]
+  description = "URLs Cognito may redirect to after a logout. Signing out has to end somewhere the user can sign in again, so this is normally the console's login page."
+
+  validation {
+    condition = alltrue([
+      for url in var.auth_logout_urls :
+      can(regex("^https://", url)) || can(regex("^http://localhost(:[0-9]+)?/", url))
+    ])
+    error_message = "each auth_logout_urls entry must be https, or http on localhost."
+  }
+}
+
+variable "identity_provider" {
+  type = object({
+    # The name the hosted UI shows on its button, and the value that goes into
+    # `supported_identity_providers`. Cognito reserves a few words for its own
+    # providers, so "COGNITO", "Google", "Facebook", "SignInWithApple" and
+    # "LoginWithAmazon" cannot be reused for a generic OIDC one.
+    name          = string
+    issuer        = string
+    client_id     = string
+    client_secret = string
+    # Defaults suit most providers; override for one that names its groups claim
+    # differently or needs an extra scope.
+    scopes = optional(list(string), ["openid", "email", "profile"])
+    # Maps the provider's claims onto the pool's attributes. `email` is the one
+    # that matters — it is this pool's username attribute, so a provider that
+    # does not supply it cannot create a user.
+    attribute_mapping = optional(map(string), { email = "email" })
+  })
+  default     = null
+  description = <<-EOT
+    An optional OIDC identity provider, for deployments that sign in through
+    their own SSO rather than through this pool's own accounts.
+
+    Null by default, and that default is the point: this is a tool other people
+    deploy into their own accounts, so the provider is theirs to choose. Leaving
+    it unset gives a working pool with username-and-password accounts and no
+    third party involved. Setting it adds a button to the hosted UI; no console
+    code changes either way.
+
+    OIDC rather than SAML because it covers Google, Okta, Auth0, Entra ID and
+    Keycloak with the same four inputs, where SAML needs metadata XML and
+    certificate handling per provider.
+
+    Note that federated monthly active users are billed differently from ones
+    signing in directly — that cost falls on whoever deploys this, which is
+    another reason it is not switched on by default.
+  EOT
+
+  validation {
+    condition = (
+      var.identity_provider == null ||
+      can(regex("^https://", try(var.identity_provider.issuer, "")))
+    )
+    error_message = "identity_provider.issuer must be an https URL — it is the OIDC discovery origin, and Cognito fetches its configuration from it."
+  }
+
+  validation {
+    condition = (
+      var.identity_provider == null ||
+      !contains(
+        ["COGNITO", "Google", "Facebook", "SignInWithApple", "LoginWithAmazon"],
+        try(var.identity_provider.name, "")
+      )
+    )
+    error_message = "identity_provider.name may not be one of Cognito's reserved provider names (COGNITO, Google, Facebook, SignInWithApple, LoginWithAmazon). Pick the name you want on the sign-in button, e.g. \"Okta\"."
+  }
 }

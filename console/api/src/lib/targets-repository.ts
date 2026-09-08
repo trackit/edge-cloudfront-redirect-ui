@@ -121,7 +121,8 @@ export interface ResolvedTarget {
  * Resolves a target id to the coordinates rule operations use. Every rule route
  * calls this first, so an unknown target is a 404 rather than being mistaken for
  * a valid one — and it is the single choke point where per-target authorization
- * attaches in ER-205.
+ * would attach. ER-205 gates writes by role in the router, which is not
+ * per-target; if that is ever wanted, here is where it goes.
  */
 export const resolveTarget = async (id: string): Promise<ResolvedTarget> => {
   const target = await getTargetsRepository().get(id);

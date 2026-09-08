@@ -7,6 +7,17 @@
 # runs fail for no reason. Both names are gitignored (*.tfvars); this .example is
 # the tracked one, so keep real values out of it.
 
+# The Cognito hosted UI's name, giving <prefix>.auth.<region>.amazoncognito.com.
+# Required — it has no default, because the name is unique across every AWS
+# account and any value shipped here would collide for the second person to
+# apply. A collision fails the apply and the only fix is a different value.
+cognito_domain_prefix = "REPLACE_ME"
+
+# `function_name` is left at its default here, which also names the targets
+# registry table. Set it whenever a second deployment shares the account — two
+# stacks on the default name fight over the same Lambda, API and table.
+# function_name = "edgeroute-console-api"
+
 # Rules tables the API's own role may read and write.
 #
 # This is the one setting people miss. It is empty by default, and empty means the

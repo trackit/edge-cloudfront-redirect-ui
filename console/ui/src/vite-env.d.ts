@@ -13,6 +13,21 @@ interface ImportMetaEnv {
    * configured, which it currently does not have.
    */
   readonly VITE_API_BASE_URL?: string;
+
+  /**
+   * Hosted UI base URL, e.g.
+   * `https://edgeroute-dev.auth.us-east-1.amazoncognito.com`. Set by the
+   * `console/ui/infra` apply from `console/api/infra`'s `cognito_domain`
+   * output. Optional here because it is absent in dev until a pool exists;
+   * `authConfig()` is what refuses to run without it.
+   */
+  readonly VITE_COGNITO_DOMAIN?: string;
+
+  /**
+   * The Cognito app client the console presents as, from the same stack's
+   * `user_pool_client_id` output. Not a secret — it is in every authorize URL.
+   */
+  readonly VITE_COGNITO_CLIENT_ID?: string;
 }
 
 interface ImportMeta {

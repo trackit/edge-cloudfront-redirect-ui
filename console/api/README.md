@@ -70,5 +70,7 @@ All four run in CI.
 ## Deploy
 
 Terraform lives in [`infra/`](infra) — HTTP API Gateway + Lambda + IAM + logs.
-See its [README](infra/README.md). Auth (Cognito) is ER-205; the API deploys
-open until then.
+See its [README](infra/README.md), and `cognito.tf` beside it for auth (ER-205):
+a Cognito user pool, and a JWT authorizer that refuses a request at the gateway
+before it reaches the Lambda. Four routes stay public — `/health`, and the three
+`/auth` routes that issue the token in the first place.

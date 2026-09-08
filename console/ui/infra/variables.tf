@@ -21,28 +21,34 @@ variable "api_endpoint" {
   }
 }
 
-variable "basic_auth_username" {
+variable "cognito_domain" {
   type        = string
-  description = "Username for the console's basic-auth prompt. Login is post-MVP; this is what keeps an unauthenticated console off the open internet."
+  description = "Hosted UI the console signs in through — the `cognito_domain` output of console/api/infra. Baked into the bundle as VITE_COGNITO_DOMAIN."
 
   validation {
-    # Basic auth sends `user:password` base64-encoded, so a colon in the username
-    # moves where the password starts and nothing can log in.
-    condition     = length(var.basic_auth_username) > 0 && !strcontains(var.basic_auth_username, ":")
-    error_message = "basic_auth_username must be non-empty and must not contain a colon."
+    # Same shape as api_endpoint, and for a related reason: the SPA appends
+    # /oauth2/authorize to this, so a value carrying a path builds a URL that
+    # fails at Cognito rather than here.
+    condition     = can(regex("^https://[a-z0-9.-]+/?$", var.cognito_domain))
+    error_message = "cognito_domain must be https:// followed by a host and nothing else, e.g. https://edgeroute-dev.auth.us-east-1.amazoncognito.com."
   }
 }
 
-variable "basic_auth_password" {
+variable "cognito_client_id" {
   type        = string
-  sensitive   = true
-  description = "Password for the console's basic-auth prompt. Ends up in the CloudFront Function's code and in state — treat it as a demo credential, not a secret."
+  description = "App client the console presents as — the `user_pool_client_id` output of console/api/infra. Baked into the bundle as VITE_COGNITO_CLIENT_ID. Not a secret: it is in every authorize URL, and the secret it pairs with never leaves the API's Lambda."
 
   validation {
-    condition     = length(var.basic_auth_password) >= 12
-    error_message = "basic_auth_password must be at least 12 characters. It guards a console that can rewrite live traffic, and it is the only thing doing so."
+    condition     = can(regex("^[a-z0-9]{1,128}$", var.cognito_client_id))
+    error_message = "cognito_client_id must be a Cognito app client id: 1-128 lowercase letters and digits."
   }
 }
+
+# Neither of the two above has a default, and that is deliberate. `authConfig()`
+# throws when either is missing, so the SPA would build clean and then fail on
+# load; a placeholder would be worse still, sending the browser to a URL that
+# fails at Cognito where the cause is invisible. Failing the plan names the
+# variable instead.
 
 variable "ui_source_dir" {
   type        = string

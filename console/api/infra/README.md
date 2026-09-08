@@ -164,11 +164,55 @@ module "console_api" {
 }
 ```
 
+## Authentication
+
+A Cognito user pool, a JWT authorizer on the HTTP API, and two groups —
+`viewer` and `editor`. The gateway rejects a request with no valid token before
+the Lambda runs; the Lambda's router rejects a `viewer` on a route marked
+`write: true`. `/health` and the three `/auth/*` routes are reachable without a
+token, the last three because they are what issues one.
+
+`cognito_domain_prefix` is required and has no default: the prefix is globally
+unique across AWS, so any value shipped here would collide for the second person
+to apply this.
+
+After `terraform apply`, `./seed-users.sh` creates `viewer@example.com` and
+`editor@example.com` with generated passwords, printed once.
+
+### Single sign-on
+
+Off by default, and that default is deliberate. This is deployed into other
+people's accounts, so the identity provider is theirs to choose — and federated
+monthly active users are billed differently from ones signing in directly, which
+makes it their cost decision too. Unset, the pool's own username-and-password
+accounts are the only way in.
+
+To add one, set `identity_provider`:
+
+```hcl
+identity_provider = {
+  name          = "Okta"          # the label on the sign-in button
+  issuer        = "https://example.okta.com"
+  client_id     = "..."
+  client_secret = "..."
+}
+```
+
+OIDC only. It covers Google, Okta, Auth0, Entra ID and Keycloak from those four
+inputs, because Cognito reads the endpoints from the issuer's discovery
+document; SAML would need metadata XML and certificate handling per provider.
+
+The provider is offered _alongside_ the pool's own accounts, not instead of
+them — a deployment with SSO usually still wants a break-glass login that does
+not depend on it. No console code changes either way: the hosted UI renders the
+button.
+
 ## Not here yet
 
 - **Cross-account targets** — the `roleArn` shape supports it; nothing has been
   exercised against a second account.
-- **Cognito authorizer** — ER-205. The API is deployed open for now.
+- **SAML federation** — OIDC covers the common providers; nothing has been
+  exercised against a SAML IdP.
 
 ## Usage
 
@@ -198,3 +242,11 @@ off by default and scoped to exactly the ARNs given when set, that a `"*"`
 `assumable_role_arns` is rejected, that the rules-table grant never includes
 `DeleteTable`, and that `ALLOWED_REGIONS` is passed through when set and omitted
 entirely when not.
+
+For authentication it asserts that sign-up is admin-only, that the app client is
+confidential and code-flow only with `USER_PASSWORD_AUTH` absent, that both role
+groups exist, that the authorizer accepts exactly this pool and client, that
+`$default` requires a token while only `/health` and the `/auth/*` routes do
+not, that callback URLs must be https or localhost, and that no identity
+provider exists until one is configured — and that a configured one is offered
+alongside `COGNITO` rather than replacing it.
