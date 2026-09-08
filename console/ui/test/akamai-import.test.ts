@@ -198,6 +198,25 @@ describe("parseExport — Edge Redirector CSV", () => {
     expect(row.messages.join(" ")).toMatch(/307/);
     expect(asRedirect(row.input).statusCode).toBe(301);
   });
+
+  /**
+   * Akamai drops the incoming query string unless the rule opts in. The editor's
+   * own default is the opposite, because it is the convenient one for a human
+   * typing a rule — but an import has to say what the source said.
+   */
+  it("keeps the query string only when the source column says so", () => {
+    const preview = parseExport(
+      [
+        "ruleName,matchURL,redirectURL,result.statusCode,useIncomingQueryString",
+        "Silent,/old-a,/new-a,301,",
+        "OptedIn,/old-b,/new-b,301,true",
+      ].join("\n"),
+      { filename: "e.csv", defaultHost: HOST },
+    );
+
+    expect(asRedirect(preview.rows[0].input).useIncomingQueryString).toBe(false);
+    expect(asRedirect(preview.rows[1].input).useIncomingQueryString).toBe(true);
+  });
 });
 
 describe("parseExport — simple CSV", () => {

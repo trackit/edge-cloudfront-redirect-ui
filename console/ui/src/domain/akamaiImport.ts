@@ -351,6 +351,11 @@ const redirectDraft = (
   draft.relative = !ABSOLUTE_URL.test(draft.redirectURL);
   draft.statusCode = statusCode;
   draft.matches = matches;
+  // Akamai drops the incoming query string unless the rule opts in, so an import
+  // has to start from `false` — `emptyRedirect()` starts from `true`, which is the
+  // convenient default for someone typing a rule by hand, not the source's.
+  // A rule that states the flag overrides this below.
+  draft.keepQueryString = false;
   return draft;
 };
 
@@ -406,6 +411,9 @@ const mapEdgeRedirectorCsv = (text: string, host: string): Candidate[] => {
   const targetAt = idx.get("redirecturl");
   const statusAt =
     idx.get("result.statuscode") ?? idx.get("statuscode") ?? idx.get("status");
+  const qsAt =
+    idx.get("useincomingquerystring") ??
+    idx.get("result.useincomingquerystring");
 
   return rows.slice(1).map((row): Candidate => {
     const target = cell(row, targetAt);
@@ -417,6 +425,8 @@ const mapEdgeRedirectorCsv = (text: string, host: string): Candidate[] => {
     );
     const { statusCode, messages: statusMsg } = mapStatus(cell(row, statusAt));
     const draft = redirectDraft(target, statusCode, [match]);
+    const qs = cell(row, qsAt);
+    if (qs !== "") draft.keepQueryString = parseCsvBool(qs);
     return {
       label,
       host,
