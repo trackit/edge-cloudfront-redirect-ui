@@ -329,6 +329,41 @@ const isFullUrlRegex = (pattern: string): boolean =>
   /^\^?https?/.test(pattern) || pattern.includes("://");
 
 /**
+ * Whether a path condition is true of every request, so it constrains nothing.
+ *
+ * Akamai exports use one as a deliberate idiom: `path contains "/ /*"` reads like
+ * a filter but is not one. The edge splits a value on spaces into alternatives
+ * (any may match) and expands `*` within each, so that value asks "does the path
+ * contain `/`, or contain anything at all" — true for every request. The real
+ * filter then lives in another condition, usually a regex.
+ *
+ * Recognising it matters twice: such a rule wins for every request, and whatever
+ * the preview leads with should not be this.
+ *
+ * Only the plain operators are read. A regex that happens to match everything is
+ * not worth guessing at, and a negated condition is the opposite case anyway.
+ */
+export const isVacuousMatch = (match: MatchCondition): boolean => {
+  if (match.negate === true) return false;
+  if (match.matchType !== "path" && match.matchType !== "regex") return false;
+  if (match.matchOperator === "regex") return false;
+
+  return match.matchValue
+    .split(" ")
+    .filter((variant) => variant.length > 0)
+    .some((variant) => {
+      const literal = variant.replace(/\*/g, "");
+      // `contains ""`/`contains "/"` hold for any path, and so does an anchored
+      // `equals` once the wildcards are what carry the rest.
+      return literal === "" || literal === "/";
+    });
+};
+
+/** True when nothing about a rule's conditions can keep a request out. */
+const matchesEveryRequest = (matches: MatchCondition[]): boolean =>
+  matches.length === 0 || matches.every(isVacuousMatch);
+
+/**
  * The host part of a full-URL pattern: everything between `://` and the next `/`.
  *
  * Empty or absent means no opinion. A warning nobody can act on is worse than no
@@ -1092,18 +1127,37 @@ export function parseExport(text: string, opts: ParseOptions): ImportPreview {
     return at;
   };
 
+  // Where each host's last rule sits. Priorities follow file order, and the edge
+  // takes the first rule that matches, so a rule that matches every request
+  // shadows everything imported after it on the same host. Being last is what
+  // makes such a rule harmless.
+  const lastRowOfHost = new Map<string, number>();
+  candidates.forEach((candidate, at) => lastRowOfHost.set(candidate.host, at));
+
   const rows: ParsedRow[] = candidates.map((candidate, at) => {
     const draft = candidate.draft;
     draft.priority = String(nextProvisional(candidate.host));
     const validation = validateDraft(draft, []);
     const blocked = candidate.drops ?? [];
+    const shadows =
+      matchesEveryRequest(draft.matches) &&
+      lastRowOfHost.get(candidate.host) !== at;
+    const messages = shadows
+      ? [
+          ...candidate.messages,
+          `this rule matches every request, so the rules imported after it on ` +
+            `${candidate.host} will never be reached. Move it to the end of the ` +
+            `file, or give it a higher priority number once imported.`,
+        ]
+      : candidate.messages;
+
     // Two independent reasons to refuse: the draft is not a valid rule, or the
     // source said something this model cannot say. Either is a refusal, so a row
     // is importable only when both are empty.
     const status: RowStatus =
       validation.length > 0 || blocked.length > 0
         ? "skipped"
-        : candidate.messages.length > 0
+        : messages.length > 0
           ? "warning"
           : "ok";
 
@@ -1112,7 +1166,7 @@ export function parseExport(text: string, opts: ParseOptions): ImportPreview {
       label: candidate.label,
       host: candidate.host,
       status,
-      messages: candidate.messages,
+      messages,
       blocked,
       draft,
       input: status === "skipped" ? undefined : toRuleInput(draft),

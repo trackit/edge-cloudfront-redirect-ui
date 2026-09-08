@@ -228,6 +228,44 @@ test("routes a hostname-conditioned rule to its own host", async ({
   });
 });
 
+/**
+ * A domain-move rule as a real export writes it: the visible condition is the
+ * Akamai idiom for "everything", and the guard that actually decides is the
+ * regex over the full URL. Leading the row with the idiom would read as "the
+ * whole site redirects", which is what the row does *not* say.
+ */
+test("leads a row with the condition that really guards it", async ({
+  page,
+  api,
+}) => {
+  await openHostWithRules(page, api);
+
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByPlaceholder(/Paste an Edge Redirector/).fill(
+    JSON.stringify([
+      {
+        name: "domain move",
+        redirectURL: "https://new.example.com/nl",
+        statusCode: 301,
+        matches: [
+          { matchType: "path", matchOperator: "contains", matchValue: "/ /*" },
+          {
+            matchType: "regex",
+            matchOperator: "equals",
+            matchValue: "https://(www\\.)?old.example.com/.*",
+          },
+        ],
+      },
+    ]),
+  );
+
+  const row = page.locator(".import-row").first();
+  await expect(row.locator(".import-from")).toContainText("old.example.com");
+  await expect(row.locator(".import-from")).not.toContainText("/ /*");
+  // And the note says which host it belongs on, since it is not this one.
+  await expect(row).toContainText("only fires on requests to old.example.com");
+});
+
 test("reports rows the API rejects instead of failing the whole import", async ({
   page,
   api,

@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { IconArrow, IconCheck, IconClose, IconInfo, IconUpload } from "./icons";
-import { parseExport } from "../domain/akamaiImport";
+import { isVacuousMatch, parseExport } from "../domain/akamaiImport";
 import type {
   ImportPreview,
   ParsedRow,
@@ -46,12 +46,16 @@ const ACCEPT = ".csv,.json,.txt";
 const PREVIEW_ROW_LIMIT = 200;
 
 /**
- * The condition a preview row leads with.
+ * The condition a preview row leads with: the one that decides what the rule
+ * actually matches.
  *
- * Normally the path condition. But when the redirect reinjects a capture
- * (`$1` …), the regex that *provides* that capture is the meaningful matcher —
- * leading with a broad `path` pre-filter would hide where `$1` comes from — so
- * that regex is shown instead.
+ * Normally the path condition. Two cases override it, and both are the same
+ * mistake in different clothes: showing a filter that filters nothing.
+ *  - the redirect reinjects a capture (`$1` …), so the regex that *provides* it
+ *    is the meaningful matcher and hiding it would hide where `$1` comes from;
+ *  - the path condition is vacuous (`contains "/ /*"`, the Akamai idiom for
+ *    "everything"), so the row would read as a catch-all while the real guard
+ *    sits in a regex right next to it.
  */
 const fromLabel = (draft: RedirectDraft): string => {
   if (draft.matches.length === 0) return "(any)";
@@ -60,8 +64,13 @@ const fromLabel = (draft: RedirectDraft): string => {
   const captureSource = reinjectsCapture
     ? draft.matches.find((match) => match.matchOperator === "regex")
     : undefined;
+  const realGuard = draft.matches.find(
+    (match) => match.matchType === "path" && !isVacuousMatch(match),
+  );
   const lead =
     captureSource ??
+    realGuard ??
+    draft.matches.find((match) => match.matchOperator === "regex") ??
     draft.matches.find((match) => match.matchType === "path") ??
     draft.matches[0];
 

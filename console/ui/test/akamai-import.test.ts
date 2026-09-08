@@ -810,6 +810,65 @@ describe("parseExport — host routing", () => {
     expect(preview.rows[0].messages.join(" ")).not.toMatch(/never fire/);
   });
 
+  /**
+   * `path contains "/ /*"` reads like a filter and is not one: the edge splits on
+   * spaces and expands `*`, so it asks "does the path contain `/`, or anything at
+   * all". A rule whose every condition is like that wins for every request, and
+   * shadows whatever is imported after it on the same host.
+   */
+  const catchAll = (rows: { name: string; host?: string }[]): string =>
+    JSON.stringify(
+      rows.map(({ name, host }) => ({
+        name,
+        redirectURL: `/${name}`,
+        statusCode: 301,
+        matches: [
+          { matchType: "path", matchOperator: "contains", matchValue: "/ /*" },
+          ...(host === undefined
+            ? []
+            : [
+                {
+                  matchType: "hostname",
+                  matchOperator: "equals",
+                  matchValue: host,
+                },
+              ]),
+        ],
+      })),
+    );
+
+  it("warns when a catch-all shadows the rules imported after it", () => {
+    const preview = parseExport(
+      catchAll([{ name: "first" }, { name: "then" }]),
+      {
+        filename: "rules.json",
+        defaultHost: HOST,
+      },
+    );
+
+    expect(preview.rows[0].status).toBe("warning");
+    expect(preview.rows[0].messages.join(" ")).toMatch(
+      /matches every request, so the rules imported after it/,
+    );
+    // The last one shadows nothing, so it says nothing.
+    expect(preview.rows[1].messages.join(" ")).not.toMatch(/every request/);
+  });
+
+  it("counts shadowing per host, not across the file", () => {
+    // The catch-all is first in the file but last on its own host, so it hides
+    // nothing: the rule after it lands on a different partition.
+    const preview = parseExport(
+      catchAll([
+        { name: "other-host", host: "shop.example.com" },
+        { name: "here" },
+      ]),
+      { filename: "rules.json", defaultHost: HOST },
+    );
+
+    expect(preview.rows[0].host).toBe("shop.example.com");
+    expect(preview.rows[0].messages.join(" ")).not.toMatch(/every request/);
+  });
+
   it("counts the distinct hosts a file spans", () => {
     const json = JSON.stringify([
       { name: "a", matchURL: "/old-home", redirectURL: "/x", statusCode: 301 },
