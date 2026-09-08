@@ -358,7 +358,9 @@ export interface components {
       caseSensitive?: boolean;
       /** @description Required when matchType is "header"; disallowed otherwise. */
       headerName?: string;
-    };
+      /** @description Required when matchType is "cookie"; disallowed otherwise. */
+      cookieName?: string;
+    } & (unknown & unknown);
     /** Redirect rule item (erMatchRule) */
     "redirect-rule.schema": {
       /** @description Host, e.g. www.example.com. DynamoDB partition key. */

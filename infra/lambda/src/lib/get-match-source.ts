@@ -5,6 +5,7 @@ import type {
 } from "../rule-types.js";
 import { MatchType as MatchTypeValues, MatchOperator } from "../rule-types.js";
 import { isFullUrlRegex } from "./is-full-url-regex.js";
+import { readCookie } from "./read-cookie.js";
 
 /** The request string a match condition is tested against. */
 export const getMatchSource = (
@@ -18,7 +19,11 @@ export const getMatchSource = (
     return request.headers?.[name] ?? "";
   }
   if (match.matchType === MatchTypeValues.COOKIE) {
-    return request.cookies ?? "";
+    // The named cookie, not the header that carries every cookie. A condition
+    // with no name is left with nothing to compare, which fails it — the old
+    // behaviour of testing against the whole header must not survive here for
+    // an item written before the name was required.
+    return readCookie(request.cookies ?? "", match.cookieName ?? "");
   }
 
   const isRegexMode =

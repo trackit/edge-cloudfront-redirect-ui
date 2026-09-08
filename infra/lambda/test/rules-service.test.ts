@@ -150,6 +150,68 @@ describe("host lookup", () => {
 });
 
 describe("match conditions", () => {
+  /**
+   * The A/B-test shape, and the reason `cookieName` exists: the rule has to fire
+   * for the visitor carrying `ab_test=on` and for nobody else. Compared against
+   * the whole `Cookie` header, the second case below would have matched too,
+   * because `london` contains `on`.
+   */
+  describe("a cookie condition", () => {
+    const cookieRule = rule({
+      matches: [
+        {
+          matchType: "cookie",
+          cookieName: "ab_test",
+          matchOperator: "equals",
+          matchValue: "on",
+        },
+      ],
+    });
+
+    it.each([
+      { what: "the named cookie holds the value", cookies: "x=1; ab_test=on" },
+      { what: "it sits between others", cookies: "a=1; ab_test=on; b=2" },
+    ])("fires when $what", async ({ cookies }) => {
+      const service = new RulesService(
+        new FakeRepository([cookieRule]),
+        60_000,
+      );
+      expect(
+        await service.match(params({ cookies }), "REDIRECT"),
+      ).not.toBeNull();
+    });
+
+    it.each([
+      {
+        what: "another cookie merely contains the value",
+        cookies: "region=london",
+      },
+      { what: "the named cookie holds something else", cookies: "ab_test=off" },
+      { what: "the cookie is absent", cookies: "session=a1b2c3" },
+      { what: "no cookies are sent", cookies: "" },
+    ])("stays quiet when $what", async ({ cookies }) => {
+      const service = new RulesService(
+        new FakeRepository([cookieRule]),
+        60_000,
+      );
+      expect(await service.match(params({ cookies }), "REDIRECT")).toBeNull();
+    });
+
+    it("does not fall back to the whole header when the name is missing", async () => {
+      // An item written before the name was required. Matching on the whole
+      // header again would resurrect exactly the bug this field removes.
+      const nameless = rule({
+        matches: [
+          { matchType: "cookie", matchOperator: "contains", matchValue: "on" },
+        ],
+      });
+      const service = new RulesService(new FakeRepository([nameless]), 60_000);
+      expect(
+        await service.match(params({ cookies: "region=london" }), "REDIRECT"),
+      ).toBeNull();
+    });
+  });
+
   it("requires every condition to match", async () => {
     const service = new RulesService(
       new FakeRepository([

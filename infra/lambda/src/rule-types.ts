@@ -43,6 +43,7 @@ export interface MatchCondition {
   negate?: boolean;
   caseSensitive?: boolean;
   headerName?: string;
+  cookieName?: string;
 }
 
 export interface ForwardSettings {

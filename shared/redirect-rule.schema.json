@@ -50,13 +50,32 @@
           "type": "string",
           "minLength": 1,
           "description": "Required when matchType is \"header\"; disallowed otherwise."
+        },
+        "cookieName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required when matchType is \"cookie\"; disallowed otherwise."
         }
       },
-      "if": {
-        "properties": { "matchType": { "const": "header" } }
-      },
-      "then": { "required": ["headerName"] },
-      "else": { "not": { "required": ["headerName"] } }
+      "allOf": [
+        {
+          "$comment": "headerName is required iff matchType is \"header\".",
+          "if": {
+            "properties": { "matchType": { "const": "header" } }
+          },
+          "then": { "required": ["headerName"] },
+          "else": { "not": { "required": ["headerName"] } }
+        },
+        {
+          "$comment": "A cookie condition names the cookie it tests, exactly as a header condition names the header. Without it the only thing the edge can compare against is the whole `Cookie` header — one line holding every cookie — so `equals` can never be true and `contains` matches unrelated cookies. `required` on matchType so an item missing it fails on that alone, without a second error about a field its type may not even take.",
+          "if": {
+            "properties": { "matchType": { "const": "cookie" } },
+            "required": ["matchType"]
+          },
+          "then": { "required": ["cookieName"] },
+          "else": { "not": { "required": ["cookieName"] } }
+        }
+      ]
     }
   }
 }

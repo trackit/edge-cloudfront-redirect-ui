@@ -60,6 +60,53 @@ describe("validateRule", () => {
     }
   });
 
+  /**
+   * A cookie condition names its cookie, the way a header condition names its
+   * header. Without the name the edge has nothing to compare but the whole
+   * `Cookie` header, so the condition either never matches or matches unrelated
+   * cookies — a rule that reads fine and behaves at random. The schema refuses it
+   * rather than store it.
+   */
+  const cookieMatch = (over: Record<string, unknown> = {}) => ({
+    ...redirectRule,
+    matches: [
+      {
+        matchType: "cookie",
+        matchOperator: "equals",
+        matchValue: "on",
+        ...over,
+      },
+    ],
+  });
+
+  it("accepts a cookie condition that names its cookie", () => {
+    expect(() =>
+      validateRule(cookieMatch({ cookieName: "ab_test" })),
+    ).not.toThrow();
+  });
+
+  it("rejects a cookie condition with no cookie name", () => {
+    expect(() => validateRule(cookieMatch())).toThrowError(ApiError);
+  });
+
+  it("rejects a cookie name on a condition that is not a cookie", () => {
+    // Same shape as headerName: naming a cookie on a path condition would be
+    // stored and then ignored, which is worse than a refusal.
+    expect(() =>
+      validateRule({
+        ...redirectRule,
+        matches: [
+          {
+            matchType: "path",
+            matchOperator: "equals",
+            matchValue: "/old",
+            cookieName: "ab_test",
+          },
+        ],
+      }),
+    ).toThrowError(ApiError);
+  });
+
   it("rejects a redirect body carrying a rewrite-only field", () => {
     // additionalProperties:false — forwardSettings is not valid on a redirect.
     const mixed = { ...redirectRule, forwardSettings: { pathAndQS: "/x" } };
