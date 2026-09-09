@@ -92,6 +92,21 @@ const s3RewriteRule = (): Rule =>
     },
   }) as Rule;
 
+// A rewrite that moves the path and leaves the origin alone. The schema's
+// `anyOf` accepts it, and it is the shape that used to open the editor with
+// neither origin card lit and no way to get back to that state.
+const pathOnlyRewriteRule = (): Rule =>
+  ({
+    pk: "www.example.com",
+    sk: "REWRITE#00300",
+    type: "frMatchRule",
+    matches: [match()],
+    forwardSettings: {
+      pathAndQS: "/only",
+      useIncomingQueryString: true,
+    },
+  }) as Rule;
+
 const has = (details: ValidationDetail[], path: string): boolean =>
   details.some((d) => d.path === path);
 
@@ -142,6 +157,15 @@ describe("draftFromRule", () => {
       s3: { region: "eu-west-3", customHeaders: CUSTOM_HEADERS },
     });
   });
+
+  it("reads a rewrite with no origin as the path-only kind", () => {
+    // What lights the picker's third card. Any other kind would show an origin
+    // the rule does not have, and offer to save it.
+    expect(draftFromRule(pathOnlyRewriteRule())).toMatchObject({
+      originKind: "none",
+      pathAndQS: "/only",
+    });
+  });
 });
 
 describe("toRuleInput", () => {
@@ -183,6 +207,16 @@ describe("round-trip (draftFromRule → toRuleInput)", () => {
         origin: { s3: { region: "eu-west-3", customHeaders: CUSTOM_HEADERS } },
       },
     });
+  });
+
+  it("does not invent an origin for a path-only rewrite", () => {
+    // The guard against "fixing" the blank picker by forcing a kind on load: a
+    // rule that only moved the path would come back carrying an origin, and an
+    // empty one at that, which the API rejects.
+    const input = toRuleInput(draftFromRule(pathOnlyRewriteRule()));
+
+    expect(input).not.toHaveProperty("forwardSettings.origin");
+    expect(input).toMatchObject({ forwardSettings: { pathAndQS: "/only" } });
   });
 
   it("narrows sslProtocols only when the user picks one", () => {
