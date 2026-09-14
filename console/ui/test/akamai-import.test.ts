@@ -854,6 +854,31 @@ describe("parseExport — host routing", () => {
     expect(preview.rows[1].messages.join(" ")).not.toMatch(/every request/);
   });
 
+  /**
+   * `equals` is anchored, so `/` is the homepage and nothing else. That row opens
+   * nearly every redirect map, and reading it as a catch-all would put a false
+   * "shadows everything after it" on almost every import — and move the row out
+   * of the `ok` count for good measure.
+   */
+  it.each([
+    { what: "the homepage", value: "/", shadows: false },
+    { what: "everything under the root", value: "/*", shadows: true },
+    { what: "any path at all", value: "*", shadows: true },
+  ])("an `equals $value` matches $what", ({ value, shadows }) => {
+    const preview = parseExport(
+      `source,target,statusCode\n${value},/home,301\n/old,/new,301\n`,
+      {
+        filename: "map.csv",
+        defaultHost: HOST,
+      },
+    );
+
+    expect(preview.rows[0].messages.join(" ")).toMatch(
+      shadows ? /matches every request/ : /^$/,
+    );
+    expect(preview.rows[0].status).toBe(shadows ? "warning" : "ok");
+  });
+
   it("counts shadowing per host, not across the file", () => {
     // The catch-all is first in the file but last on its own host, so it hides
     // nothing: the rule after it lands on a different partition.

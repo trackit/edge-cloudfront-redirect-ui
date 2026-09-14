@@ -506,9 +506,13 @@ export const isVacuousMatch = (match: MatchCondition): boolean => {
     .filter((variant) => variant.length > 0)
     .some((variant) => {
       const literal = variant.replace(/\*/g, "");
-      // `contains ""`/`contains "/"` hold for any path, and so does an anchored
-      // `equals` once the wildcards are what carry the rest.
-      return literal === "" || literal === "/";
+      if (literal !== "" && literal !== "/") return false;
+      // `contains ""` / `contains "/"` hold for any path. An anchored `equals`
+      // only does when a wildcard carries the rest: `equals "/*"` is everything,
+      // `equals "/"` is the homepage alone — and that row is in nearly every
+      // redirect map, so reading it as a catch-all would warn on almost all of
+      // them.
+      return match.matchOperator === "contains" || variant.includes("*");
     });
 };
 
