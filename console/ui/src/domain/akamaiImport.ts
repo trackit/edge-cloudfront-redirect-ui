@@ -411,11 +411,24 @@ const resolveMatchValue = (
 
   // Already a regular expression (by operator, or a forced `regex` type) — never
   // translate it, or its `.*` / `?` would be mistaken for glob wildcards.
+  //
+  // `regex` says so unambiguously. `matches` does not: it is read as a regular
+  // expression because that is what it means in the exports we have seen, but if
+  // an export means it as a glob then `*` flips from "anything" to "repeat the
+  // previous character" — a rule that still imports and matches something else.
+  // Not a refusal, since the regex reading is the likely one; warned, so the row
+  // is checked rather than trusted.
   if (operator === "regex" || operator === "matches") {
     return {
       matchOperator: "regex",
       matchValue: value,
-      messages: [],
+      messages:
+        operator === "matches"
+          ? [
+              'match operator "matches" read as a regular expression — verify ' +
+                "the value is one and not a wildcard pattern",
+            ]
+          : [],
       drops: [],
     };
   }

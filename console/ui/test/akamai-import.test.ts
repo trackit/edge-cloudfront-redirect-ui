@@ -525,6 +525,43 @@ describe("parseExport — matchRules JSON", () => {
     },
   );
 
+  /**
+   * `matches` is read as a regular expression, which is what it means in the
+   * exports we have seen — but unlike `regex` it does not say so. If an export
+   * means it as a wildcard pattern, `*` flips from "anything" to "repeat the
+   * previous character" and the rule matches something else entirely, while still
+   * importing. The reading stands; the row says to check it.
+   */
+  it("warns that a `matches` operator was read as a regular expression", () => {
+    const json = JSON.stringify([
+      {
+        name: "m",
+        redirectURL: "/new",
+        statusCode: 301,
+        matches: [
+          {
+            matchType: "path",
+            matchOperator: "matches",
+            matchValue: "^/old/.*$",
+          },
+        ],
+      },
+    ]);
+    const preview = parseExport(json, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
+    const row = preview.rows[0];
+
+    expect(row.status).toBe("warning");
+    expect(row.messages.join(" ")).toMatch(/read as a regular expression/);
+    // Warned, not refused, and the value is passed through untranslated.
+    expect(asRedirect(row.input).matches[0]).toMatchObject({
+      matchOperator: "regex",
+      matchValue: "^/old/.*$",
+    });
+  });
+
   it("uses matchURL when matches is present but empty", () => {
     const json = JSON.stringify([
       {
