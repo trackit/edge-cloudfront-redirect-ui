@@ -48,6 +48,20 @@ export interface RedirectDraft {
    * derived from the value on load and used to convert it on toggle.
    */
   relative: boolean;
+  /**
+   * UI-only, like `relative`, and never sent — `toRuleInput` names every field
+   * it writes.
+   *
+   * The origin the URL had when the toggle was switched on, scheme and port
+   * included: `http://www.example.com:8080`. Switching the toggle back off
+   * restores it rather than re-deriving `https://<host>`, which would silently
+   * drop a scheme or a port the user never touched.
+   *
+   * Only lives as long as the editor is open. A rule reopened later has no
+   * memory of how it was written, and `relative` is derived from the value
+   * again — which is correct: a stored path does mean "this host".
+   */
+  relativeFrom?: string;
   keepQueryString: boolean;
   matches: MatchCondition[];
 }
@@ -242,17 +256,55 @@ export const draftFromRule = (rule: Rule): RuleDraft => {
 };
 
 /**
+ * The scheme and authority of an absolute URL — `https://shop.example.com:8443`.
+ * `undefined` for a relative one, which has no origin to remember.
+ */
+export const originOf = (url: string): string | undefined => {
+  const scheme = ABSOLUTE_URL.exec(url)?.[0];
+  if (scheme === undefined) return undefined;
+  const slash = url.slice(scheme.length).indexOf("/");
+  return slash === -1 ? url : url.slice(0, scheme.length + slash);
+};
+
+/** The host of an absolute URL, lowercased, without scheme, port or path. */
+const hostOf = (url: string): string | undefined =>
+  originOf(url)?.replace(ABSOLUTE_URL, "").split(":")[0]?.toLowerCase();
+
+/**
+ * Whether the relative toggle expresses the same destination for this value.
+ *
+ * "Relative" means "a path on whichever host was asked for", so it only says
+ * the same thing when the URL already names the rule's own host. Offered for a
+ * redirect to somewhere else, it is a retarget wearing the costume of a
+ * reformat: `/x` served from www.example.com sends visitors to
+ * www.example.com/x, whatever shop.example.com the rule used to name — same
+ * status code, same path, different site (CF-33).
+ *
+ * A relative URL has no host to disagree with, so switching back off is always
+ * available.
+ */
+export const canBeRelative = (url: string, host: string): boolean => {
+  const target = hostOf(url);
+  return target === undefined || host === "" || target === host.toLowerCase();
+};
+
+/**
  * Rewrites a redirect URL between relative and absolute.
  *
- * Turning "relative" on drops the scheme and host; turning it off puts the
- * current host back. Possible only because the console knows the host — it is the
- * rule's partition key — and it beats making the user retype the address to change
- * how it is expressed.
+ * Turning "relative" on drops the scheme and host; turning it off puts an
+ * absolute form back. It beats making the user retype the address to change how
+ * it is expressed.
+ *
+ * `from` is the origin the value had when it was made relative, if the editor
+ * still remembers it. Without it the only origin available is `https://<host>`,
+ * which is right for a rule stored as a path but would invent `https` and drop
+ * a port for one the user only just converted.
  */
 export const convertRedirectUrl = (
   url: string,
   toRelative: boolean,
   host: string,
+  from?: string,
 ): string => {
   if (toRelative) {
     if (!ABSOLUTE_URL.test(url)) return url;
@@ -261,8 +313,10 @@ export const convertRedirectUrl = (
     return slash === -1 ? "/" : withoutScheme.slice(slash);
   }
 
-  if (ABSOLUTE_URL.test(url) || host === "") return url;
-  return `https://${host}${url.startsWith("/") ? url : `/${url}`}`;
+  if (ABSOLUTE_URL.test(url)) return url;
+  const origin = from ?? (host === "" ? undefined : `https://${host}`);
+  if (origin === undefined) return url;
+  return `${origin}${url.startsWith("/") ? url : `/${url}`}`;
 };
 
 /**
