@@ -28,6 +28,31 @@ const redirect: Rule = {
   matches: [{ matchType: "path", matchOperator: "equals", matchValue: "/old" }],
 };
 
+const rewrite: Rule = {
+  pk: "www.example.com",
+  sk: "REWRITE#00200",
+  type: "frMatchRule",
+  matches: [
+    { matchType: "path", matchOperator: "contains", matchValue: "/legacy/" },
+  ],
+  forwardSettings: {
+    origin: {
+      custom: {
+        domainName: "legacy.internal.example.com",
+        path: "",
+        port: 443,
+        protocol: "https-only",
+        sslProtocols: ["TLSv1.2"],
+        readTimeout: 30,
+        keepaliveTimeout: 5,
+        customHeaders: {},
+      },
+    },
+    pathAndQS: "/api/v1/legacy",
+    useIncomingQueryString: true,
+  },
+};
+
 const toggle = (page: Page) =>
   page.getByRole("switch", { name: /Disable|Enable/ });
 
@@ -35,6 +60,12 @@ const toggle = (page: Page) =>
 // each card's summary, so the bare role query matches five things.
 const addRedirect = (page: Page) =>
   page.locator(".host-actions").getByRole("button", { name: "Redirect" });
+
+// A create control anywhere other than that action bar. Only meaningful on a
+// host that has rules — the empty state's own two buttons are the invitation to
+// make a first rule, not a second way to do it.
+const strayCreate = (page: Page) =>
+  page.getByRole("button", { name: /^(Create|New) (redirect|rewrite)$/i });
 
 const openHost = async (page: Page): Promise<void> => {
   await seedStorage(page, {
@@ -64,6 +95,29 @@ test("a viewer sees the write controls, disabled and explained", async ({
   await expect(
     page.locator(".rule-actions").getByRole("button", { name: /^Delete / }),
   ).toBeDisabled();
+
+  // The group headers used to carry a create button of their own that nothing
+  // disabled, so a viewer got one live write control while every other one was
+  // dead and explained (CF-25).
+  await expect(strayCreate(page)).toHaveCount(0);
+});
+
+test("creating a rule is offered once, in the host header", async ({
+  page,
+  api,
+}) => {
+  // CF-25. Each group's header had its own "Create redirect" / "Create rewrite",
+  // so a host with both kinds showed four ways to add a rule and the screenshot
+  // on the ticket has three of them in one frame. Two rules of different kinds
+  // is what renders both groups, which is the case that showed it.
+  api.setHosts([host("www.example.com", { redirects: 1, rewrites: 1 })]);
+  api.setRules([redirect, rewrite]);
+  await openHost(page);
+
+  await expect(page.locator(".rule-group")).toHaveCount(2);
+
+  await expect(addRedirect(page)).toBeVisible();
+  await expect(strayCreate(page)).toHaveCount(0);
 });
 
 test("a viewer can still open a rule to read it", async ({ page, api }) => {
