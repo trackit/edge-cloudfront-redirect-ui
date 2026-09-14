@@ -108,6 +108,39 @@ test("pastes an export, previews it, and imports the ready rows", async ({
 });
 
 /**
+ * The query-string default is the one thing an import changes that the preview
+ * cannot show — a CSV carries no `useIncomingQueryString` column, so every row
+ * from one lands with it off, the opposite of a rule typed by hand. Stated once
+ * above the preview, and only when rows actually drop it.
+ */
+test("states that imported rules drop the incoming query string", async ({
+  page,
+  api,
+}) => {
+  await openHostWithRules(page, api);
+
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  const note = page.getByText(/drop the incoming query string/);
+  // Nothing loaded yet: no rows, so nothing to caveat.
+  await expect(note).toBeHidden();
+
+  await page.getByPlaceholder(/Paste an Edge Redirector/).fill(csv);
+  await expect(note).toBeVisible();
+
+  // A source that says to keep it has nothing to warn about.
+  await page
+    .getByPlaceholder(/Paste an Edge Redirector/)
+    .fill(
+      [
+        "ruleName,matchURL,redirectURL,result.statusCode,useIncomingQueryString",
+        "Promo,/promo,/sale,302,true",
+      ].join("\n"),
+    );
+  await expect(page.getByText("1 ready")).toBeVisible();
+  await expect(note).toBeHidden();
+});
+
+/**
  * Re-importing the same file is how an interrupted run is finished, so it has to
  * be safe: the rules that landed are recognised and left alone instead of being
  * created a second time at a fresh priority, where nothing would flag them.
