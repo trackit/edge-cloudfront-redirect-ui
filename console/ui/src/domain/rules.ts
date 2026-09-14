@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, isRedirect, priorityOf } from "../api";
 import { hostKey } from "./hostRoutes";
+import { PRIORITY_MAX } from "./ruleDraft";
 import type { Rule, RuleInput } from "../api";
 
 /**
@@ -294,6 +295,25 @@ export function useRules(targetId: string, host: string) {
           }
 
           while (used.has(cursor)) cursor++;
+          // The batch lands after the host's current maximum, so a host whose
+          // last rule sits near the top can run out of room. Said plainly, and
+          // without spending a request the API would refuse anyway.
+          //
+          // The free slots *below* the maximum are deliberately not used as a
+          // fallback: priority is evaluation order at the edge, so filling a gap
+          // would quietly put an imported rule in front of rules that were
+          // already there. Renumbering is the user's call, not ours.
+          if (cursor > PRIORITY_MAX) {
+            failures.push({
+              sourceIndex,
+              message:
+                `no priority left on ${ruleHost} after its current highest ` +
+                `(the last one is ${PRIORITY_MAX}) — renumber or remove rules ` +
+                `there, then import again`,
+            });
+            onProgress?.({ done, total: items.length });
+            continue;
+          }
           const priority = cursor++;
           used.add(priority);
           try {

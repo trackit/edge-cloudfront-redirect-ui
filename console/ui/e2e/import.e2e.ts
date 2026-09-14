@@ -299,6 +299,42 @@ test("leads a row with the condition that really guards it", async ({
   await expect(row).toContainText("only fires on requests to old.example.com");
 });
 
+/**
+ * A batch lands after the host's current highest priority, so a host whose last
+ * rule sits at the top of the range has no room left. Named as that, before the
+ * request: the API would answer with a schema error about a number, which says
+ * nothing about what to do next.
+ */
+test("says so when a host has no priority left, without posting", async ({
+  page,
+  api,
+}) => {
+  await seedStorage(page, {
+    distributions: [prod],
+    current: prod.distributionId,
+  });
+  api.setHosts([host("www.example.com", { redirects: 1 })]);
+  api.setRules([redirect(99999, "/last")]);
+  await page.goto("/console/hosts/www.example.com");
+  await expect(page.getByRole("heading", { name: "Redirects" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page
+    .getByPlaceholder(/Paste an Edge Redirector/)
+    .fill("source,target\n/one,/two");
+  await page.getByRole("button", { name: /Import 1 rule/ }).click();
+
+  await expect(page.getByText("Imported 0 rules.")).toBeVisible();
+  await expect(
+    page.getByText(/no priority left on www\.example\.com/),
+  ).toBeVisible();
+  expect(
+    api.calls.filter(
+      (call) => call.method === "POST" && /\/rules$/.test(call.url),
+    ),
+  ).toHaveLength(0);
+});
+
 test("reports rows the API rejects instead of failing the whole import", async ({
   page,
   api,
