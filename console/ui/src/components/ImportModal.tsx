@@ -180,6 +180,19 @@ export default function ImportModal({
       sourceIndex: row.index,
     }));
   const hasFormat = preview.format !== "unrecognized";
+  /**
+   * Whether to state the query-string default, which is the one thing about an
+   * import that is invisible in the preview and opposite to the editor's default.
+   *
+   * Akamai drops the incoming query string unless the rule opts in, and a CSV
+   * without a `useIncomingQueryString` column says nothing — so every row from one
+   * imports with it off, while a rule typed by hand starts with it on. Said once,
+   * here: a per-row warning would flag almost every row of almost every file and
+   * so would stop meaning anything.
+   */
+  const dropsQueryString = preview.rows.some(
+    (row) => row.input !== undefined && !row.draft.keepQueryString,
+  );
   const done = result !== undefined;
   // The picker always offers the default host, even if the list has not loaded.
   const hostOptions = hosts.includes(defaultHost)
@@ -403,6 +416,18 @@ export default function ImportModal({
                   </span>
                 )}
               </div>
+
+              {dropsQueryString && (
+                <div className="callout" role="note">
+                  <IconInfo size={15} />
+                  <span>
+                    Imported rules drop the incoming query string, as Edge
+                    Redirector does, unless the source says to keep it. Turn
+                    &ldquo;Keep incoming query string&rdquo; on per rule after
+                    the import if a target needs it.
+                  </span>
+                </div>
+              )}
 
               <h3 className="import-preview-title">Preview</h3>
               <ul className="import-rows">
