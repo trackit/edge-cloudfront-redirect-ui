@@ -1946,6 +1946,60 @@ button {
   line-height: 1.4;
   color: var(--text-dim);
 }
+/* --- the import dialog's Formats help, portalled onto <body> --- */
+
+/* Above .modal-overlay's 100: it is opened from inside the dialog and has to be
+   able to overlap the dialog's own edge, which is the whole reason it is not
+   rendered inline. */
+.formats-popover {
+  position: fixed;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* The component caps the height to the room beside its button; this is what
+     makes the overflow scroll rather than run off the bottom of the window. */
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+/* Four labels do not fit one row at the narrowest width the console supports,
+   and a tab strip that scrolls sideways hides the format someone came to read. */
+.formats-tabs {
+  flex-wrap: wrap;
+}
+.formats-tabs button {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+.formats-blurb {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-soft);
+}
+/* Scrolls rather than wraps: these are CSV headers and JSON, where a wrapped
+   line reads as a second column or a second field. */
+.formats-example {
+  margin: 0;
+  padding: 10px 11px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.formats-file {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-soft);
+}
+
 /* --- an explanatory note above a form --- */
 
 .callout {
