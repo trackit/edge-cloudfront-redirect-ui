@@ -320,3 +320,131 @@ describe("createApiClient — failures", () => {
     ]);
   });
 });
+
+describe("authentication", () => {
+  const ok = () =>
+    new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+
+  const unauthorized = () =>
+    new Response(JSON.stringify({}), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    });
+
+  it("sends no Authorization header when there is no token", async () => {
+    // The /health probe and a signed-out first load both go out bare.
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(ok()));
+    await createApiClient({
+      fetch,
+      getToken: () => Promise.resolve(undefined),
+    }).targets.list();
+
+    expect(fetch.mock.calls[0][1].headers).not.toHaveProperty("authorization");
+  });
+
+  it("sends the token as a bearer", async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(ok()));
+    await createApiClient({
+      fetch,
+      getToken: () => Promise.resolve("tok-1"),
+    }).targets.list();
+
+    expect(fetch.mock.calls[0][1].headers.authorization).toBe("Bearer tok-1");
+  });
+
+  it("reads the token per request rather than holding it", async () => {
+    // The token lives an hour and the store replaces it; a client that captured
+    // it once would keep presenting the old one.
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(ok()));
+    const tokens = ["tok-1", "tok-2"];
+    const client = createApiClient({
+      fetch,
+      getToken: () => Promise.resolve(tokens.shift()),
+    });
+
+    await client.targets.list();
+    await client.targets.list();
+
+    expect(fetch.mock.calls[0][1].headers.authorization).toBe("Bearer tok-1");
+    expect(fetch.mock.calls[1][1].headers.authorization).toBe("Bearer tok-2");
+  });
+
+  it("renews and retries once on a 401", async () => {
+    const fetch = vi
+      .fn()
+      .mockImplementationOnce(() => Promise.resolve(unauthorized()))
+      .mockImplementationOnce(() => Promise.resolve(ok()));
+    const getToken = vi
+      .fn()
+      .mockResolvedValueOnce("stale")
+      .mockResolvedValueOnce("fresh");
+
+    await createApiClient({ fetch, getToken }).targets.list();
+
+    // Forced, because a token the API just rejected can still look unexpired
+    // here — asking politely would resend the same one.
+    expect(getToken).toHaveBeenLastCalledWith(true);
+    expect(fetch.mock.calls[1][1].headers.authorization).toBe("Bearer fresh");
+  });
+
+  it("gives up after one retry rather than looping", async () => {
+    const fetch = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(unauthorized()));
+
+    await expect(
+      createApiClient({
+        fetch,
+        getToken: () => Promise.resolve("tok"),
+      }).targets.list(),
+    ).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not ask for a token when calling the session routes", async () => {
+    // Breaking a cycle, not saving a call: the session routes are how a token is
+    // obtained, so asking the store for one first re-enters the store, which
+    // calls them again. That recursion hangs the page on first load.
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(ok()));
+    const getToken = vi.fn().mockResolvedValue("tok");
+    const client = createApiClient({ fetch, getToken });
+
+    await client.auth.refresh();
+
+    expect(getToken).not.toHaveBeenCalled();
+    expect(fetch.mock.calls[0][1].headers).not.toHaveProperty("authorization");
+  });
+
+  it("does not retry a 401 from a session route", async () => {
+    // 401 from /auth/refresh is the ordinary signed-out answer. Retrying it
+    // would renew, which calls it again.
+    const fetch = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(unauthorized()));
+    const getToken = vi.fn().mockResolvedValue("tok");
+
+    await expect(
+      createApiClient({ fetch, getToken }).auth.refresh(),
+    ).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(getToken).not.toHaveBeenCalled();
+  });
+
+  it("does not retry when the renewal produces nothing", async () => {
+    // Genuinely signed out. Retrying with no token would only 401 again.
+    const fetch = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(unauthorized()));
+
+    await expect(
+      createApiClient({
+        fetch,
+        getToken: () => Promise.resolve(undefined),
+      }).targets.list(),
+    ).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});

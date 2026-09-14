@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The per-target AssumeRole path. Rule persistence (ER-203) is what will call
+ * The per-target AssumeRole path. Rule persistence (CF-13) is what will call
  * `docClient(region, roleArn)` for real, so without these tests the mechanism
  * ships entirely unexercised — the credential provider, the mapping of STS
  * output, and the two-part cache key would all first run in production.

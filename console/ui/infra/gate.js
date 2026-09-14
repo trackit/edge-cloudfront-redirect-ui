@@ -1,21 +1,23 @@
 // CloudFront Function (viewer-request) for the console distribution.
 //
-// Terraform renders this file — `$${...}` is Terraform interpolation, not
-// JavaScript, and a literal one has to be written `$$` to survive rendering.
-// Keep the syntax to what the cloudfront-js runtime accepts: no
-// let/const in older runtimes, no String.startsWith, no optional chaining. The
-// logic lives in one function because CloudFront allows only one
+// Read verbatim by Terraform, so this is plain JavaScript with nothing
+// interpolated into it. Keep the syntax to what the cloudfront-js runtime
+// accepts: no let/const in older runtimes, no String.startsWith, no optional
+// chaining. The logic lives in one function because CloudFront allows only one
 // viewer-request function per cache behavior, and this one is attached to both.
 //
-// Three jobs, in order:
-//   1. Basic auth. Login is post-MVP; this keeps the console off the open
-//      internet until real auth exists.
-//   2. Strip the /api prefix. The console calls /api/... so the browser stays
+// Two jobs, in order:
+//   1. Strip the /api prefix. The console calls /api/... so the browser stays
 //      same-origin (the API sends no CORS headers), but the API itself serves
 //      /health, not /api/health.
-//   3. Serve the SPA for client-side routes, so /console and a deep link both
+//   2. Serve the SPA for client-side routes, so /console and a deep link both
 //      return index.html instead of an S3 error.
-var EXPECTED_AUTHORIZATION = "Basic ${credential}";
+//
+// This function decides nothing about who may do what. A basic-auth prompt used
+// to sit here, from when login was post-MVP: it stood in front of the bundle and
+// the login page, neither of which holds anything secret, and it could not stand
+// in front of /api at all once the console's bearer token needed the same
+// header. Cognito and the JWT authorizer on the HTTP API do that job.
 
 // Anything vite emits with a hashed filename. Requests here are real files and
 // must not be rewritten to index.html, or a missing asset would answer 200 with
@@ -39,27 +41,15 @@ var STATIC_EXTENSIONS = [
   ".woff2",
 ];
 
-function unauthorized() {
-  return {
-    statusCode: 401,
-    statusDescription: "Unauthorized",
-    headers: {
-      // Without this the browser shows the 401 body instead of prompting.
-      "www-authenticate": {
-        value: 'Basic realm="EdgeRoute console", charset="UTF-8"',
-      },
-      // A cached 401 would keep prompting after the credential is fixed.
-      "cache-control": { value: "no-store" },
-    },
-  };
-}
-
 function isStaticFile(uri) {
   if (uri.indexOf(ASSET_PREFIX) === 0) return true;
 
   for (var i = 0; i < STATIC_EXTENSIONS.length; i++) {
     var ext = STATIC_EXTENSIONS[i];
-    if (uri.length >= ext.length && uri.indexOf(ext, uri.length - ext.length) !== -1) {
+    if (
+      uri.length >= ext.length &&
+      uri.indexOf(ext, uri.length - ext.length) !== -1
+    ) {
       return true;
     }
   }
@@ -69,16 +59,11 @@ function isStaticFile(uri) {
 
 function handler(event) {
   var request = event.request;
-  var authorization = request.headers.authorization;
-
-  if (!authorization || authorization.value !== EXPECTED_AUTHORIZATION) {
-    return unauthorized();
-  }
-
   var uri = request.uri;
 
-  // The API behavior's own path. "/api" with nothing after it becomes "/", which
-  // the API answers as an unknown route rather than as /api.
+  // The API paths, forwarded with the prefix removed and nothing else done to
+  // them. "/api" with nothing after it becomes "/", which the API answers as an
+  // unknown route rather than as /api.
   if (uri === "/api" || uri === "/api/") {
     request.uri = "/";
     return request;

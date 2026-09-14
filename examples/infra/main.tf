@@ -161,7 +161,7 @@ resource "aws_cloudfront_origin_request_policy" "viewer_host" {
 # trivy:ignore:AVD-AWS-0011 WAF is out of scope for the example
 resource "aws_cloudfront_distribution" "this" {
   enabled             = true
-  comment             = "edgeroute example (ER-104)"
+  comment             = "edgeroute example (CF-10)"
   price_class         = var.price_class
   default_root_object = local.use_placeholder_origin ? "index.html" : null
 

@@ -1,6 +1,7 @@
 import { ApiError, toApiError } from "./error";
 import type {
   HostSummary,
+  Session,
   Rule,
   RuleInput,
   Target,
@@ -13,6 +14,18 @@ export interface ApiClientOptions {
   baseUrl?: string;
   /** Injectable for tests. Defaults to the global `fetch`. */
   fetch?: typeof globalThis.fetch;
+  /**
+   * Supplies the bearer token, renewing it first if it is close to expiry.
+   *
+   * A function rather than a string because the token changes underneath the
+   * client: it lives for an hour and the session store replaces it. Reading it
+   * per request is what keeps a long-lived client from holding a stale one.
+   *
+   * `force` skips the freshness check and renews regardless. The 401 retry needs
+   * it: a token the API has already rejected can still look fresh here, so
+   * asking politely would hand back the same rejected token.
+   */
+  getToken?: (force?: boolean) => Promise<string | undefined>;
 }
 
 const DEFAULT_BASE_URL = "/api";
@@ -43,22 +56,45 @@ export function createApiClient(options: ApiClientOptions = {}) {
     options.baseUrl ?? import.meta.env.VITE_API_BASE_URL ?? DEFAULT_BASE_URL,
   );
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
+  const getToken = options.getToken ?? (() => Promise.resolve(undefined));
 
+  /**
+   * `skipAuth` is not an optimisation — it breaks a cycle.
+   *
+   * The session routes are how a token is obtained, so asking the session store
+   * for one before calling them re-enters the store, which calls them again. The
+   * three auth routes are unauthenticated at the gateway for the same reason
+   * they are unauthenticated here.
+   */
   async function request<T>(
     method: string,
     path: string,
     body?: unknown,
+    skipAuth = false,
   ): Promise<T> {
-    let response: Response;
-    try {
-      response = await doFetch(`${baseUrl}${path}`, {
+    const send = async (token: string | undefined): Promise<Response> =>
+      doFetch(`${baseUrl}${path}`, {
         method,
         headers: {
           accept: "application/json",
+          ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
           ...(body === undefined ? {} : { "content-type": "application/json" }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
+
+    let response: Response;
+    try {
+      response = await send(skipAuth ? undefined : await getToken());
+
+      // One retry, and only on a 401. The token is renewed a minute before it
+      // expires, so reaching here means it was revoked or the clock drifted —
+      // both of which a fresh token fixes. Retrying more than once would turn a
+      // genuinely signed-out visitor into a loop.
+      if (response.status === 401 && !skipAuth) {
+        const renewed = await getToken(true);
+        if (renewed !== undefined) response = await send(renewed);
+      }
     } catch (cause) {
       // fetch rejects only when the request never completed — offline, DNS,
       // TLS, or a CORS preflight the browser refused. An HTTP error status
@@ -105,6 +141,35 @@ export function createApiClient(options: ApiClientOptions = {}) {
 
     /** Liveness check — `{ status: "ok" }`. */
     health: () => request<{ status: "ok" }>("GET", "/health"),
+
+    /**
+     * The session routes. Unauthenticated by necessity — they are what issues a
+     * token — and none of them carries the refresh token: it travels as an
+     * HttpOnly cookie the browser attaches on its own, which is why these calls
+     * take no credential argument.
+     */
+    auth: {
+      /** Completes a hosted-UI login. Sets the refresh cookie as a side effect. */
+      session: (input: {
+        code: string;
+        redirectUri: string;
+        codeVerifier?: string;
+      }) => request<Session>("POST", "/auth/session", input, true),
+      /**
+       * A new access token from the cookie, and how the console answers "am I
+       * signed in?" on load. Rejects with 401 for a signed-out visitor, which is
+       * an ordinary answer rather than a failure.
+       */
+      refresh: () => request<Session>("POST", "/auth/refresh", undefined, true),
+      /** Clears the cookie and returns where to go to end the provider's session too. */
+      logout: (returnTo: string) =>
+        request<{ logoutUrl: string }>(
+          "POST",
+          "/auth/logout",
+          { returnTo },
+          true,
+        ),
+    },
 
     targets: {
       list: () => request<Target[]>("GET", "/targets"),
@@ -180,5 +245,28 @@ export function createApiClient(options: ApiClientOptions = {}) {
 
 export type ApiClient = ReturnType<typeof createApiClient>;
 
+/**
+ * How the shared instance gets a token.
+ *
+ * Set once by `AuthProvider`, because the two need each other: the session store
+ * calls `api.auth.refresh()`, and every other call needs the token that store
+ * holds. Injecting it afterwards breaks the cycle without making every consumer
+ * of `api` — the stores, the hooks — take a client as an argument.
+ *
+ * Undefined until then, which is correct rather than merely convenient: before
+ * the provider mounts there is no session, and the bootstrap refresh is itself
+ * an unauthenticated call.
+ */
+let authTokenProvider: (force?: boolean) => Promise<string | undefined> = () =>
+  Promise.resolve(undefined);
+
+export const setAuthTokenProvider = (
+  provider: (force?: boolean) => Promise<string | undefined>,
+): void => {
+  authTokenProvider = provider;
+};
+
 /** The shared instance. Prefer this; build your own only to point elsewhere. */
-export const api = createApiClient();
+export const api = createApiClient({
+  getToken: (force) => authTokenProvider(force),
+});

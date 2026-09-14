@@ -24,6 +24,66 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/auth/session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Exchange an authorization code for a session.
+     * @description Completes the hosted-UI login. The refresh token is returned as an HttpOnly cookie rather than in the body, so it is never readable by script; the body carries only a short-lived access token. Unauthenticated by necessity — this is what issues the token.
+     */
+    post: operations["createSession"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/refresh": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Mint a new access token from the refresh cookie.
+     * @description Also how the console answers "am I signed in?" on load: nothing is kept in browser storage, so the only way to know is to ask. A 401 is the ordinary answer for a signed-out visitor, not an error.
+     */
+    post: operations["refreshSession"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/logout": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Clear the session and say where to finish signing out.
+     * @description Clears the refresh cookie and returns the identity provider's logout URL. Both halves are needed: the provider keeps its own session cookie, so clearing ours alone would let the next sign-in through with no prompt.
+     */
+    post: operations["endSession"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/targets": {
     parameters: {
       query?: never;
@@ -75,7 +135,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
       };
       cookie?: never;
@@ -112,7 +172,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -141,7 +201,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -176,7 +236,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -220,6 +280,32 @@ export interface components {
     Health: {
       /** @constant */
       status: "ok";
+    };
+    /** @description The authorization code, as the hosted UI handed it back. */
+    SessionRequest: {
+      /** @description Single-use authorization code from the redirect. */
+      code: string;
+      /** @description The redirect URI the login started from. Sent again because the token endpoint compares the two, which is what stops a code issued for one client being redeemed by another. Must be on the app client's callback list, so it is not a value an attacker can choose. */
+      redirectUri: string;
+      /** @description PKCE verifier, when the login used one. */
+      codeVerifier?: string;
+    };
+    /** @description A signed-in session. The refresh token is deliberately absent — it is set as an HttpOnly cookie, and repeating it here would undo that. */
+    Session: {
+      /** @description Bearer token for this API. Send as `Authorization: Bearer`. */
+      accessToken: string;
+      /** @description Identity token. Carries the email and group claims the console displays. */
+      idToken: string;
+      /** @description Seconds until the access token expires. Refresh before it does. */
+      expiresIn: number;
+    };
+    LogoutRequest: {
+      /** @description Where the identity provider should send the browser once it has cleared its own session. Must be on the app client's logout list. */
+      returnTo: string;
+    };
+    Logout: {
+      /** @description Send the browser here to finish signing out. Skipping it leaves the provider's session cookie in place, so the next sign-in returns with no prompt. */
+      logoutUrl: string;
     };
     /** @description Fields a client supplies to create or update a target. */
     TargetInput: {
@@ -331,6 +417,7 @@ export interface components {
          */
         code:
           | "BAD_REQUEST"
+          | "FORBIDDEN"
           | "HOST_EXISTS"
           | "INTERNAL"
           | "INVALID_JSON"
@@ -339,6 +426,7 @@ export interface components {
           | "RULE_EXISTS"
           | "TARGET_EXISTS"
           | "TARGET_UNREACHABLE"
+          | "UNAUTHORIZED"
           | "UNKNOWN_TARGET"
           | "VALIDATION_ERROR";
         /** @description Human-readable summary. */
@@ -447,6 +535,24 @@ export interface components {
         "application/json": components["schemas"]["Error"];
       };
     };
+    /** @description No usable identity on the request — no token, an invalid one, or an expired session. Signing in again resolves it. */
+    Unauthorized: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/json": components["schemas"]["Error"];
+      };
+    };
+    /** @description A signed-in user who may not do this. Distinct from 401 on purpose: signing in again will not help, so the console must not offer that as the remedy. Writes need the `editor` role; `viewer` may only read. */
+    Forbidden: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/json": components["schemas"]["Error"];
+      };
+    };
     /** @description That table is already registered as another target. A table is identified by (account, region, tableName) — the account coming from `roleArn`, so two accounts may register the same table name, but two roles in one account may not. */
     Conflict: {
       headers: {
@@ -518,7 +624,7 @@ export interface components {
   parameters: {
     /** @description Target id. */
     TargetPathId: string;
-    /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+    /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
     TargetId: string;
     /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
     Host: string;
@@ -554,6 +660,84 @@ export interface operations {
       500: components["responses"]["InternalError"];
     };
   };
+  createSession: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SessionRequest"];
+      };
+    };
+    responses: {
+      /** @description Signed in. Sets the refresh cookie. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Session"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      405: components["responses"]["MethodNotAllowed"];
+      500: components["responses"]["InternalError"];
+    };
+  };
+  refreshSession: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A fresh access token. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Session"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      405: components["responses"]["MethodNotAllowed"];
+      500: components["responses"]["InternalError"];
+    };
+  };
+  endSession: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LogoutRequest"];
+      };
+    };
+    responses: {
+      /** @description Signed out here. Send the browser to `logoutUrl` to finish. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Logout"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      405: components["responses"]["MethodNotAllowed"];
+      500: components["responses"]["InternalError"];
+    };
+  };
   listTargets: {
     parameters: {
       query?: never;
@@ -573,6 +757,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       405: components["responses"]["MethodNotAllowed"];
       500: components["responses"]["InternalError"];
     };
@@ -600,6 +785,8 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       405: components["responses"]["MethodNotAllowed"];
       409: components["responses"]["Conflict"];
       500: components["responses"]["InternalError"];
@@ -627,6 +814,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       500: components["responses"]["InternalError"];
@@ -658,6 +846,8 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       409: components["responses"]["Conflict"];
@@ -684,6 +874,8 @@ export interface operations {
         content?: never;
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       500: components["responses"]["InternalError"];
@@ -694,7 +886,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
       };
       cookie?: never;
@@ -711,6 +903,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       500: components["responses"]["InternalError"];
@@ -722,7 +915,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
       };
       cookie?: never;
@@ -743,6 +936,8 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       409: components["responses"]["HostConflict"];
@@ -755,7 +950,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -772,6 +967,8 @@ export interface operations {
         content?: never;
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       500: components["responses"]["InternalError"];
@@ -783,7 +980,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -802,6 +999,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       500: components["responses"]["InternalError"];
@@ -813,7 +1011,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -836,6 +1034,8 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       409: components["responses"]["RuleConflict"];
@@ -848,7 +1048,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -869,6 +1069,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       500: components["responses"]["InternalError"];
@@ -880,7 +1081,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -905,6 +1106,8 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       409: components["responses"]["RuleConflict"];
@@ -917,7 +1120,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -936,6 +1139,8 @@ export interface operations {
         content?: never;
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       500: components["responses"]["InternalError"];
@@ -947,7 +1152,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Target (DynamoDB table) id from the targets registry (ER-202). */
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
         targetId: components["parameters"]["TargetId"];
         /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
         host: components["parameters"]["Host"];
@@ -972,6 +1177,8 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       500: components["responses"]["InternalError"];

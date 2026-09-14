@@ -18,9 +18,9 @@ mock_provider "aws" {
 # module asks for, which is the part the module actually decides.
 
 variables {
-  api_endpoint        = "https://abc123.execute-api.us-east-1.amazonaws.com"
-  basic_auth_username = "demo"
-  basic_auth_password = "not-the-real-one"
+  api_endpoint      = "https://abc123.execute-api.us-east-1.amazonaws.com"
+  cognito_domain    = "https://edgeroute-test.auth.us-east-1.amazoncognito.com"
+  cognito_client_id = "1example23clientid45"
 }
 
 # =============================================================================
@@ -31,8 +31,8 @@ run "one_function_on_both_behaviors" {
   command = plan
 
   # CloudFront allows a single viewer-request function per behavior, and the API
-  # path must be gated as well — the SPA being behind auth is worth little if
-  # /api/targets is not.
+  # behavior needs the function too — it is what strips the /api prefix before
+  # the request reaches the HTTP API.
   assert {
     condition     = length(aws_cloudfront_distribution.this.default_cache_behavior[0].function_association) == 1
     error_message = "the SPA behavior must carry the gate function"
@@ -62,23 +62,6 @@ run "one_function_on_both_behaviors" {
   assert {
     condition     = aws_cloudfront_function.gate.publish
     error_message = "an unpublished function is never attached to a distribution"
-  }
-}
-
-run "credentials_are_not_in_the_clear_in_the_code" {
-  command = plan
-
-  # Not a security control — the base64 is trivially reversible, and the README
-  # says so. It is here to catch the function being rendered with the password
-  # interpolated raw, which is what a hand-edited template usually does first.
-  assert {
-    condition     = strcontains(aws_cloudfront_function.gate.code, base64encode("demo:not-the-real-one"))
-    error_message = "the function must compare against the base64 of user:password, as basic auth sends it"
-  }
-
-  assert {
-    condition     = !strcontains(aws_cloudfront_function.gate.code, "not-the-real-one")
-    error_message = "the raw password must not appear in the function code"
   }
 }
 
@@ -189,24 +172,4 @@ run "rejects_an_api_endpoint_with_a_path" {
   }
 
   expect_failures = [var.api_endpoint]
-}
-
-run "rejects_a_username_with_a_colon" {
-  command = plan
-
-  variables {
-    basic_auth_username = "de:mo"
-  }
-
-  expect_failures = [var.basic_auth_username]
-}
-
-run "rejects_a_short_password" {
-  command = plan
-
-  variables {
-    basic_auth_password = "short"
-  }
-
-  expect_failures = [var.basic_auth_password]
 }
