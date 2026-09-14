@@ -1,5 +1,5 @@
 import type { MatchCondition } from "../api";
-import { emptyMatch } from "../ruleDraft";
+import { emptyMatch } from "../domain/ruleDraft";
 import { IconPlus, IconTrash } from "./icons";
 
 interface Props {

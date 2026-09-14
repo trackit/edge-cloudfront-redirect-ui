@@ -6,8 +6,8 @@ import {
   pickSslProtocol,
   toRuleInput,
   validateDraft,
-} from "../src/ruleDraft";
-import type { CustomDraft, RewriteDraft } from "../src/ruleDraft";
+} from "../src/domain/ruleDraft";
+import type { CustomDraft, RewriteDraft } from "../src/domain/ruleDraft";
 import type { CustomOrigin, Rule, ValidationDetail } from "../src/api";
 
 /**

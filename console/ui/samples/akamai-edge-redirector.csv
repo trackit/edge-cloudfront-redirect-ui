@@ -1,0 +1,8 @@
+ruleName,matchURL,redirectURL,result.statusCode
+Home redirect,/old-home,/new-home,301
+Summer promo,/promo,https://www.example.com/campaigns/summer,302
+Blog archive,/blog/*,/news,301
+Legacy absolute,http://www.example.com/legacy,/modern,301
+Temp moved,/temp,/temporary,307
+Search with query,/search,"/results?tab=all,new",301
+Broken no target,/broken,,301

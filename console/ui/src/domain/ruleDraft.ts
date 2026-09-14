@@ -1,4 +1,5 @@
-import { isRedirect, narrowForwardSettings, priorityOf } from "./api";
+import safeRegex from "safe-regex";
+import { isRedirect, narrowForwardSettings, priorityOf } from "../api";
 import type {
   CustomOrigin,
   MatchCondition,
@@ -6,7 +7,7 @@ import type {
   RuleInput,
   S3Origin,
   ValidationDetail,
-} from "./api";
+} from "../api";
 /** A blank condition, as both the editor's "add" button and a new draft need one. */
 export const emptyMatch = (): MatchCondition => ({
   matchType: "path",
@@ -149,6 +150,19 @@ const S3_DEFAULTS: S3Draft = {
 };
 
 const ABSOLUTE_URL = /^https?:\/\//i;
+
+/**
+ * Whether a regex is free of catastrophic backtracking (ReDoS), via `safe-regex`.
+ * An unparseable pattern is treated as safe here — its invalidity is reported
+ * separately — so a single value never draws two overlapping errors.
+ */
+const isSafeRegex = (pattern: string): boolean => {
+  try {
+    return safeRegex(pattern);
+  } catch {
+    return true;
+  }
+};
 
 export const emptyRedirect = (): RedirectDraft => ({
   kind: "redirect",
@@ -318,20 +332,39 @@ export const validateDraft = (
     // type. Checking only the operator lets a `matchType: "regex"` with an
     // invalid pattern through to the server.
     if (match.matchOperator === "regex" || match.matchType === "regex") {
+      let compiles = true;
       try {
         new RegExp(match.matchValue);
       } catch {
+        compiles = false;
         details.push({
           path: `/matches/${at}/matchValue`,
           message: "is not a valid regular expression",
+        });
+      }
+      // The edge runs this pattern on every matching request, so a catastrophic
+      // one (ReDoS) would hang the edge. Reject it here rather than let it ship —
+      // this guards both the importer and the manual editor.
+      if (compiles && !isSafeRegex(match.matchValue)) {
+        details.push({
+          path: `/matches/${at}/matchValue`,
+          message:
+            "is a potentially catastrophic regular expression (ReDoS) that " +
+            "could hang the edge on every request",
         });
       }
     }
   });
 
   if (draft.kind === "redirect") {
+    // A target that reinjects a captured group (`$1` …) has no fixed leading
+    // segment — its shape is only known once the edge substitutes the capture,
+    // so the relative/absolute checks below cannot apply to it.
+    const reinjectsCapture = /\$[1-9]\d*/.test(draft.redirectURL);
     if (draft.redirectURL.trim() === "") {
       details.push({ path: "/redirectURL", message: "is required" });
+    } else if (reinjectsCapture) {
+      // Accepted as-is: validated at the edge against the actual capture.
     } else if (draft.relative && !draft.redirectURL.startsWith("/")) {
       details.push({
         path: "/redirectURL",

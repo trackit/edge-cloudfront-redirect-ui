@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import type { HostSummary } from "../api";
-import { hostKey, hostPath } from "../hostRoutes";
+import { hostKey, hostPath } from "../domain/hostRoutes";
 import { IconPlus, IconTrash } from "./icons";
 
 interface Props {

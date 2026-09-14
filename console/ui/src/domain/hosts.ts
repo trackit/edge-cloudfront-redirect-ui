@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api } from "./api";
-import type { ApiClient, HostSummary } from "./api";
+import { ApiError, api } from "../api";
+import type { ApiClient, HostSummary } from "../api";
 import { hostKey } from "./hostRoutes";
 
 /**
