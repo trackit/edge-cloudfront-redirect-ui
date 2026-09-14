@@ -115,6 +115,12 @@ test("a completed sign-in lands on the console, not back on the login page", asy
   // holding the "signed out" the boot refresh had returned a moment earlier,
   // and sent the browser straight back to /login. A sign-in that worked, thrown
   // away one tick later, looking exactly like a sign-in that failed.
+  //
+  // Asserted as a navigation that must not happen. The URL the callback lands
+  // on cannot say this: /console is a waypoint — once the hosts arrive it
+  // redirects to the first one — so reading the address bar both races that
+  // redirect and stays quiet about a guard that bounced through /login and came
+  // back, which is the same bug one tick faster.
   api.signedInAs(undefined); // no cookie yet, so the boot refresh 401s
   api.exchangeAs("editor");
   api.setHosts([www]);
@@ -125,10 +131,25 @@ test("a completed sign-in lands on the console, not back on the login page", asy
     returnTo: "/console",
   });
 
+  const seen: string[] = [];
+  page.on("framenavigated", (frame) => {
+    if (frame === page.mainFrame()) seen.push(new URL(frame.url()).pathname);
+  });
+
   await page.goto("/auth/callback?code=good-code&state=s-1");
 
-  await expect(page).toHaveURL(/\/console$/);
-  await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
+  // Settled, so `seen` is complete: the hostless return-to resolves to the one
+  // host, and the console is rendering it rather than still on its way there.
+  await expect(page).toHaveURL("/console/hosts/www.example.com");
+  await expect(page.getByRole("navigation", { name: "Hosts" })).toBeVisible();
+
+  // Signed in as the session the exchange issued, not as whoever the boot
+  // refresh found — the bug left the provider holding signed-out while the
+  // cookie said otherwise, and this is where that difference is visible.
+  await page.getByRole("button", { name: /^Account for/ }).click();
+  await expect(page.getByRole("menu")).toContainText("editor@example.com");
+
+  expect(seen).not.toContain("/login");
 });
 
 test("a completed sign-in returns to the deep link that was asked for", async ({
