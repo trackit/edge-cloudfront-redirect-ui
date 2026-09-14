@@ -1,6 +1,8 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { IconArrow, IconCheck, IconClose, IconInfo, IconUpload } from "./icons";
+import FormatsPopover from "./FormatsPopover";
 import { isVacuousMatch, parseExport } from "../domain/akamaiImport";
+import { FORMAT_LABEL } from "../domain/importFormats";
 import type {
   ImportPreview,
   ParsedRow,
@@ -28,13 +30,6 @@ interface Props {
   onImported: () => void;
   onClose: () => void;
 }
-
-const FORMAT_LABEL: Record<SourceFormat, string> = {
-  "edge-redirector-csv": "Edge Redirector CSV",
-  "edge-redirector-policy-csv": "Edge Redirector policy CSV",
-  "simple-csv": "Simple CSV",
-  "match-rules-json": "matchRules JSON",
-};
 
 const ACCEPT = ".csv,.json,.txt";
 
@@ -125,11 +120,15 @@ export default function ImportModal({
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const formatsRef = useRef<HTMLButtonElement>(null);
 
   const [targetHost, setTargetHost] = useState(defaultHost);
   const [filename, setFilename] = useState<string | undefined>(undefined);
   const [text, setText] = useState("");
   const [showFormats, setShowFormats] = useState(false);
+  // Read by the Escape handler below, which is subscribed once.
+  const showFormatsRef = useRef(showFormats);
+  showFormatsRef.current = showFormats;
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   busyRef.current = busy;
@@ -158,7 +157,15 @@ export default function ImportModal({
     panelRef.current?.focus();
 
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape" && !busyRef.current) closeRef.current();
+      if (event.key !== "Escape" || busyRef.current) return;
+      // The help panel takes the first Escape. Closing the whole dialog instead
+      // would throw away a loaded file to dismiss a panel that was opened to
+      // check that file's format, which is the one moment it gets used.
+      if (showFormatsRef.current) {
+        setShowFormats(false);
+        return;
+      }
+      closeRef.current();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
@@ -286,6 +293,7 @@ export default function ImportModal({
             <div className="import-load-head">
               <span className="field-label">Load file (.csv, .json)</span>
               <button
+                ref={formatsRef}
                 type="button"
                 className="btn btn-ghost btn-sm"
                 aria-expanded={showFormats}
@@ -297,14 +305,10 @@ export default function ImportModal({
             </div>
 
             {showFormats && (
-              <div className="callout" role="note">
-                <IconInfo size={15} />
-                <span>
-                  Edge Redirector CSV (ruleName, matchURL, redirectURL,
-                  result.statusCode); a simple source/target CSV; or a
-                  matchRules JSON export (matches[] + result).
-                </span>
-              </div>
+              <FormatsPopover
+                anchor={formatsRef.current}
+                onDismiss={() => setShowFormats(false)}
+              />
             )}
 
             <input
