@@ -83,13 +83,13 @@ region, though the region may itself be `*`. So:
 | `…:role/edge-*-prod`                        | rejected — the `*` must be last                       |
 | `…dynamodb::1234…:table/x`                  | rejected — empty region matches nothing               |
 
-Leave both empty and no target is reachable, so rule operations (ER-203) will
+Leave both empty and no target is reachable, so rule operations (CF-13) will
 fail. That is the default deliberately — neither grant should be implicit.
 
 The reason `roleArn` exists now rather than later is the runtime-vs-apply-time gap
 above, not cross-account support: the scope doc puts cross-account under "not in
 the 30 days", and nothing here has been exercised against a second account. What
-the field does buy is that adding it later, after ER-301 generates a typed client
+the field does buy is that adding it later, after the console generates a typed client
 from these `additionalProperties: false` schemas, would be a breaking change.
 
 ## Checking a table exists

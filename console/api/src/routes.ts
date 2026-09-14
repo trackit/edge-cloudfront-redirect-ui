@@ -23,10 +23,10 @@ const HOST = `${HOSTS}/:host`;
 const RULES = `${HOST}/rules`;
 
 /**
- * The route table. Targets registry (ER-202) and rules CRUD plus the `disabled`
- * toggle (ER-203) are live.
+ * The route table. Targets registry (CF-12) and rules CRUD plus the `disabled`
+ * toggle (CF-13) are live.
  *
- * `write: true` is the whole of role-based access (ER-205): a viewer may reach
+ * `write: true` is the whole of role-based access (CF-23): a viewer may reach
  * every route without it and none with it. Reading down the column is how you
  * check that, which is why the flag lives here rather than inside the handlers.
  * A new route is protected and read-only unless it says otherwise — the safe

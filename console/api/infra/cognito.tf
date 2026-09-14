@@ -1,4 +1,4 @@
-# Authentication for the control plane (ER-205).
+# Authentication for the control plane (CF-23).
 #
 # The pool lives beside the API rather than in its own state because the JWT
 # authorizer has to reference it, and a cross-state lookup to wire an authorizer

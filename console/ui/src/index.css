@@ -1318,7 +1318,7 @@ button {
    Sits in .host-view, under the host title.
    ============================================================ */
 
-/* ER-306. Amber rather than red: it is a fact about the system, not a failure. */
+/* Amber rather than red: it is a fact about the system, not a failure. */
 .propagation {
   display: flex;
   align-items: center;

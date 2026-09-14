@@ -131,7 +131,7 @@ describe("targets API", () => {
 
   it("PUT /targets/:id accepts the target GET returned, unchanged", async () => {
     // The GET → edit → PUT round-trip must work without the caller stripping
-    // `id` by hand; ER-302's editor does exactly this.
+    // `id` by hand; CF-21's editor does exactly this.
     const created = await create();
     const fetched = parse(
       (await handler(event("GET", `/targets/${created.id}`))).body,

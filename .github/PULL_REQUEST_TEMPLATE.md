@@ -4,7 +4,7 @@
 
 ## Ticket
 
-<!-- e.g. ER-101 -->
+<!-- e.g. CF-7 -->
 
 ## Checklist
 

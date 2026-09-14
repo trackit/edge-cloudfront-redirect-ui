@@ -5,7 +5,7 @@ import { parse } from "yaml";
 import { ERROR_CODES } from "../src/lib/errors.js";
 
 /**
- * The SPA (ER-301) generates its client from `openapi.yaml`, so `error.code` is
+ * The SPA generates its client from `openapi.yaml`, so `error.code` is
  * a published contract. Nothing else connects the enum in the spec to the codes
  * the code actually emits — a renamed code would break the SPA at runtime with no
  * spec diff and no type error. Same idea as openapi-routes.test.ts, for codes.

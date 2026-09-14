@@ -1,6 +1,6 @@
 # @cloudfront-redirect-rules/lambda
 
-The Lambda@Edge data plane (ER-102). **One** function, associated twice on your distribution:
+The Lambda@Edge data plane (CF-8). **One** function, associated twice on your distribution:
 
 | Association    | Sort key prefix | Behavior                                                               |
 | -------------- | --------------- | ---------------------------------------------------------------------- |
@@ -88,7 +88,7 @@ as written, and the incoming query string is appended only when
 ## Config
 
 Lambda@Edge does not support environment variables, so config is **baked into the bundle**
-at package time (the ER-102 decision in [`../README.md`](../README.md)): Terraform renders
+at package time (the CF-8 decision in [`../README.md`](../README.md)): Terraform renders
 `edge-config.generated.ts` into its own build directory and packages it into the zip —
 see [modules/edge](../modules/edge/README.md#using-the-module-more-than-once). It is not
 written into this workspace. [`src/edge-config.generated.example.ts`](src/edge-config.generated.example.ts)
