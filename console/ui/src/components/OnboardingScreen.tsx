@@ -149,6 +149,7 @@ export default function OnboardingScreen({ onConnect, onCancel }: Props) {
               <DistributionFields
                 value={d}
                 onChange={(patch) => setD((prev) => ({ ...prev, ...patch }))}
+                isNew
               />
             </div>
 

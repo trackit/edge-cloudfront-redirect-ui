@@ -137,6 +137,27 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
+  /meta:
+    get:
+      operationId: getMeta
+      summary: What this deployment will accept.
+      description: >-
+        Deployment-specific constraints a client would otherwise have to guess.
+        The allowed regions cannot be an enum in this document, because
+        ALLOWED_REGIONS replaces them per deployment — this is where to read the
+        set the running API is actually validating against.
+      tags: [system]
+      responses:
+        "200":
+          description: This deployment's constraints.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meta"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /targets:
     get:
       operationId: listTargets
@@ -694,6 +715,23 @@ components:
       properties:
         status:
           const: ok
+    Meta:
+      description: >-
+        What this deployment accepts. Read rather than assumed: a console with
+        its own copy of any of this offers choices the API rejects.
+      type: object
+      additionalProperties: false
+      required: [regions]
+      properties:
+        regions:
+          description: >-
+            Every region a target's `region` may name, sorted. The API's
+            built-in list of commercial regions unless ALLOWED_REGIONS is set,
+            in which case exactly that.
+          type: array
+          items:
+            type: string
+            pattern: "^[a-z]{2}(-[a-z]+)+-\\d+$"
     SessionRequest:
       description: The authorization code, as the hosted UI handed it back.
       type: object

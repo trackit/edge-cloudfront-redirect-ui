@@ -17,6 +17,7 @@ import {
 } from "./handlers/rules.js";
 import { createHost, deleteHost, listHosts } from "./handlers/hosts.js";
 import { createSession, endSession, refreshSession } from "./handlers/auth.js";
+import { meta } from "./handlers/meta.js";
 
 const HOSTS = "/targets/:targetId/hosts";
 const HOST = `${HOSTS}/:host`;
@@ -56,6 +57,11 @@ export const routes: Route[] = [
     handler: endSession,
     public: true,
   },
+
+  // Authenticated, like everything below it: what a deployment will accept is
+  // not a secret, but it is nobody's business before they have signed in, and
+  // the console only asks for it once it is inside the console.
+  { method: "GET", pattern: "/meta", handler: meta },
 
   { method: "GET", pattern: "/targets", handler: listTargets },
   { method: "POST", pattern: "/targets", handler: createTarget, write: true },

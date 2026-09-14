@@ -1,6 +1,7 @@
 import { ApiError, toApiError } from "./error";
 import type {
   HostSummary,
+  Meta,
   Session,
   Rule,
   RuleInput,
@@ -141,6 +142,13 @@ export function createApiClient(options: ApiClientOptions = {}) {
 
     /** Liveness check — `{ status: "ok" }`. */
     health: () => request<{ status: "ok" }>("GET", "/health"),
+
+    /**
+     * What this deployment accepts. Read rather than assumed: `ALLOWED_REGIONS`
+     * is per-deployment, so a console with its own copy of the region list
+     * offers choices the API rejects (CF-34).
+     */
+    meta: () => request<Meta>("GET", "/meta"),
 
     /**
      * The session routes. Unauthenticated by necessity — they are what issues a
