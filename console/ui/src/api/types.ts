@@ -8,6 +8,13 @@ import type { components } from "./schema.gen";
  */
 type Schemas = components["schemas"];
 
+/**
+ * What the deployment the console is talking to will accept — currently the
+ * regions a target may name. Worth reading rather than hardcoding: the set is
+ * whatever `ALLOWED_REGIONS` says, which the front end cannot know (CF-34).
+ */
+export type Meta = Schemas["Meta"];
+
 /** A registered target. `id` is server-generated and is the `targetId` in rule routes. */
 export type Target = Schemas["Target"];
 

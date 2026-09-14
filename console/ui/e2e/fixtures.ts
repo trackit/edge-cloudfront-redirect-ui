@@ -71,6 +71,17 @@ export interface ApiStub {
    * so the refresh 401s, and this is what produces the session.
    */
   exchangeAs: (role: "editor" | "viewer") => void;
+  /**
+   * What `GET /meta` reports as this deployment's allowed regions — the set the
+   * distribution form's region options come from.
+   */
+  setRegions: (regions: string[]) => void;
+  /**
+   * Answers `GET /meta` with a 500 instead. For the case the form has to
+   * survive: the console cannot ask what is allowed, and still has to be
+   * completable.
+   */
+  failMeta: () => void;
 }
 
 /**
@@ -121,6 +132,11 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
   let rules: Rule[] = [];
   let role: "editor" | "viewer" | undefined = "editor";
   let exchangeRole: "editor" | "viewer" = "editor";
+  // The default is deliberately not the front end's fallback list: a spec that
+  // asserts on these options would otherwise pass whether the value came from
+  // the API or from the guess the front end keeps for when it cannot ask.
+  let regions = ["eu-west-1", "us-east-1"];
+  let metaFails = false;
 
   // A predicate, not the `**/api/**` glob that looks right: the app's own source
   // lives in `src/api/`, and in dev Vite serves those modules from URLs the glob
@@ -174,6 +190,26 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
             expiresIn: 3600,
           }),
         });
+        return;
+      }
+
+      // What the deployment accepts. The distribution form asks for this on
+      // mount, so it is answered before anything else a spec arranges — and a
+      // spec that wants the failure sets `metaFails`.
+      if (method === "GET" && url.pathname.endsWith("/meta")) {
+        await route.fulfill(
+          metaFails
+            ? {
+                status: 500,
+                contentType: "application/json",
+                body: JSON.stringify(errorBody("INTERNAL", "Meta is down")),
+              }
+            : {
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ regions }),
+              },
+        );
         return;
       }
 
@@ -305,6 +341,12 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
     },
     exchangeAs: (next) => {
       exchangeRole = next;
+    },
+    setRegions: (next) => {
+      regions = next;
+    },
+    failMeta: () => {
+      metaFails = true;
     },
   };
 };

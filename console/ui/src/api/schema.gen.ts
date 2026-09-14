@@ -84,6 +84,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/meta": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * What this deployment will accept.
+     * @description Deployment-specific constraints a client would otherwise have to guess. The allowed regions cannot be an enum in this document, because ALLOWED_REGIONS replaces them per deployment — this is where to read the set the running API is actually validating against.
+     */
+    get: operations["getMeta"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/targets": {
     parameters: {
       query?: never;
@@ -280,6 +300,11 @@ export interface components {
     Health: {
       /** @constant */
       status: "ok";
+    };
+    /** @description What this deployment accepts. Read rather than assumed: a console with its own copy of any of this offers choices the API rejects. */
+    Meta: {
+      /** @description Every region a target's `region` may name, sorted. The API's built-in list of commercial regions unless ALLOWED_REGIONS is set, in which case exactly that. */
+      regions: string[];
     };
     /** @description The authorization code, as the hosted UI handed it back. */
     SessionRequest: {
@@ -735,6 +760,28 @@ export interface operations {
       };
       400: components["responses"]["BadRequest"];
       405: components["responses"]["MethodNotAllowed"];
+      500: components["responses"]["InternalError"];
+    };
+  };
+  getMeta: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description This deployment's constraints. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Meta"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
       500: components["responses"]["InternalError"];
     };
   };
