@@ -1,7 +1,8 @@
 # Deploying an environment from CI
 
 `DEPLOY.md` at the repo root is the by-hand path: three stacks, applied in order,
-each one's outputs feeding the next. This directory is that same deploy with a
+each one's outputs feeding the next — and then the control plane once more, for
+the one value that only exists after the console is up. This directory is that same deploy with a
 runner behind it. No new deployment design — remote state, a role, and a name set
 that cannot collide with anything else on the account.
 
@@ -35,9 +36,10 @@ deploy is then the environment's own "deployment branches" setting, not the trus
 policy. Beyond the obvious S3, DynamoDB,
 API Gateway, Lambda and CloudFront permissions it needs `iam:CreateRole`,
 `iam:PutRolePolicy` and `iam:PassRole`; `lambda:EnableReplication` and
-`iam:CreateServiceLinkedRole` for the Lambda@Edge replicator; and
-`cloudfront:CreateFunction` and `cloudfront:PublishFunction` for the basic-auth
-gate.
+`iam:CreateServiceLinkedRole` for the Lambda@Edge replicator; `cognito-idp:*` on
+the console's user pool, its domain and its app client, which stack 2 creates;
+and `cloudfront:CreateFunction` and `cloudfront:PublishFunction` for the gate
+function.
 
 > **This is the one piece that must outlive the sweep.** Everything else is rebuilt
 > by the next run; the role is what the run authenticates with. If the sweeper does
@@ -46,15 +48,18 @@ gate.
 
 **3. A `sandbox-dev` environment** in the repository settings, holding:
 
-|                       |                                           |
-| --------------------- | ----------------------------------------- |
-| `AWS_DEPLOY_ROLE_ARN` | variable — the role from step 2           |
-| `AWS_REGION`          | variable — `us-east-1`                    |
-| `STATE_BUCKET`        | variable — the bucket from step 1         |
-| `BASIC_AUTH_PASSWORD` | **secret** — what the console prompts for |
+|                       |                                   |
+| --------------------- | --------------------------------- |
+| `AWS_DEPLOY_ROLE_ARN` | variable — the role from step 2   |
+| `AWS_REGION`          | variable — `us-east-1`            |
+| `STATE_BUCKET`        | variable — the bucket from step 1 |
 
 Scoping them to the environment rather than the repository is what stops a
 workflow on another branch from assuming the role.
+
+All three are variables; the pipeline needs no secret. It authenticates by OIDC,
+and the console's own sign-in is Cognito's, so there is no credential for this
+workflow to hold.
 
 ## What the workflow does
 
@@ -63,15 +68,24 @@ workflow on another branch from assuming the role.
    changing infrastructure.
 2. Applies `examples/infra`, then `console/api/infra`, then `console/ui/infra`,
    copying `backend.tf` in and pointing each at its own state key.
-3. Threads `table_arn` into stack 2 and `api_endpoint` into stack 3 as `TF_VAR_*`.
-   These are not in the tfvars because they do not exist until the stack before
-   them has applied.
-4. Seeds the rules table, so a fresh environment is not an empty one.
-5. Writes the console URL, the demo site, the distribution id, the table name and
-   its region into the job summary.
+3. Threads `table_arn` into stack 2, and `api_endpoint`, `cognito_domain` and
+   `user_pool_client_id` into stack 3, as `TF_VAR_*`. These are not in the tfvars
+   because they do not exist until the stack before them has applied.
+4. Applies stack 2 a **second** time, to put the console's URL in the Cognito app
+   client's callback list. That URL comes from stack 3, so it is the one input
+   that cannot be threaded forward in a single pass. Only the app client changes.
+5. Seeds the rules table, so a fresh environment is not an empty one.
+6. Writes the console URL, the demo site, the distribution id, the table name,
+   its region and the user pool id into the job summary.
 
 That last step is not a nicety. The console's connect screen is per-browser
 `localStorage`, so everyone who opens the URL types those values in by hand.
+
+It does **not** create sign-in accounts. `console/api/infra/seed-users.sh` prints
+the passwords it generates once, and a CI log is the wrong place for them — run it
+by hand against the pool id in the summary. It is the one manual step left, and
+it comes back after every sweep: a rebuilt pool is an empty pool, so a console
+that was working on Friday has no accounts on Monday.
 
 ## Things that will bite
 
@@ -83,6 +97,15 @@ That last step is not a nicety. The console's connect screen is per-browser
 - **`backend.tf` must not be renamed to anything matching `*_override.tf`** —
   `.gitignore` swallows that pattern, and it would vanish from the checkout the
   workflow copies it from.
+- **`cognito_domain_prefix` is unique across every AWS account**, not just this
+  one. A collision fails the apply and the only fix is a different value. A sweep
+  releases the name with the pool, but not always immediately, so a rebuild
+  straight after one can need a retry.
+- **Sign-in is briefly broken during a deploy.** The first stack 2 apply resets
+  the callback list to its localhost default, and the second one puts the console
+  back on it. Someone signing in between the two is refused with
+  `redirect_mismatch`. The alternative is a hand-maintained domain in the tfvars,
+  and the sweep changes that domain every week.
 - **The first run is 30-40 minutes**, because two of the three stacks create
   CloudFront distributions. Later runs are 10-20, and any change to the edge
   function republishes a version and triggers another distribution deploy.

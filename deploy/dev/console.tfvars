@@ -1,17 +1,16 @@
 # console/ui/infra — the dev environment's console.
 #
-# Two values are missing on purpose and come from the workflow instead:
+# Three values are missing on purpose and come from the workflow instead, because
+# none of them exists until stack 2 has applied:
 #
-#   api_endpoint         TF_VAR_api_endpoint, from stack 2's output
-#   basic_auth_password  TF_VAR_basic_auth_password, from the environment secret
+#   api_endpoint       TF_VAR_api_endpoint
+#   cognito_domain     TF_VAR_cognito_domain
+#   cognito_client_id  TF_VAR_cognito_client_id
 #
-# The password is rendered into the CloudFront Function's code and stored in
-# state, so anyone with cloudfront:GetFunction can read it back. It is a gate, not
-# a secret — but it still does not belong in a tracked file.
+# None is a secret — the client id travels in every authorize URL — they simply
+# change whenever the control plane is rebuilt.
 
 name = "edgeroute-dev-console"
-
-basic_auth_username = "dev"
 
 npm_install_command = ""
 
