@@ -43,6 +43,13 @@ export type RuleInput = Schemas["RuleInput"];
 export type RedirectRuleInput = Schemas["RedirectRuleInput"];
 export type RewriteRuleInput = Schemas["RewriteRuleInput"];
 
+/**
+ * Body for reordering one kind of a host's rules: the type, and that type's
+ * sort keys in their new order. No priorities — the server reuses the ones
+ * those keys already carry.
+ */
+export type RuleReorder = Schemas["RuleReorder"];
+
 /** A single match condition, shared by both rule kinds. */
 export type MatchCondition = Schemas["match"];
 

@@ -1,16 +1,21 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { isRedirect, priorityOf } from "../api";
 import type { Rule } from "../api";
 import type { GroupedRules } from "../domain/rules";
+import { isNoOpSlot, moveToSlot, stepSlot } from "../domain/reorder";
+import { useDragSort } from "../useDragSort";
 import {
   describeMatches,
   ruleFrom,
   ruleKindLabel,
   ruleTo,
 } from "../domain/ruleSummary";
-import { IconArrow, IconEdit, IconPlus, IconTrash } from "./icons";
+import { IconArrow, IconEdit, IconGrip, IconPlus, IconTrash } from "./icons";
 
 type Filter = "all" | "redirect" | "rewrite";
+
+/** Said the same way in every place a viewer meets a control they cannot use. */
+const READ_ONLY = "Your account has read-only access";
 
 interface Props {
   host: string;
@@ -25,6 +30,12 @@ interface Props {
   onEdit: (rule: Rule) => void;
   onToggle: (rule: Rule) => void;
   onDelete: (rule: Rule) => void;
+  /**
+   * Saves a new order for one kind. Resolves `true` when it was applied and
+   * `false` when it was refused — the list then snaps back, and the caller is
+   * the one that has already said why.
+   */
+  onReorder: (type: Rule["type"], order: string[]) => Promise<boolean>;
   /** Sort keys currently being written, so their row can show it. */
   busy: string[];
   /** False for a viewer: the row's controls are shown but inert, and say why. */
@@ -38,14 +49,15 @@ interface Props {
  * sequences at the edge: redirects run at viewer-request, rewrites at
  * origin-request. Priority 100 in one has nothing to do with priority 100 in the
  * other, so a single merged list ordered by number would imply a relationship
- * that does not exist.
+ * that does not exist — and it is why a rule can only be dragged within its own
+ * group.
  *
- * No drag-to-reorder — out of scope for the MVP. Priority is edited as a number in
- * the editor, which is also the only thing that actually moves a rule.
+ * Rows can be reordered by dragging the grip, or with the arrow keys once it has
+ * focus. Either way the priorities themselves stay put: the server hands the
+ * group's existing numbers back out in the new order, so the rules swap numbers
+ * rather than being renumbered. Editing the number by hand in the editor is
+ * still there, and is the only way to change what the numbers are.
  */
-/** Said the same way in every place a viewer meets a control they cannot use. */
-const READ_ONLY = "Your account has read-only access";
-
 export default function RuleList({
   host,
   grouped,
@@ -55,6 +67,7 @@ export default function RuleList({
   onEdit,
   onToggle,
   onDelete,
+  onReorder,
   busy,
   canWrite,
 }: Props) {
@@ -134,17 +147,21 @@ export default function RuleList({
             </button>
           ))}
         </div>
-        <span className="rules-order">Sorted by priority · lower = higher</span>
+        <span className="rules-order">
+          Sorted by priority · lower = higher · drag to reorder
+        </span>
       </div>
 
       {showRedirects && (
         <RuleGroup
           title="Redirects"
+          type="erMatchRule"
           phase="viewer-request"
           rules={grouped.redirects}
           onEdit={onEdit}
           onToggle={onToggle}
           onDelete={onDelete}
+          onReorder={onReorder}
           busy={busy}
           canWrite={canWrite}
         />
@@ -153,11 +170,13 @@ export default function RuleList({
       {showRewrites && (
         <RuleGroup
           title="Rewrites"
+          type="frMatchRule"
           phase="origin-request"
           rules={grouped.rewrites}
           onEdit={onEdit}
           onToggle={onToggle}
           onDelete={onDelete}
+          onReorder={onReorder}
           busy={busy}
           canWrite={canWrite}
         />
@@ -168,29 +187,126 @@ export default function RuleList({
 
 function RuleGroup({
   title,
+  type,
   phase,
   rules,
   onEdit,
   onToggle,
   onDelete,
+  onReorder,
   busy,
   canWrite,
 }: {
   title: string;
+  /**
+   * Which sequence this group is. Passed as the wire type rather than as a
+   * "redirect"/"rewrite" kind because reordering is all the group needs it for,
+   * and `onReorder` takes the wire type.
+   */
+  type: Rule["type"];
   phase: string;
   rules: Rule[];
   onEdit: (rule: Rule) => void;
   onToggle: (rule: Rule) => void;
   onDelete: (rule: Rule) => void;
+  onReorder: (type: Rule["type"], order: string[]) => Promise<boolean>;
   busy: string[];
   /** False for a viewer: the row's controls are shown but inert, and say why. */
   canWrite: boolean;
 }) {
+  /**
+   * The order on screen while a reorder is in flight.
+   *
+   * Set before the request and cleared when it settles. On success the refetch
+   * has already landed by then, so clearing falls through to the same order; on
+   * failure it snaps back to what the server still holds. Without it the rows
+   * would not move until the round trip finished, and a drag that appears to do
+   * nothing reads as a broken control.
+   */
+  const [pending, setPending] = useState<Rule[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  /** Spoken, not shown: the rows move, which is the sighted feedback. */
+  const [announcement, setAnnouncement] = useState("");
+
+  // Keyed by index, not by rule: the rows are keyed by sort key and a reorder
+  // keeps that set intact, so the handle at a given position is one DOM node
+  // throughout — which is what lets focus follow a rule moved by the keyboard.
+  const handles = useRef(new Map<number, HTMLButtonElement>());
+  /** Where an arrow key left the rule, for the effect below to focus. */
+  const moved = useRef<number | null>(null);
+
+  /**
+   * Returns focus to the rule an arrow key moved, once the save has settled.
+   *
+   * In an effect rather than at the end of `save` because the handles are
+   * disabled while saving: focusing one before React has re-rendered it as
+   * enabled does nothing at all, and the next arrow press would then move
+   * whichever rule had slid into the old position — or nothing, with focus on
+   * the body.
+   */
+  useEffect(() => {
+    if (saving) return;
+
+    const index = moved.current;
+    if (index === null) return;
+
+    moved.current = null;
+    handles.current.get(index)?.focus();
+  }, [saving]);
+
+  const shown = pending ?? rules;
+  const sortable = canWrite && shown.length > 1;
+
+  const save = useCallback(
+    async (from: number, slot: number, byKeyboard: boolean): Promise<void> => {
+      if (saving || isNoOpSlot(from, slot)) return;
+
+      const next = moveToSlot(shown, from, slot);
+      const to = slot > from ? slot - 1 : slot;
+
+      setPending(next);
+      setSaving(true);
+      setAnnouncement(`Moved to position ${to + 1} of ${next.length}. Saving…`);
+
+      const applied = await onReorder(
+        type,
+        next.map((rule) => rule.sk),
+      );
+
+      // Only for the keyboard: a pointer leaves focus where the user's attention
+      // already is, while an arrow key has to keep the moved rule under the keys
+      // that are still being pressed. Set before the state below, since the
+      // effect that acts on it runs off `saving`.
+      if (byKeyboard && applied) moved.current = to;
+
+      setSaving(false);
+      setPending(null);
+      setAnnouncement(
+        applied
+          ? `Moved to position ${to + 1} of ${next.length}.`
+          : "The order could not be saved, so the rules are back as they were.",
+      );
+    },
+    [type, onReorder, saving, shown],
+  );
+
+  const drag = useDragSort({
+    count: shown.length,
+    disabled: !sortable || saving,
+    onDrop: (from, slot) => void save(from, slot, false),
+  });
+
+  const handleTitle = !canWrite
+    ? READ_ONLY
+    : shown.length > 1
+      ? "Drag to reorder, or use the arrow keys"
+      : "Nothing to reorder — this is the only rule here";
+
   return (
     <section className="rule-group">
       <header className="rule-group-head">
         <h3>{title}</h3>
-        <span className="count-chip">{rules.length}</span>
+        <span className="count-chip">{shown.length}</span>
         {/* Which CloudFront event the group runs at. Worth surfacing: it explains
             why the two lists have independent priorities, and why a rewrite only
             fires on a cache miss. */}
@@ -201,12 +317,27 @@ function RuleGroup({
             stays dead while the list could not be read (CF-25). */}
       </header>
 
-      <ul className="rule-cards">
-        {rules.map((rule) => (
+      <ul className="rule-cards" aria-busy={saving}>
+        {shown.map((rule, index) => (
           /* Keyed on `sk` — unique per host per type, and this list is one host
-             and one type. A moved rule gets a new key, which is correct: it is a
-             different item in the table. */
-          <li key={rule.sk}>
+             and one type. A reorder leaves that set of keys untouched and only
+             changes which rule holds each one, so the rows stay put and their
+             contents move: exactly what keeps focus and the drag from being
+             pulled out from under the pointer. */
+          <li
+            key={rule.sk}
+            ref={drag.rowRef(index)}
+            className={[
+              "rule-row",
+              drag.dragging === index ? "is-dragging" : "",
+              drag.slot === index ? "is-drop-before" : "",
+              drag.slot === shown.length && index === shown.length - 1
+                ? "is-drop-after"
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
             <RuleCard
               rule={rule}
               busy={busy.includes(rule.sk)}
@@ -214,10 +345,52 @@ function RuleGroup({
               onEdit={onEdit}
               onToggle={onToggle}
               onDelete={onDelete}
+              handle={
+                <button
+                  type="button"
+                  ref={(element) => {
+                    if (element === null) handles.current.delete(index);
+                    else handles.current.set(index, element);
+                  }}
+                  className="rule-grip"
+                  // The row's position is the thing being changed, so it belongs
+                  // in the name rather than only in the rows either side of it.
+                  aria-label={`Reorder ${ruleKindLabel(rule)} at priority ${priorityOf(rule.sk)}, position ${index + 1} of ${shown.length}`}
+                  disabled={!sortable || saving}
+                  title={handleTitle}
+                  onPointerDown={drag.handleProps(index).onPointerDown}
+                  onPointerMove={drag.handleProps(index).onPointerMove}
+                  onPointerUp={drag.handleProps(index).onPointerUp}
+                  onPointerCancel={drag.handleProps(index).onPointerCancel}
+                  onKeyDown={(event) => {
+                    const direction =
+                      event.key === "ArrowUp"
+                        ? "up"
+                        : event.key === "ArrowDown"
+                          ? "down"
+                          : null;
+                    if (direction === null) return;
+                    if (direction === "up" && index === 0) return;
+                    if (direction === "down" && index === shown.length - 1) {
+                      return;
+                    }
+
+                    // Otherwise the page scrolls under the row being moved.
+                    event.preventDefault();
+                    void save(index, stepSlot(index, direction), true);
+                  }}
+                >
+                  <IconGrip size={16} />
+                </button>
+              }
             />
           </li>
         ))}
       </ul>
+
+      <p className="sr-only" role="status" aria-live="polite">
+        {announcement}
+      </p>
     </section>
   );
 }
@@ -226,6 +399,7 @@ function RuleCard({
   rule,
   busy,
   canWrite,
+  handle,
   onEdit,
   onToggle,
   onDelete,
@@ -233,6 +407,7 @@ function RuleCard({
   rule: Rule;
   busy: boolean;
   canWrite: boolean;
+  handle: React.ReactNode;
   onEdit: (rule: Rule) => void;
   onToggle: (rule: Rule) => void;
   onDelete: (rule: Rule) => void;
@@ -244,6 +419,8 @@ function RuleCard({
     <article
       className={`rule-card${enabled ? "" : " is-disabled"}${busy ? " is-busy" : ""}`}
     >
+      {handle}
+
       <div className="rule-prio" title="Priority">
         {priorityOf(rule.sk)}
       </div>
