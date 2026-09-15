@@ -797,6 +797,108 @@ describe("move", () => {
   });
 });
 
+describe("reorder", () => {
+  const swapped = [rule("REDIRECT#00100"), rule("REDIRECT#00200")];
+
+  /** TransactionCanceledException, with a reason per TransactItem. */
+  const cancelled = (...codes: (string | undefined)[]): Error =>
+    Object.assign(awsError("TransactionCanceledException"), {
+      CancellationReasons: codes.map((Code) => (Code ? { Code } : {})),
+    });
+
+  it("writes every moved rule as one transaction of Puts", async () => {
+    send.mockResolvedValue({});
+
+    expect(await (await repository()).reorder(swapped)).toBe(true);
+
+    const { name, input } = call();
+    expect(name).toBe("TransactWriteCommand");
+    expect(input["TransactItems"]).toEqual([
+      {
+        Put: {
+          TableName: "rules-prod",
+          Item: swapped[0],
+          ConditionExpression: "attribute_exists(pk)",
+        },
+      },
+      {
+        Put: {
+          TableName: "rules-prod",
+          Item: swapped[1],
+          ConditionExpression: "attribute_exists(pk)",
+        },
+      },
+    ]);
+  });
+
+  it("issues no Deletes, so no key is touched twice", async () => {
+    // Two rules swapping places is the case that makes a "delete the old key,
+    // put the new one" reorder illegal: one key would be both a Put's
+    // destination and a Delete's target, and DynamoDB refuses a transaction
+    // touching one item twice. A reorder permutes the existing keys, so there is
+    // nothing to delete.
+    send.mockResolvedValue({});
+
+    await (await repository()).reorder(swapped);
+
+    const items = call().input["TransactItems"] as Record<string, unknown>[];
+    expect(items.every((item) => item["Delete"] === undefined)).toBe(true);
+    expect(new Set(items.map((item) => JSON.stringify(item))).size).toBe(2);
+  });
+
+  it("carries a request token so a retried transaction is a no-op", async () => {
+    // Without one, the SDK's retry of a committed transaction re-runs the
+    // conditions against a table already in its new shape.
+    send.mockResolvedValue({});
+
+    await (await repository()).reorder(swapped);
+
+    expect(call().input["ClientRequestToken"]).toEqual(expect.any(String));
+  });
+
+  it("does not reach the table when nothing moves", async () => {
+    // TransactWriteItems rejects an empty item list, and a drag that ended where
+    // it started is a reorder that moves nothing.
+    expect(await (await repository()).reorder([])).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("reads a refused condition as the rules having changed", async () => {
+    // Every destination existed when the caller listed the host, so a failed
+    // `attribute_exists` means one of those rules was deleted in between.
+    send.mockRejectedValue(cancelled("None", "ConditionalCheckFailed"));
+
+    expect(await (await repository()).reorder(swapped)).toBe(false);
+  });
+
+  it("rethrows a cancellation no condition explains", async () => {
+    // A conflict or throughput failure is not a stale order, and reporting it as
+    // one would send the console off to reload rules that are perfectly current.
+    send.mockRejectedValue(cancelled("TransactionConflict", "None"));
+
+    await expect((await repository()).reorder(swapped)).rejects.toThrow(
+      "TransactionCanceledException",
+    );
+  });
+
+  it("rethrows a failure that is not a cancellation at all", async () => {
+    send.mockRejectedValue(awsError("ProvisionedThroughputExceededException"));
+
+    await expect((await repository()).reorder(swapped)).rejects.toThrow(
+      "ProvisionedThroughputExceededException",
+    );
+  });
+
+  it("turns an unreachable table into a 502", async () => {
+    send.mockRejectedValue(awsError("AccessDeniedException"));
+
+    await expect((await repository()).reorder(swapped)).rejects.toMatchObject({
+      status: 502,
+      code: "TARGET_UNREACHABLE",
+    });
+  });
+});
+
 describe("setDisabled", () => {
   it("updates just that attribute and returns the whole item", async () => {
     const toggled = { ...rule("REDIRECT#00100"), disabled: true };

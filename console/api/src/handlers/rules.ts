@@ -1,8 +1,9 @@
 import type { ApiRequest, ApiResponse } from "../context.js";
 import { ApiError } from "../lib/errors.js";
 import { json } from "../lib/respond.js";
-import { parseSk } from "../lib/rule-keys.js";
+import { KIND_BY_TYPE, parseSk } from "../lib/rule-keys.js";
 import { composeRule, parseToggle } from "../lib/rule-input.js";
+import { parseReorder, planReorder } from "../lib/rule-order.js";
 import { getRulesRepository, type RuleItem } from "../lib/rules-repository.js";
 import { resolveTarget } from "../lib/targets-repository.js";
 
@@ -76,6 +77,48 @@ export const createRule = async (req: ApiRequest): Promise<ApiResponse> => {
 
   if (!(await getRulesRepository(target).create(item))) throw ruleExists(item);
   return json(201, item);
+};
+
+/**
+ * Reorders a host's rules of one kind — the save behind drag & drop (CF-31).
+ *
+ * One request rather than a PUT per rule: the priorities are the rules' keys, so
+ * a reorder is several moves that have to land together. Done one at a time, a
+ * failure half way leaves the host in an order nobody asked for, and at the edge
+ * that is live traffic following it.
+ *
+ * The rules keep the priorities they already had — see `rule-order.ts` — so this
+ * never creates or deletes a rule, and a reorder that turns out to move nothing
+ * costs no writes at all.
+ */
+export const reorderRules = async (req: ApiRequest): Promise<ApiResponse> => {
+  const target = await resolveTarget(req.params.targetId);
+  const { host } = req.params;
+  const { type, order } = parseReorder(req.body);
+
+  const repo = getRulesRepository(target);
+
+  // Narrowed by the key's prefix rather than by the item's `type` field, even
+  // though the server derives one from the other: the prefix is what the edge
+  // queries on, so it decides which sequence a rule really runs in. An item
+  // whose two disagree — written outside the console — is then still reorderable
+  // from the list it appears in, instead of being invisible here and making
+  // every order of that host look incomplete.
+  const prefix = `${KIND_BY_TYPE[type]}#`;
+  const stored = (await repo.listByHost(host)).filter((rule) =>
+    rule.sk.startsWith(prefix),
+  );
+
+  const { moves, reordered } = planReorder(stored, order);
+  if (!(await repo.reorder(moves))) {
+    throw new ApiError(
+      409,
+      "RULES_CHANGED",
+      `A rule of host "${host}" was deleted while this order was being applied — nothing was moved. Reload the rules and reorder them again`,
+    );
+  }
+
+  return json(200, reordered);
 };
 
 /**
