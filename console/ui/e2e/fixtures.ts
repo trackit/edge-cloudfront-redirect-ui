@@ -54,6 +54,11 @@ export interface ApiStub {
    */
   setRules: (rules: Rule[]) => void;
   /**
+   * Answers every subsequent `POST …/rules/reorder` with this instead of
+   * applying the order — for the specs where the refusal is the point.
+   */
+  reorderReply: (reply: { status: number; body: unknown }) => void;
+  /**
    * Who the console is signed in as, or nobody.
    *
    * Defaults to an editor, because every spec that is not about permissions
@@ -130,6 +135,7 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
   let createHost: { status: number; body: unknown } | null = null;
   let deleteHost: { status: number; body: unknown } | null = null;
   let rules: Rule[] = [];
+  let reorder: { status: number; body: unknown } | null = null;
   let role: "editor" | "viewer" | undefined = "editor";
   let exchangeRole: "editor" | "viewer" = "editor";
   // The default is deliberately not the front end's fallback list: a spec that
@@ -280,6 +286,45 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
         }
       }
 
+      /*
+        The reorder, applied rather than merely acknowledged: the console
+        refetches the list straight after, so a stub that answered 200 and left
+        `rules` alone would make every successful reorder look like it snapped
+        back. Priorities stay where they are and the rules swap which one they
+        hold — the server's own behaviour, and the part a spec asserts on.
+      */
+      if (method === "POST" && RULES_REORDER.test(url.pathname)) {
+        if (reorder !== null) {
+          await route.fulfill({
+            status: reorder.status,
+            contentType: "application/json",
+            body: JSON.stringify(reorder.body),
+          });
+          return;
+        }
+
+        const asked = body as { type?: Rule["type"]; order?: string[] };
+        const keys = rules
+          .filter((rule) => rule.type === asked.type)
+          .map((rule) => rule.sk)
+          .sort();
+
+        const moved = (asked.order ?? []).flatMap((sk, index) => {
+          const rule = rules.find((candidate) => candidate.sk === sk);
+          const key = keys[index];
+          return rule && key !== undefined ? [{ ...rule, sk: key }] : [];
+        });
+
+        rules = [...rules.filter((rule) => rule.type !== asked.type), ...moved];
+
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(moved),
+        });
+        return;
+      }
+
       // Before the fallthrough and after the host routes: the host view fetches
       // its rules on mount, so leaving this to the 500 would put every spec that
       // lands on a host into the "Could not load these rules" state.
@@ -335,6 +380,9 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
     },
     setRules: (next) => {
       rules = next;
+    },
+    reorderReply: (reply) => {
+      reorder = reply;
     },
     signedInAs: (next) => {
       role = next;
@@ -403,6 +451,9 @@ const HOSTS_ITEM = /\/hosts\/[^/]+$/;
 
 /** `…/hosts/{host}/rules`, the collection — not one rule addressed under it. */
 const RULES_COLLECTION = /\/rules$/;
+
+/** `…/hosts/{host}/rules/reorder`, which is a verb rather than a rule id. */
+const RULES_REORDER = /\/rules\/reorder$/;
 
 /** A host row as `GET …/hosts` returns it. Counts default to an empty host. */
 export const host = (
