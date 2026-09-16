@@ -16,11 +16,9 @@ import { isRuleSk, type RuleType } from "./rule-keys.js";
 import type { ResolvedTarget } from "./targets-repository.js";
 
 /**
- * A rule item in the shape the Lambda@Edge reads. Only the fields the API itself
- * handles are named; the rest of the shape (matches, redirectURL,
- * forwardSettings…) is defined by the shared JSON Schemas and passed through
- * untouched — that is what the index signature stands for. The schemas, not this
- * type, are the contract.
+ * A rule item as the Lambda@Edge reads it. Only the fields the API handles are
+ * named; the rest passes through untouched, which is what the index signature
+ * stands for. The shared schemas, not this type, are the contract.
  */
 export interface RuleItem {
   pk: string;
@@ -31,13 +29,10 @@ export interface RuleItem {
 }
 
 /**
- * One host in a target's table, with how many rules of each kind it holds.
- *
- * A host is not a stored entity — it is the partition key of its rule items — so
- * it needs something in that partition to be listed at all. A host with rules is
- * listed from them; a host with none is listed from its marker item, which both
- * `createHost` and a rule's `create` leave behind. Only a partition holding
- * nothing at all is absent.
+ * One host in a target's table, with its rule counts. A host is not a stored
+ * entity — it is the partition key of its rules — so it needs *something* in its
+ * partition to be listed: its rules, or the marker item below. Only an empty
+ * partition is absent.
  */
 export interface HostSummary {
   host: string;
@@ -49,18 +44,13 @@ export interface HostSummary {
 type RuleKey = Pick<RuleItem, "pk" | "sk">;
 
 /**
- * Sort key of the item that makes a host exist before it has any rules.
+ * Sort key of the item that makes a host exist before it has any rules — what
+ * the console's "add host" writes, and without which a ruleless host would
+ * vanish on the next page load.
  *
- * A host is otherwise only the partition key of its rules, so one with none is
- * indistinguishable from one that was never created — it cannot be listed, and
- * would vanish on the next page load. This item is what the console's "add host"
- * writes.
- *
- * Invisible to the edge by construction: the Lambda@Edge queries
- * `begins_with(sk, "REDIRECT#")` and `begins_with(sk, "REWRITE#")`, and `"HOST"`
- * begins with neither, so it is never read, matched, or evaluated. It is equally
- * unaddressable over the API — `parseSk` rejects anything that is not
- * `TYPE#priority`, so `/rules/HOST` is a 400 rather than a route to this item.
+ * Invisible to the edge by construction: it queries `begins_with(sk,
+ * "REDIRECT#")` / `"REWRITE#"`, and neither matches. Unaddressable over the API
+ * too, since `parseSk` only accepts `TYPE#priority`.
  */
 export const HOST_MARKER_SK = "HOST";
 
@@ -71,9 +61,9 @@ const BATCH_LIMIT = 25;
  * How many times a batch is re-sent for the items DynamoDB declined.
  *
  * BatchWriteItem answers **200 with an `UnprocessedItems` map** when it throttles
- * part of a request — a success as far as the SDK's retry policy is concerned, so
- * nothing below this code will ever re-send them. Ignored, those rules quietly
- * survive a delete that reported success.
+ * part of a request — a success to the SDK's retry policy, so nothing below this
+ * code re-sends them. Ignored, those rules survive a delete that reported
+ * success.
  */
 const UNPROCESSED_ATTEMPTS = 5;
 
@@ -81,19 +71,13 @@ const UNPROCESSED_ATTEMPTS = 5;
 const UNPROCESSED_BACKOFF_MS = 50;
 
 /**
- * How long to wait before re-sending the items DynamoDB declined.
+ * How long to wait before re-sending declined items.
  *
- * Items come back unprocessed *because* the table is throttling, so re-sending
- * immediately puts the same request to the same hot partition before anything
- * it is waiting on can have changed — five back-to-back attempts are spent in
- * milliseconds and fail for the one reason. Exponential so the later attempts
- * wait long enough to be worth making.
- *
- * Jittered because the batches contending for the partition are the ones in
- * *other* invocations — this delete runs its own strictly in sequence — and a
- * fixed schedule marches all of them back to the table together, rebuilding the
- * burst that caused the throttling. Half the cap rather than AWS's full jitter:
- * a delay drawn near zero is the no-backoff case again for that batch.
+ * Exponential because items come back unprocessed *while* the partition is hot:
+ * five back-to-back attempts are spent in milliseconds and all fail for the one
+ * reason. Jittered because the competing batches are in other invocations, and a
+ * fixed schedule marches them back together, rebuilding the burst. Half the cap
+ * rather than AWS's full jitter — a delay near zero is no backoff at all.
  */
 const backoffFor = (attempt: number): number =>
   Math.round(
@@ -105,12 +89,10 @@ const sleepFor = (ms: number): Promise<void> =>
 
 /**
  * Folds projected keys into one entry per host. Exported so the in-memory fake
- * counts the same way the real repository does rather than reimplementing it.
+ * counts the same way rather than reimplementing it.
  *
- * An `sk` matching neither prefix still puts its host on the list but counts
- * toward neither total: the sort key is where a future non-rule item (a marker
- * for a host with no rules, say) would live, and such an item must not be
- * reported as a rule.
+ * An `sk` matching neither prefix lists its host but counts toward neither total
+ * — that is where a non-rule item like `HOST` lives, and it is not a rule.
  */
 export const summarizeHosts = (keys: RuleKey[]): HostSummary[] => {
   const hosts = new Map<string, HostSummary>();
@@ -202,10 +184,8 @@ export class DynamoRulesRepository implements RulesRepository {
   private readonly client: DynamoDBDocumentClient;
 
   /**
-   * `sleep` is the backoff seam. Injected rather than reached for directly so a
-   * test covering the unprocessed-items retry can assert the delays without
-   * spending them — the alternative is a suite that really waits out five
-   * doubling timeouts, or fake timers threaded through an async retry loop.
+   * `sleep` is the backoff seam: injected so a test can assert the retry delays
+   * without spending them, rather than waiting out five doubling timeouts.
    */
   constructor(
     private readonly target: ResolvedTarget,
@@ -214,14 +194,12 @@ export class DynamoRulesRepository implements RulesRepository {
     this.client = docClient(target.region, target.roleArn);
   }
 
-  // Follows LastEvaluatedKey: a Query returns at most 1 MB per page, and
-  // stopping at the first page would silently drop a busy host's lowest-priority
-  // rules with no error. Same reason DynamoTargetsRepository.list paginates.
+  // Follows LastEvaluatedKey: a Query pages at 1 MB, and stopping at the first
+  // page would silently drop a busy host's lowest-priority rules.
   //
-  // Eventually consistent, unlike `get` — a list is a whole partition rather
-  // than one item the caller was just handed, and the registry's own list reads
-  // the same way. A write can therefore lag by milliseconds here, against the
-  // ~1 min the edge takes to see it at all.
+  // Eventually consistent, unlike `get`: this is a whole partition, not an item
+  // the caller was just handed. A write can lag by milliseconds here, against
+  // the ~1 min the edge takes to see it at all.
   async listByHost(host: string): Promise<RuleItem[]> {
     const items: RuleItem[] = [];
     let start: Record<string, unknown> | undefined;
@@ -245,27 +223,20 @@ export class DynamoRulesRepository implements RulesRepository {
       start = out.LastEvaluatedKey;
     } while (start);
 
-    // The partition holds more than rules: a host created before it had any
-    // carries a marker item, and returning that as a rule would put a phantom
-    // row in the console's list — one with no type, priority or action. Filtered
-    // here rather than with a FilterExpression, which costs the same read and
-    // cannot express "either prefix" in a key condition anyway.
+    // The partition holds more than rules: returning a host's marker item as a
+    // rule would put a phantom row — no type, priority or action — in the
+    // console's list. Filtered here because a FilterExpression costs the same
+    // read and cannot express "either prefix" anyway.
     return items.filter((item) => isRuleSk(item.sk));
   }
 
   /**
-   * A Scan, because the hosts *are* the partition keys: there is no index to
-   * query for "every distinct pk", and a GSI keyed on one would cost a second
-   * copy of the table to answer a question the console asks once per page load.
+   * A Scan, because the hosts *are* the partition keys: nothing can query "every
+   * distinct pk", and a GSI keyed on one would cost a second copy of the table.
    *
-   * `ProjectionExpression` keeps this off the item bodies — a rule carries its
-   * matches and forwardSettings, and the Scan's 1 MB pages are counted against
-   * the bytes read, not the bytes returned. Neither `pk` nor `sk` is a DynamoDB
-   * reserved word, so they need no ExpressionAttributeNames indirection (unlike
-   * `disabled` in `setDisabled`).
-   *
-   * Eventually consistent, like `listByHost` and for the same reason: this is a
-   * whole-table read, not an item the caller was just handed.
+   * `ProjectionExpression` keeps it off the item bodies — the Scan's 1 MB pages
+   * count bytes read, not bytes returned. Eventually consistent, like
+   * `listByHost`: a whole-table read, not an item just handed to the caller.
    */
   async listHosts(): Promise<HostSummary[]> {
     const keys: RuleKey[] = [];
@@ -293,19 +264,15 @@ export class DynamoRulesRepository implements RulesRepository {
    * Writes the marker that makes an empty host exist.
    *
    * Two steps, because "already exists" is broader than "this key is taken": a
-   * host with rules and no marker must still be refused, and a condition on the
-   * marker's own key cannot see those rules. So the partition is probed first,
-   * and the conditional Put then guards the narrow race where two callers add
-   * the same empty host at once. A host that gained its first *rule* between the
-   * probe and the Put still gets a marker — harmless, since `listHosts` folds
-   * the partition into one entry and `deleteHost` takes the whole thing.
+   * host with rules and no marker must also be refused, and a condition on the
+   * marker's key cannot see those rules. So the partition is probed first, and
+   * the conditional Put guards the race between two callers adding the same
+   * empty host.
    *
-   * An existing host is still refused, but its marker is ensured on the way out.
-   * That is the repair path for a host with rules and no marker — every rule
-   * written before `create` started leaving one, and any host whose marker write
-   * failed. Without it the 409 is a dead end: the host reads as existing, so it
-   * cannot be added, yet it still disappears when its last rule goes, and the
-   * only way back is to delete the host and write every rule again.
+   * An existing host is refused but has its marker ensured on the way out —
+   * the repair path for hosts whose rules predate the marker, or whose marker
+   * write failed. Without it the 409 is a dead end: the host cannot be added,
+   * yet still disappears when its last rule goes.
    */
   async createHost(host: string): Promise<boolean> {
     if (await this.hostExists(host)) {
@@ -355,20 +322,16 @@ export class DynamoRulesRepository implements RulesRepository {
   }
 
   /**
-   * Deleting a host means deleting its rules one by one — DynamoDB has no
-   * "drop this partition" operation, so this reads the keys and writes them back
-   * as deletes, 25 at a time.
+   * DynamoDB has no "drop this partition", so this reads the host's keys and
+   * writes them back as deletes, 25 at a time.
    *
-   * **Not atomic.** A `TransactWriteItems` would be, but it caps at 100 items,
-   * and a host with more rules than that would need several transactions anyway
-   * — atomic in pieces is not atomic. So a failure part-way leaves the host with
-   * fewer rules rather than none. That is recoverable by repeating the delete,
-   * which is why this reports the count rather than pretending to be all-or-
-   * nothing.
+   * **Not atomic.** `TransactWriteItems` caps at 100 items, and a bigger host
+   * would need several transactions anyway — atomic in pieces is not atomic. A
+   * failure part-way leaves fewer rules rather than none, recoverable by
+   * repeating the delete, which is why this reports a count.
    *
-   * The keys are read first with a strongly consistent Query: an eventually
-   * consistent one can miss a rule written moments ago, and a delete that skips
-   * the newest rule is the one an author is most likely to notice.
+   * Strongly consistent Query first: an eventually consistent one can miss a
+   * rule written moments ago, and skipping the newest is what an author notices.
    */
   async deleteHost(host: string): Promise<number> {
     const keys = await this.listKeys(host);
@@ -486,25 +449,15 @@ export class DynamoRulesRepository implements RulesRepository {
   }
 
   /**
-   * Writes the host marker unless it is already there.
+   * Writes the host marker unless it is already there, so that a host outlives
+   * its rules however it came to exist. Without it, a host added through the
+   * console keeps its place in the sidebar when its last rule goes while one
+   * that first appeared as a rule's partition key does not — a difference the
+   * user cannot see.
    *
-   * So that a host outlives its rules however it came to exist. Without this the
-   * marker is only ever written by `createHost`, and two hosts in the same state
-   * behave differently: one added through the console keeps its place in the
-   * sidebar when its last rule goes, while one that first appeared as a rule's
-   * partition key disappears at that moment. Which of the two a user is looking
-   * at is not something they can see.
-   *
-   * After the rule, and never allowed to fail the create: the rule is what the
-   * caller asked for, and a 500 here would report a failure for a write that
-   * happened. A marker that did not get written costs only the empty-host case —
-   * `listHosts` reports the host from its rules regardless — so losing one
-   * degrades to the old behaviour rather than to anything incorrect.
-   *
-   * Rules written before this existed carry no marker, so their hosts still
-   * vanish with the last of them until something repairs one. Adding the host
-   * again does exactly that — see `createHost`, which ensures the marker even
-   * as it refuses the duplicate.
+   * Runs after the rule and never fails the create: the rule is what the caller
+   * asked for, and a lost marker only costs the empty-host case, since
+   * `listHosts` reports a host from its rules regardless.
    */
   private async ensureHostMarker(host: string): Promise<void> {
     try {
@@ -512,19 +465,18 @@ export class DynamoRulesRepository implements RulesRepository {
         new PutCommand({
           TableName: this.target.tableName,
           Item: { pk: host, sk: HOST_MARKER_SK },
-          // The marker's own key, so this writes once and every later create
-          // through the same host is refused here rather than rewriting it.
+          // Writes once; every later create through the same host is refused
+          // here rather than rewriting it.
           ConditionExpression: "attribute_not_exists(pk)",
         }),
       );
     } catch (err) {
-      // The marker already being there is not a failure — it is what every
-      // create after the first sees, and the condition exists to produce it.
+      // Already there is not a failure — it is what every create after the
+      // first sees, and what the condition exists to produce.
       if (isConditionalCheckFailed(err)) return;
 
-      // Anything else is swallowed, for the reason above, but not silently: this
-      // is the one path that lets the invariant decay, and a host that quietly
-      // stops outliving its rules is not something the console can report.
+      // Anything else is swallowed but not silently: this is the one path that
+      // lets the invariant decay, and the console cannot report it.
       console.warn(
         `could not write the host marker for "${host}" on "${this.target.tableName}"`,
         err,
@@ -558,14 +510,11 @@ export class DynamoRulesRepository implements RulesRepository {
         this.client.send(
           new TransactWriteCommand({
             // TransactWriteItems is not idempotent without a token, and the SDK
-            // retries on its own. Should a committed transaction's response be
-            // lost, the retry finds the new key taken and the old one gone —
-            // both conditions failing, which reads exactly like "someone else
-            // already deleted this rule" and would answer 404 for a move that
-            // succeeded. An author who then re-creates the rule at its old
-            // priority ends up with it live at both. The token is generated per
-            // call and reused across the SDK's own retries, so it makes a
-            // retried transaction a no-op without ever collapsing two moves a
+            // retries on its own. If a committed transaction's response is lost,
+            // the retry finds the new key taken and the old one gone — both
+            // conditions failing, which reads like "someone else deleted this
+            // rule" and answers 404 for a move that succeeded. Generated per
+            // call, so it makes a retry a no-op without collapsing two moves a
             // client genuinely asked for.
             ClientRequestToken: randomUUID(),
             TransactItems: [
