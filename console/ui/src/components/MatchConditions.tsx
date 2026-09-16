@@ -51,9 +51,9 @@ export default function MatchConditions({ matches, onChange }: Props) {
     <div className="matches">
       {matches.length === 0 && (
         <p className="matches-empty" role="status">
-          No conditions, so this rule would fire on <strong>every</strong>{" "}
-          request to this host. Add at least one unless that is really what you
-          want.
+          <strong>Warning:</strong> No conditions, so this rule would fire on{" "}
+          <strong>every</strong> request to this host. Add at least one unless
+          that is really what you want.
         </p>
       )}
 
