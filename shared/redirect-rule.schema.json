@@ -19,7 +19,13 @@
     },
     "type": { "const": "erMatchRule" },
     "statusCode": { "enum": [301, 302] },
-    "redirectURL": { "type": "string", "minLength": 1 },
+    "redirectURL": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:[hH][tT][tT][pP][sS]?://[^\\s]+|/[^\\s]*)$",
+      "description": "Where the rule sends the request: an absolute http(s) URL, or a root-relative path starting with \"/\". This is the console's \"Relative URL\" toggle — one field, two forms.",
+      "$comment": "Mirrors the console's own check (ruleDraft.ts ABSOLUTE_URL), so a URL the form accepts is never refused by the API — including the scheme's case, which is why it is spelled as character classes: draft-07 `pattern` has no case-insensitive flag. Whitespace is excluded throughout rather than only at the ends: the value is written to a Location header verbatim, and a raw CR/LF in it would split the response. `$1` capture references are unaffected."
+    },
     "useIncomingQueryString": { "type": "boolean" },
     "matches": {
       "type": "array",
