@@ -73,6 +73,10 @@ describe("validateRule", () => {
       // The "Relative URL" toggle's form of the same field.
       "/new",
       "/",
+      // A path may contain a backslash or a double slash — just not lead with
+      // one, which is what the rejections below are about.
+      "/a//b",
+      "/a\\b",
       // Regex captures are substituted at the edge, after validation.
       "https://www.example.com/$1",
       "/archive/$1",
@@ -89,6 +93,15 @@ describe("validateRule", () => {
       // Schemes the edge cannot put in a Location header meaningfully.
       "ftp://www.example.com/new",
       "javascript:alert(1)",
+      // A scheme with nowhere to send the visitor.
+      "https://",
+      // Protocol-relative and its backslash variant: both read as a path and
+      // both leave the host, so a rule written by a client that never saw the
+      // console could 301 an entire host off-site. The browser resolves
+      // "//evil.example.com" against the scheme alone.
+      "//evil.example.com/phish",
+      "/\\evil.example.com",
+      "/\\\\evil.example.com",
       // Would split the response if it reached the header verbatim.
       "https://www.example.com/new\r\nX-Injected: 1",
       "/new\npath",

@@ -150,6 +150,14 @@ const S3_DEFAULTS: S3Draft = {
 
 const ABSOLUTE_URL = /^https?:\/\//i;
 
+/**
+ * The whole of what a redirect target may be, kept in step with
+ * `redirectURL`'s `pattern` in shared/redirect-rule.schema.json — the messages
+ * below name the individual reasons, but this is what the API will actually
+ * apply, so the form must not accept anything it rejects.
+ */
+const REDIRECT_TARGET = /^(?:https?:\/\/[^\s]+|\/(?![/\\])[^\s]*)$/i;
+
 export const emptyRedirect = (): RedirectDraft => ({
   kind: "redirect",
   priority: "",
@@ -330,17 +338,48 @@ export const validateDraft = (
   });
 
   if (draft.kind === "redirect") {
-    if (draft.redirectURL.trim() === "") {
+    // The value as it will be sent: `toRuleInput` trims it, so surrounding
+    // space is not an error, and checking the untrimmed string would reject a
+    // trailing space the save would have dropped anyway.
+    const target = draft.redirectURL.trim();
+
+    if (target === "") {
       details.push({ path: "/redirectURL", message: "is required" });
-    } else if (draft.relative && !draft.redirectURL.startsWith("/")) {
+    } else if (draft.relative && !target.startsWith("/")) {
       details.push({
         path: "/redirectURL",
         message: "must start with / when it is a relative URL",
       });
-    } else if (!draft.relative && !ABSOLUTE_URL.test(draft.redirectURL)) {
+    } else if (draft.relative && /^\/[/\\]/.test(target)) {
+      // `//host` and `/\host` read as paths but are not: the browser resolves
+      // them against the scheme alone and leaves this host, which is the one
+      // thing a "relative" URL is supposed to guarantee it does not do.
+      details.push({
+        path: "/redirectURL",
+        message:
+          "must not start with // or /\\ — the browser reads that as another host, not a path on this one",
+      });
+    } else if (!draft.relative && !ABSOLUTE_URL.test(target)) {
       details.push({
         path: "/redirectURL",
         message: "must start with http:// or https://",
+      });
+    } else if (/\s/.test(target)) {
+      // Rejected rather than encoded here: guessing at which spaces were meant
+      // to be %20 and which were a typo is not the form's call, and the value
+      // reaches a Location header verbatim.
+      details.push({
+        path: "/redirectURL",
+        message: "cannot contain a space — percent-encode it as %20",
+      });
+    } else if (!REDIRECT_TARGET.test(target)) {
+      // The backstop for whatever the named cases above miss, so the form can
+      // never pass the API something its schema refuses: a bare "https://" with
+      // no host lands here.
+      details.push({
+        path: "/redirectURL",
+        message:
+          "must be a full URL like https://example.com/path, or a path like /path",
       });
     }
     return details;

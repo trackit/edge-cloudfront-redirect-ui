@@ -382,7 +382,7 @@ export interface components {
       sk?: components["schemas"]["RuleKeySk"];
       /** @enum {unknown} */
       statusCode: 301 | 302;
-      /** @description Absolute http(s) URL, or a root-relative path starting with `/`. The scheme is case-insensitive; whitespace is rejected anywhere in the value. */
+      /** @description Absolute http(s) URL, or a root-relative path starting with `/`. The scheme is case-insensitive; whitespace is rejected anywhere in the value, as is a path starting `//` or `/\` — the browser resolves those against the scheme alone and leaves this host. */
       redirectURL: string;
       useIncomingQueryString?: boolean;
       matches: components["schemas"]["match"][];
@@ -458,7 +458,7 @@ export interface components {
       type: "erMatchRule";
       /** @enum {unknown} */
       statusCode: 301 | 302;
-      /** @description Where the rule sends the request: an absolute http(s) URL, or a root-relative path starting with "/". This is the console's "Relative URL" toggle — one field, two forms. */
+      /** @description Where the rule sends the request: an absolute http(s) URL, or a root-relative path starting with "/" — and a path means a path on this host, so "//host" and "/\host" are not paths. This is the console's "Relative URL" toggle — one field, two forms. */
       redirectURL: string;
       useIncomingQueryString?: boolean;
       matches: components["schemas"]["match"][];
