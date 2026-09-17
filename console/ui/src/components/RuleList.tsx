@@ -140,10 +140,8 @@ export default function RuleList({
       {showRedirects && (
         <RuleGroup
           title="Redirects"
-          kind="redirect"
           phase="viewer-request"
           rules={grouped.redirects}
-          onCreate={onCreate}
           onEdit={onEdit}
           onToggle={onToggle}
           onDelete={onDelete}
@@ -155,10 +153,8 @@ export default function RuleList({
       {showRewrites && (
         <RuleGroup
           title="Rewrites"
-          kind="rewrite"
           phase="origin-request"
           rules={grouped.rewrites}
-          onCreate={onCreate}
           onEdit={onEdit}
           onToggle={onToggle}
           onDelete={onDelete}
@@ -172,10 +168,8 @@ export default function RuleList({
 
 function RuleGroup({
   title,
-  kind,
   phase,
   rules,
-  onCreate,
   onEdit,
   onToggle,
   onDelete,
@@ -183,10 +177,8 @@ function RuleGroup({
   canWrite,
 }: {
   title: string;
-  kind: "redirect" | "rewrite";
   phase: string;
   rules: Rule[];
-  onCreate: (kind: "redirect" | "rewrite") => void;
   onEdit: (rule: Rule) => void;
   onToggle: (rule: Rule) => void;
   onDelete: (rule: Rule) => void;
@@ -204,14 +196,9 @@ function RuleGroup({
             fires on a cache miss. */}
         <span className="phase-chip mono">{phase}</span>
 
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm rule-group-add"
-          onClick={() => onCreate(kind)}
-        >
-          <IconPlus size={15} />
-          Create {kind}
-        </button>
+        {/* No create button here. Creating lives once, in the host header — which
+            is also the only copy that refuses a write a viewer cannot make and
+            stays dead while the list could not be read (CF-25). */}
       </header>
 
       <ul className="rule-cards">
