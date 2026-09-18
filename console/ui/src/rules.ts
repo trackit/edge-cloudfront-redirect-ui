@@ -153,6 +153,18 @@ export function useRules(targetId: string, host: string) {
     [mutate, targetId, host],
   );
 
+  /**
+   * A new order for one kind, in one request. The rules keep their priorities
+   * and swap which of them they hold, so the keys in `order` are the keys that
+   * exist afterwards — the list is refetched regardless, like every other
+   * mutation here.
+   */
+  const reorder = useCallback(
+    (type: Rule["type"], order: string[]) =>
+      mutate(() => api.rules.reorder(targetId, host, type, order)),
+    [mutate, targetId, host],
+  );
+
   const toggle = useCallback(
     (rule: Rule) =>
       mutate(() =>
@@ -174,6 +186,7 @@ export function useRules(targetId: string, host: string) {
     reload: load,
     create,
     update,
+    reorder,
     toggle,
     remove,
   };

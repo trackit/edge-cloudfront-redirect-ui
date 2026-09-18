@@ -8,7 +8,7 @@ import RuleEditor from "./RuleEditor";
 import RuleList from "./RuleList";
 import { IconClock, IconPlus } from "./icons";
 import { resolveHostView, useHosts } from "../hosts";
-import { takenPriorities, useRules } from "../rules";
+import { asApiError, takenPriorities, useRules } from "../rules";
 import { useCanWrite } from "../auth/useAuth";
 import { CONSOLE_PATH, hostKey, hostPath } from "../hostRoutes";
 import type { HostSummary, Rule, RuleInput } from "../api";
@@ -244,11 +244,29 @@ function HostWorkspace({
   host: string;
   onCountsChanged: () => void;
 }) {
-  const { grouped, loading, error, reload, create, update, toggle, remove } =
-    useRules(distribution.targetId, host);
+  const {
+    grouped,
+    loading,
+    error,
+    reload,
+    create,
+    update,
+    reorder,
+    toggle,
+    remove,
+  } = useRules(distribution.targetId, host);
   const [editing, setEditing] = useState<EditorTarget>(null);
   const [deletingRule, setDeletingRule] = useState<Rule | null>(null);
   const [busy, setBusy] = useState<string[]>([]);
+  /**
+   * Why a reorder was refused, if it was.
+   *
+   * Its own state rather than the load error above: the rules on screen are
+   * still good — the list snapped back to them — so this must not replace the
+   * list with "could not load these rules". A 409 here is the ordinary case of
+   * someone else having changed the host, and it clears on the next attempt.
+   */
+  const [reorderError, setReorderError] = useState<string | null>(null);
   // Disabled rather than hidden. A viewer whose console is missing controls
   // reads it as broken or as a different product; one whose controls are dead
   // and say why reads it as a permission. The API refuses either way — this only
@@ -279,6 +297,32 @@ function HostWorkspace({
     }
     await create(input);
     onCountsChanged();
+  };
+
+  /**
+   * Saves a new order, reporting whether it stuck instead of throwing. The list
+   * moved its rows before the request went out, so it is the one that has to put
+   * them back — and it can only do that if it is told.
+   *
+   * A refusal is followed by a refetch: the likeliest reason is that someone
+   * else created or deleted a rule, in which case the list the user is looking
+   * at is out of date and is what they would drag again.
+   */
+  const saveOrder = async (
+    type: Rule["type"],
+    order: string[],
+  ): Promise<boolean> => {
+    setReorderError(null);
+    try {
+      await reorder(type, order);
+      return true;
+    } catch (caught) {
+      setReorderError(
+        asApiError(caught, "Could not save the new order").message,
+      );
+      await reload({ keepVisible: true });
+      return false;
+    }
   };
 
   // The confirmation lives in DeleteRuleDialog; this is only the action it runs.
@@ -363,6 +407,13 @@ function HostWorkspace({
         </div>
       )}
 
+      {reorderError !== null && (
+        <div className="form-error" role="alert">
+          <strong>Could not save the new order</strong>
+          <span>{reorderError}</span>
+        </div>
+      )}
+
       <RuleList
         host={host}
         grouped={grouped}
@@ -374,6 +425,7 @@ function HostWorkspace({
         onEdit={setEditing}
         onToggle={(rule) => void withBusy(rule.sk, () => toggle(rule))}
         onDelete={setDeletingRule}
+        onReorder={saveOrder}
       />
 
       {editing !== null && (

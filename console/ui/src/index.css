@@ -1425,9 +1425,72 @@ button {
   flex-direction: column;
   gap: 10px;
 }
+/* The row exists to carry the drop indicator and the dragging state; the card
+   inside it keeps every other bit of styling. */
+.rule-row {
+  position: relative;
+}
+/* Left in place at half strength rather than lifted out, so the list does not
+   reflow under the pointer mid-drag and the row the indicator is measured
+   against stays where it was. */
+.rule-row.is-dragging .rule-card {
+  opacity: 0.5;
+  border-color: var(--border-strong);
+}
+/* Where the row would land. Drawn in the gap between cards — the list's own
+   10px gap — so it reads as an insertion point rather than a border on either
+   card. */
+.rule-row.is-drop-before::before,
+.rule-row.is-drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--orange);
+}
+.rule-row.is-drop-before::before {
+  top: -6px;
+}
+.rule-row.is-drop-after::after {
+  bottom: -6px;
+}
+.rule-grip {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-dim);
+  /* The pointer owns the gesture: without this a touch drag scrolls the page
+     instead, and the handler never sees the move. */
+  touch-action: none;
+  cursor: grab;
+}
+.rule-grip:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-soft);
+}
+.rule-grip:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+.rule-grip:active:not(:disabled) {
+  cursor: grabbing;
+}
+/* Still there, still in the grid — a row missing its handle would sit out of
+   line with the rows around it. */
+.rule-grip:disabled {
+  color: var(--border-strong);
+  cursor: default;
+}
 .rule-card {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto auto 1fr auto;
   align-items: center;
   gap: 14px;
   padding: 14px 16px;

@@ -19,6 +19,19 @@ export const IconArrow = ({ size = 16 }: P) => (
   </svg>
 );
 
+/* Filled rather than stroked — six 1px strokes at this size render as grey mush,
+   and the grip has to read as a texture you can grab. */
+export const IconGrip = ({ size = 16 }: P) => (
+  <svg {...base(size)} fill="currentColor" stroke="none">
+    <circle cx="9" cy="6" r="1.4" />
+    <circle cx="15" cy="6" r="1.4" />
+    <circle cx="9" cy="12" r="1.4" />
+    <circle cx="15" cy="12" r="1.4" />
+    <circle cx="9" cy="18" r="1.4" />
+    <circle cx="15" cy="18" r="1.4" />
+  </svg>
+);
+
 export const IconServer = ({ size = 16 }: P) => (
   <svg {...base(size)}>
     <rect x="3" y="4" width="18" height="7" rx="2" />

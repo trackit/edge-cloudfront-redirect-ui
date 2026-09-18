@@ -186,6 +186,13 @@ describe("createApiClient — routes", () => {
       url: RULE,
       call: (c) => c.rules.remove("t-1", "www", "REDIRECT#00100"),
     },
+    {
+      name: "rules.reorder",
+      method: "POST",
+      url: `${RULE_PATH}/reorder`,
+      call: (c) =>
+        c.rules.reorder("t-1", "www", "erMatchRule", ["REDIRECT#00100"]),
+    },
   ];
 
   // Each method is a one-line wrapper, which is exactly why they are worth
@@ -211,6 +218,24 @@ describe("createApiClient — routes", () => {
     // The route accepts nothing else, and sending a whole rule here would be a
     // 400 rather than a silent full replace.
     expect(calls[0].init.body).toBe(JSON.stringify({ disabled: false }));
+  });
+
+  it("sends the type and the keys in order when reordering", async () => {
+    const { calls, fetch } = stubFetch();
+
+    await client(fetch).rules.reorder("t-1", "www", "erMatchRule", [
+      "REDIRECT#00200",
+      "REDIRECT#00100",
+    ]);
+
+    // Keys, not priorities: the server reuses the priorities these keys already
+    // carry, and the order of the array is the whole message.
+    expect(calls[0].init.body).toBe(
+      JSON.stringify({
+        type: "erMatchRule",
+        order: ["REDIRECT#00200", "REDIRECT#00100"],
+      }),
+    );
   });
 });
 
