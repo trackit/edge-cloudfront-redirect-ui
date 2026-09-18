@@ -591,7 +591,9 @@ describe("parseExport — Edge Redirector policy CSV", () => {
 
   it("maps a wildcard-capture redirect, translating \\1 to $1", () => {
     // The real Akamai shape: a wildcard match feeding a backreference target.
-    const csv = `${HEADER}\n5001,P_BE,note,301,\\1/\\2/,True,,path,contains,/*/*/,False,False`;
+    // The glob keeps its leading "/" outside the capture, so the target has to
+    // carry that "/" itself for the redirect to stay root-relative.
+    const csv = `${HEADER}\n5001,P_BE,note,301,/\\1/\\2/,True,,path,contains,/*/*/,False,False`;
     const preview = parseExport(csv, {
       filename: "policy.csv",
       defaultHost: HOST,
@@ -601,11 +603,9 @@ describe("parseExport — Edge Redirector policy CSV", () => {
     expect(preview.rows).toHaveLength(1);
 
     const row = preview.rows[0];
-    // Importable even though the relative target does not start with "/", because
-    // it reinjects a capture whose shape is only known at the edge.
     expect(row.status).not.toBe("skipped");
     const input = asRedirect(row.input);
-    expect(input.redirectURL).toBe("$1/$2/");
+    expect(input.redirectURL).toBe("/$1/$2/");
     expect(input.statusCode).toBe(301);
     expect(input.useIncomingQueryString).toBe(true);
 
@@ -616,6 +616,55 @@ describe("parseExport — Edge Redirector policy CSV", () => {
       "a",
       "b",
     ]);
+  });
+
+  /**
+   * The edge writes the target into `Location` verbatim, so one that starts with
+   * a capture taken from *inside* the path builds a path-relative redirect: the
+   * two-segment glob below is translated to an anchored regex whose first group
+   * opens after the leading "/", so `\1/\2/` on `/a/b/` asks the browser for
+   * `a/b/`, which it resolves to `/a/b/a/b/`. Refused rather than imported as a
+   * loop — the fix (where the leading "/" goes) is the user's to make, not one
+   * the importer can guess.
+   */
+  it("refuses a capture target that would redirect relative to the path", () => {
+    const csv = `${HEADER}\n5001,P_BE,note,301,\\1/\\2/,True,,path,contains,/*/*/,False,False`;
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
+
+    const row = preview.rows[0];
+    expect(row.status).toBe("skipped");
+    expect(row.input).toBeUndefined();
+    // Translated all the same, so the preview shows what was read.
+    expect(row.draft.redirectURL).toBe("$1/$2/");
+    expect(row.validation).toEqual([
+      {
+        path: "/redirectURL",
+        message: expect.stringContaining("start of the request"),
+      },
+    ]);
+  });
+
+  /**
+   * The same target is fine when the capture starts where the path does: an
+   * unanchored `(.*)` matches from index 0, so `$1` carries the leading "/".
+   */
+  it("keeps a capture target whose group starts at the path's start", () => {
+    const pattern = "(.*)\\/([^\\/]+)\\/";
+    const csv = `${HEADER}\n5001,P_BE,note,301,\\1/\\2/,True,,path,regex,${pattern},False,False`;
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
+
+    const row = preview.rows[0];
+    expect(row.validation).toEqual([]);
+    expect(asRedirect(row.input).redirectURL).toBe("$1/$2/");
+    // What the edge will build for /a/b/: root-relative, so no loop.
+    const [, one, two] = new RegExp(pattern).exec("/a/b/") ?? [];
+    expect(`${one}/${two}/`).toBe("/a/b/");
   });
 
   it("groups rows sharing a policyId into one rule, ANDing their conditions", () => {
@@ -657,7 +706,7 @@ describe("parseExport — Edge Redirector policy CSV", () => {
   });
 
   it("warns when a target reinjects a capture no condition provides", () => {
-    const csv = `${HEADER}\n7,Lost,note,301,\\1/gone,,,path,equals,/exact,False,False`;
+    const csv = `${HEADER}\n7,Lost,note,301,/gone/\\1,,,path,equals,/exact,False,False`;
     const preview = parseExport(csv, {
       filename: "policy.csv",
       defaultHost: HOST,
@@ -665,7 +714,23 @@ describe("parseExport — Edge Redirector policy CSV", () => {
     const row = preview.rows[0];
     expect(row.status).toBe("warning");
     expect(row.messages.join(" ")).toMatch(/reinjects a captured group/);
-    expect(asRedirect(row.input).redirectURL).toBe("$1/gone");
+    expect(asRedirect(row.input).redirectURL).toBe("/gone/$1");
+  });
+
+  /**
+   * The same rule with the capture in front is refused, not warned: with no
+   * regex condition the edge substitutes nothing, so `Location` would be the
+   * literal `$1/gone` — a path-relative value on top of a meaningless one.
+   */
+  it("refuses a leading capture no condition provides", () => {
+    const csv = `${HEADER}\n7,Lost,note,301,\\1/gone,,,path,equals,/exact,False,False`;
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
+    const row = preview.rows[0];
+    expect(row.status).toBe("skipped");
+    expect(row.validation[0].path).toBe("/redirectURL");
   });
 
   it("keeps space-separated alternatives verbatim for the edge to expand", () => {

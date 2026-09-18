@@ -152,6 +152,62 @@ const S3_DEFAULTS: S3Draft = {
 const ABSOLUTE_URL = /^https?:\/\//i;
 
 /**
+ * A target whose first characters are `$1`.
+ *
+ * Only the *leading* backreference decides the shape of the `Location` the edge
+ * builds, and only `$1` at that: where a later group starts inside the pattern
+ * is not something this can read, so `$2…` is not treated as knowable.
+ */
+const LEADING_CAPTURE = /^\$1(?!\d)/;
+
+/**
+ * Whether a pattern's first capturing group starts at the beginning of whatever
+ * the pattern is tested against: `^(…)`, or an unanchored `(.*`/`(.+`, which
+ * starts at index 0 anyway — a leading `.*` absorbs any prefix, so the match
+ * never has to begin further in.
+ *
+ * A non-capturing `(?:` opens no group, so it does not qualify.
+ */
+const CAPTURES_FROM_START = /^(?:\^\((?!\?)|\(\.[*+])/;
+
+/** Regex mode at the edge: a `regex` operator, or a `regex` match type. */
+const isRegexMode = (match: MatchCondition): boolean =>
+  match.matchOperator === "regex" || match.matchType === "regex";
+
+/**
+ * Whether the condition that fills `$1` takes its capture from the start of the
+ * request, which is what makes a target that *begins* with `$1` safe.
+ *
+ * The edge substitutes from the first regex condition that matches, against the
+ * request path for a `path`/`regex` condition and against the whole URL for a
+ * pattern that mentions a scheme (`rules-service.ts` `firstRegexCapture`,
+ * `lib/get-match-source.ts`). Both of those sources start with something a
+ * browser can resolve — `/…` or `https://…` — so a group anchored to their
+ * start expands to a `Location` that is still root-relative or absolute.
+ *
+ * Every other source cannot say that: a group behind a literal (`^/old/(.*)$`
+ * captures `shoes`), or a capture off a `hostname`, `header` or `cookie`
+ * condition, expands to a bare word.
+ */
+const capturesFromRequestStart = (matches: MatchCondition[]): boolean => {
+  // A negated regex only lets a rule through by *not* matching, so it never
+  // supplies the capture. Any of the others may be the one that does — the edge
+  // takes the first that matches, which is per-request — so all of them qualify
+  // or none does.
+  const sources = matches.filter(
+    (match) => isRegexMode(match) && match.negate !== true,
+  );
+  return (
+    sources.length > 0 &&
+    sources.every(
+      (match) =>
+        (match.matchType === "path" || match.matchType === "regex") &&
+        CAPTURES_FROM_START.test(match.matchValue),
+    )
+  );
+};
+
+/**
  * Whether a regex is free of catastrophic backtracking (ReDoS), via `safe-regex`.
  * An unparseable pattern is treated as safe here — its invalidity is reported
  * separately — so a single value never draws two overlapping errors.
@@ -331,7 +387,7 @@ export const validateDraft = (
     // Either is regex mode at the edge: a `regex` operator, or a `regex` match
     // type. Checking only the operator lets a `matchType: "regex"` with an
     // invalid pattern through to the server.
-    if (match.matchOperator === "regex" || match.matchType === "regex") {
+    if (isRegexMode(match)) {
       let compiles = true;
       try {
         new RegExp(match.matchValue);
@@ -357,20 +413,36 @@ export const validateDraft = (
   });
 
   if (draft.kind === "redirect") {
-    // A target that reinjects a captured group (`$1` …) has no fixed leading
-    // segment — its shape is only known once the edge substitutes the capture,
-    // so the relative/absolute checks below cannot apply to it.
-    const reinjectsCapture = /\$[1-9]\d*/.test(draft.redirectURL);
-    if (draft.redirectURL.trim() === "") {
+    // The edge writes this value into `Location` as it stands, so it has to be
+    // absolute or root-relative: anything else is resolved against the path the
+    // request came in on, and `/a/b/` asking for `a/b/` lands on `/a/b/a/b/`.
+    //
+    // A reinjected capture is checked on the same terms, not exempted from them.
+    // Only a target that *starts* with `$1` has a leading segment the form
+    // cannot read, and even then only when the capture is not anchored to the
+    // start of the request — a later `$1` sits behind a literal prefix this can
+    // check like any other.
+    const target = draft.redirectURL.trim();
+    if (target === "") {
       details.push({ path: "/redirectURL", message: "is required" });
-    } else if (reinjectsCapture) {
-      // Accepted as-is: validated at the edge against the actual capture.
-    } else if (draft.relative && !draft.redirectURL.startsWith("/")) {
+    } else if (LEADING_CAPTURE.test(target)) {
+      if (!capturesFromRequestStart(draft.matches)) {
+        details.push({
+          path: "/redirectURL",
+          message:
+            "starts with a captured group that is not taken from the start of " +
+            "the request, so the redirect may not begin with / — the browser " +
+            "would resolve it against the path it came from, sending /a/b/ to " +
+            "/a/b/a/b/. Write the leading path in the target (/$1), or widen " +
+            "the condition's group so it captures from the start of the path",
+        });
+      }
+    } else if (draft.relative && !target.startsWith("/")) {
       details.push({
         path: "/redirectURL",
         message: "must start with / when it is a relative URL",
       });
-    } else if (!draft.relative && !ABSOLUTE_URL.test(draft.redirectURL)) {
+    } else if (!draft.relative && !ABSOLUTE_URL.test(target)) {
       details.push({
         path: "/redirectURL",
         message: "must start with http:// or https://",
