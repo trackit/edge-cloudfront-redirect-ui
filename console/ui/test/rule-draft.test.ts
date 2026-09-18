@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  canBeRelative,
   convertRedirectUrl,
   draftFromRule,
   labelForPath,
+  originOf,
   pickSslProtocol,
   toRuleInput,
   validateDraft,
@@ -276,6 +278,70 @@ describe("convertRedirectUrl", () => {
 
   it("puts the host back going absolute", () => {
     expect(convertRedirectUrl("/x", false, "h")).toBe("https://h/x");
+  });
+
+  it("restores the remembered origin rather than assuming one", () => {
+    // Without the memory this returns https://www.example.com/x, quietly
+    // changing both the scheme and the port of a URL the user only reformatted.
+    expect(
+      convertRedirectUrl(
+        "/x",
+        false,
+        "www.example.com",
+        "http://www.example.com:8080",
+      ),
+    ).toBe("http://www.example.com:8080/x");
+  });
+
+  it("keeps a hand-edited path when restoring the origin", () => {
+    // Toggled on, then the path edited. The host is the part the user cannot
+    // see, so it is the part worth remembering.
+    expect(
+      convertRedirectUrl(
+        "/y",
+        false,
+        "www.example.com",
+        "https://shop.example.com",
+      ),
+    ).toBe("https://shop.example.com/y");
+  });
+
+  it("falls back to the rule's host when nothing was remembered", () => {
+    // A rule stored as a path does mean "this host", so deriving one is right.
+    expect(convertRedirectUrl("/x", false, "www.example.com")).toBe(
+      "https://www.example.com/x",
+    );
+  });
+});
+
+describe("originOf", () => {
+  it.each([
+    ["https://h/x", "https://h"],
+    ["http://h:8080/x?y=1", "http://h:8080"],
+    ["https://h", "https://h"],
+  ])("reads %s as %s", (url, origin) => {
+    expect(originOf(url)).toBe(origin);
+  });
+
+  it("has nothing to read from a relative URL", () => {
+    expect(originOf("/x")).toBeUndefined();
+  });
+});
+
+describe("canBeRelative", () => {
+  it.each([
+    ["the rule's own host", "https://www.example.com/x", true],
+    ["the same host in another case", "https://WWW.Example.com/x", true],
+    ["the same host on another port", "https://www.example.com:8443/x", true],
+    ["a sibling subdomain", "https://shop.example.com/x", false],
+    ["an unrelated domain", "https://partner.test/x", false],
+  ])("targeting %s", (_case, url, allowed) => {
+    expect(canBeRelative(url, "www.example.com")).toBe(allowed);
+  });
+
+  it("is always available for a path, which names no host", () => {
+    // Switching back off has to stay possible whatever the memory holds.
+    expect(canBeRelative("/x", "www.example.com")).toBe(true);
   });
 });
 
