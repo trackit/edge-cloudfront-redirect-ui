@@ -251,6 +251,37 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/targets/{targetId}/hosts/{host}/rules/reorder": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
+        targetId: components["parameters"]["TargetId"];
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
+        host: components["parameters"]["Host"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reorder a host's rules of one kind.
+     * @description Puts the host's redirects — or its rewrites — into the order given, as one atomic write. This is what saves a drag & drop: a priority is part of a rule's key, so a reorder is several moves, and done as separate requests a failure part way would leave the host in an order nobody asked for. At the edge that is live traffic following it.
+     *
+     *     **The rules keep the priorities they already have.** They are handed back out in ascending order to the sequence in `order`, so the rules swap numbers and no number is invented or retired: a host laid out 100/200/300 still reads 100/200/300 afterwards, and one laid out 10/50/900 keeps its own spacing. Nothing is created or deleted, and every rule that is already in the right place is left untouched — an order that matches the stored one costs no writes at all.
+     *
+     *     `order` must name exactly the host's rules of that `type`, by sort key. Sending a key of the other kind is a 400 — redirects and rewrites are independent sequences at the edge — and naming a set that is not the stored one is a 409, which is what a client sees when another tab created or deleted a rule after it read the list. It does not detect a concurrent *edit*: a PUT to one of these rules landing between the read and this write is overwritten with the fields the reorder read, as last-write-wins everywhere else here.
+     *
+     *     The response is the reordered rules, in their new order, with the keys they now answer on — the same shape as `GET …/rules` narrowed to one kind. A reorder takes effect at the edge within the cache TTL (~1 min), like every other rule change.
+     */
+    post: operations["reorderRules"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/targets/{targetId}/hosts/{host}/rules/{sk}": {
     parameters: {
       query?: never;
@@ -392,6 +423,16 @@ export interface components {
       /** @description `true` takes the rule out of service at the edge while leaving it in the table at its current priority; `false` puts it back. */
       disabled: boolean;
     };
+    /** @description A new order for one kind of a host's rules. `type` picks the sequence — redirects and rewrites are independent at the edge — and `order` lists that sequence's rules by sort key, first to last. */
+    RuleReorder: {
+      /**
+       * @description Which sequence is being reordered: `erMatchRule` for the redirects, `frMatchRule` for the rewrites. Every key in `order` must belong to it.
+       * @enum {unknown}
+       */
+      type: "erMatchRule" | "frMatchRule";
+      /** @description The host's rules of that type, by sort key, in the order they should end up in — exactly those rules, each once. The priorities in these keys are the ones handed back out, which is why the set has to be complete: a missing rule would be a priority the reorder gives away. */
+      order: string[];
+    };
     /** @description Lower runs first. Zero-padded to five digits and joined to the rule type as `sk` (`REDIRECT#00100`), so it is unique per host per type — and the width is why the range ends at 99999. */
     RulePriority: number;
     /** @description Host. Derived from the path; may be sent (a rule fetched with GET carries it) but must match, or the request is a 400. */
@@ -450,6 +491,7 @@ export interface components {
           | "METHOD_NOT_ALLOWED"
           | "NOT_FOUND"
           | "RULE_EXISTS"
+          | "RULES_CHANGED"
           | "TARGET_EXISTS"
           | "TARGET_UNREACHABLE"
           | "UNAUTHORIZED"
@@ -640,6 +682,15 @@ export interface components {
     };
     /** @description That priority is already taken for this host and rule type. Priority is part of a rule's key, so two rules cannot share one. Nothing was written — on a move, neither the rule being moved nor the one already there. */
     RuleConflict: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/json": components["schemas"]["Error"];
+      };
+    };
+    /** @description `RULES_CHANGED` — the order does not describe the host's rules as they are now: it names a rule the host does not have, or leaves one of them out. The usual cause is another tab (or another person) creating or deleting a rule after this client read the list, and the reorder is refused rather than guessed at, since the priorities it hands out come from the very set that has changed. Nothing was written. Reload the rules and reorder them again. */
+    RuleOrderConflict: {
       headers: {
         [name: string]: unknown;
       };
@@ -1088,6 +1139,43 @@ export interface operations {
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       409: components["responses"]["RuleConflict"];
+      500: components["responses"]["InternalError"];
+      502: components["responses"]["TargetUnreachable"];
+    };
+  };
+  reorderRules: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
+        targetId: components["parameters"]["TargetId"];
+        /** @description Rule host — the DynamoDB partition key, e.g. www.example.com. Matched case-insensitively: the value is lowercased before it is used as a key, so `WWW.Example.com` and `www.example.com` address one host rather than two partitions. Rules are therefore always stored under the lowercased host, whichever case created them. */
+        host: components["parameters"]["Host"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RuleReorder"];
+      };
+    };
+    responses: {
+      /** @description The host's rules of that kind, in their new order. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Rule"][];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      405: components["responses"]["MethodNotAllowed"];
+      409: components["responses"]["RuleOrderConflict"];
       500: components["responses"]["InternalError"];
       502: components["responses"]["TargetUnreachable"];
     };

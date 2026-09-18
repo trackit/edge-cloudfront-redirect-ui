@@ -42,6 +42,26 @@ export const isConditionalCheckFailed = (err: unknown): boolean =>
   errorName(err) === "ConditionalCheckFailedException";
 
 /**
+ * The transactional form of the check above: a `TransactWriteItems` that was
+ * cancelled because one of its conditions failed, rather than for capacity or a
+ * malformed request. Reported per leg in `CancellationReasons`, so this only
+ * answers "some condition refused" — a caller that needs to know *which* one
+ * reads the array positionally itself, as `move` does.
+ */
+export const isTransactionRefused = (err: unknown): boolean => {
+  if (typeof err !== "object" || err === null) return false;
+
+  const { CancellationReasons: reasons } = err as {
+    CancellationReasons?: { Code?: string }[];
+  };
+
+  return (
+    Array.isArray(reasons) &&
+    reasons.some((reason) => reason?.Code === "ConditionalCheckFailed")
+  );
+};
+
+/**
  * True when DynamoDB says the table itself is not there. Distinct from the
  * `UNREACHABLE` set above, which lumps it in with "cannot reach": at
  * registration this one is a definitive answer about the *input* and the others

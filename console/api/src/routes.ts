@@ -13,6 +13,7 @@ import {
   getRule,
   listRules,
   putRule,
+  reorderRules,
   toggleRule,
 } from "./handlers/rules.js";
 import { createHost, deleteHost, listHosts } from "./handlers/hosts.js";
@@ -85,6 +86,16 @@ export const routes: Route[] = [
 
   { method: "GET", pattern: RULES, handler: listRules },
   { method: "POST", pattern: RULES, handler: createRule, write: true },
+  // Before the `:sk` routes so the literal segment is read as itself. It cannot
+  // actually collide — `parseSk` refuses anything that is not `TYPE#priority`,
+  // so no rule is ever addressable as "reorder" — but the ordering is the part
+  // that stays true if that ever changes.
+  {
+    method: "POST",
+    pattern: `${RULES}/reorder`,
+    handler: reorderRules,
+    write: true,
+  },
   { method: "GET", pattern: `${RULES}/:sk`, handler: getRule },
   { method: "PUT", pattern: `${RULES}/:sk`, handler: putRule, write: true },
   {

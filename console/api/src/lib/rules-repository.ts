@@ -11,7 +11,11 @@ import {
   type DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
 import { docClient } from "./dynamo.js";
-import { isConditionalCheckFailed, toTargetError } from "./dynamo-errors.js";
+import {
+  isConditionalCheckFailed,
+  isTransactionRefused,
+  toTargetError,
+} from "./dynamo-errors.js";
 import { isRuleSk, type RuleType } from "./rule-keys.js";
 import type { ResolvedTarget } from "./targets-repository.js";
 
@@ -56,6 +60,14 @@ export const HOST_MARKER_SK = "HOST";
 
 /** DynamoDB's hard cap on one BatchWriteItem request. */
 const BATCH_LIMIT = 25;
+
+/**
+ * DynamoDB's hard cap on one TransactWriteItems request, which is what a
+ * reorder is: every moved rule is a Put, and the whole set has to commit or
+ * none of it can. Exported because the limit is a property of the write, so the
+ * caller that refuses an over-long reorder has to name the same number.
+ */
+export const REORDER_LIMIT = 100;
 
 /**
  * How many times a batch is re-sent for the items DynamoDB declined.
@@ -161,6 +173,16 @@ export interface RulesRepository {
    * `item.sk` is allowed and is a plain replace.
    */
   move(fromSk: string, item: RuleItem): Promise<MoveOutcome>;
+  /**
+   * Writes each rule at the key it carries, all in one transaction — the moves
+   * a reorder is made of. Every key must already be held by a rule (a reorder
+   * permutes priorities, it does not invent them), so this never inserts.
+   *
+   * `false` when one of those keys no longer holds anything, which means the
+   * host changed after the caller read it: the caller's 409. Nothing is written
+   * in that case.
+   */
+  reorder(items: RuleItem[]): Promise<boolean>;
   /**
    * Flips `disabled` on one rule, leaving every other field alone. Returns the
    * updated rule, or `null` when there was none — the caller's 404.
@@ -539,6 +561,57 @@ export class DynamoRulesRepository implements RulesRepository {
       return "moved";
     } catch (err) {
       return this.moveFailure(err);
+    }
+  }
+
+  /**
+   * A reorder, as one transaction of Puts.
+   *
+   * No Deletes, and no `attribute_not_exists` anywhere: a reorder hands the
+   * type's existing priorities back out in a different sequence, so the set of
+   * keys is unchanged and every destination is currently occupied — by the rule
+   * moving away from it, or by this one already. That is also what keeps the
+   * transaction legal. DynamoDB refuses two operations on one item, which is
+   * exactly what a "delete the old key, put the new one" reorder would produce
+   * the moment two rules swap places: one key would be both a Put's destination
+   * and a Delete's target.
+   *
+   * `attribute_exists(pk)` on each Put is the concurrency guard. Every key was
+   * there when the caller listed the host, so a failure means a rule was
+   * deleted in between and the whole reorder is cancelled rather than half
+   * applied. It does not guard against a *concurrent edit*: another client's
+   * PUT to one of these rules, landing between the read and this write, is
+   * overwritten with the fields the reorder read. Last write wins, as it does
+   * across the rest of these routes.
+   */
+  async reorder(items: RuleItem[]): Promise<boolean> {
+    // Nothing to do, and TransactWriteItems rejects an empty item list — the
+    // caller is allowed to hand over a reorder that turns out to move nothing.
+    if (items.length === 0) return true;
+
+    try {
+      await this.send(() =>
+        this.client.send(
+          new TransactWriteCommand({
+            // Same reason as `move`: without a token the SDK's own retry of a
+            // committed transaction re-runs the conditions, finds the table
+            // already in its new shape and reports a conflict for a reorder
+            // that succeeded.
+            ClientRequestToken: randomUUID(),
+            TransactItems: items.map((item) => ({
+              Put: {
+                TableName: this.target.tableName,
+                Item: item,
+                ConditionExpression: "attribute_exists(pk)",
+              },
+            })),
+          }),
+        ),
+      );
+      return true;
+    } catch (err) {
+      if (isTransactionRefused(err)) return false;
+      throw err;
     }
   }
 
