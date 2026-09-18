@@ -45,6 +45,21 @@ test("keeps submit disabled until both fields have a value", async ({
   await expect(submit).toBeDisabled();
 });
 
+test("the region select still looks like a select (CF-35)", async ({
+  page,
+}) => {
+  // `.select` draws its chevron with a background-image, and the dark-card
+  // overrides on this form sit one rule away from resetting it — which is
+  // exactly what the `background` shorthand did. Asserted on the computed
+  // style because that is the only place the collision is visible: the markup
+  // is a plain <select> either way, and every other test passes without it.
+  const chevron = await page
+    .getByLabel("Table region")
+    .evaluate((el) => getComputedStyle(el).backgroundImage);
+
+  expect(chevron).toContain("url(");
+});
+
 test("fills the form from the sample values", async ({ page }) => {
   await page.getByRole("button", { name: "Use sample values" }).click();
 
