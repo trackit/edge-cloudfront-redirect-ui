@@ -9,7 +9,11 @@ import {
   toRuleInput,
   validateDraft,
 } from "../src/ruleDraft";
-import type { CustomDraft, RewriteDraft } from "../src/ruleDraft";
+import type {
+  CustomDraft,
+  RedirectDraft,
+  RewriteDraft,
+} from "../src/ruleDraft";
 import type { CustomOrigin, Rule, ValidationDetail } from "../src/api";
 
 /**
@@ -225,6 +229,66 @@ describe("validateDraft — regex", () => {
       [],
     );
     expect(has(details, "/matches/0/matchValue")).toBe(false);
+  });
+});
+
+describe("validateDraft — redirect target", () => {
+  /**
+   * The form is the only place these get a readable message: the API applies
+   * the same rule as a JSON Schema `pattern`, and a client that reaches it
+   * instead is shown the raw regex. So what is pinned here is that the form
+   * refuses everything the schema refuses, not merely the obvious cases.
+   */
+  const withUrl = (redirectURL: string, relative: boolean): RedirectDraft => {
+    const draft = draftFromRule(redirectRule()) as RedirectDraft;
+    return { ...draft, redirectURL, relative };
+  };
+
+  it.each([
+    ["https://www.example.com/new", false],
+    // The scheme is case-insensitive here and in the schema.
+    ["HTTPS://www.example.com/new", false],
+    ["/new", true],
+    // The host root, which is what turning the toggle on gives a bare domain.
+    ["/", true],
+    // A capture reference survives validation; the edge substitutes it later.
+    ["/f/$1", true],
+    // Trimmed on save, so trailing space is not the user's problem.
+    ["/new ", true],
+  ] as const)("accepts %j", (url, relative) => {
+    expect(has(validateDraft(withUrl(url, relative), []), "/redirectURL")).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    ["", true],
+    ["new/landing", true],
+    // Reads as a path, resolves to another host entirely — the case the
+    // schema's first pattern missed.
+    ["//evil.example.com/phish", true],
+    ["/\\evil.example.com", true],
+    // Would split the response if it reached the Location header.
+    ["/new page", true],
+    ["https://www.example.com/a b", false],
+    // A scheme and nothing to send the visitor to.
+    ["https://", false],
+  ] as const)("rejects %j", (url, relative) => {
+    expect(has(validateDraft(withUrl(url, relative), []), "/redirectURL")).toBe(
+      true,
+    );
+  });
+
+  it("names the host, not the regex, when a path points off-host", () => {
+    // The message is the whole point of duplicating the check here.
+    const details = validateDraft(
+      withUrl("//evil.example.com/phish", true),
+      [],
+    );
+
+    expect(details.find((d) => d.path === "/redirectURL")?.message).toMatch(
+      /another host/,
+    );
   });
 });
 

@@ -980,6 +980,12 @@ components:
         redirectURL:
           type: string
           minLength: 1
+          pattern: "^(?:[hH][tT][tT][pP][sS]?://[^\\s]+|/(?![/\\\\])[^\\s]*)$"
+          description: >-
+            Absolute http(s) URL, or a root-relative path starting with `/`.
+            The scheme is case-insensitive; whitespace is rejected anywhere in
+            the value, as is a path starting `//` or `/\` — the browser resolves
+            those against the scheme alone and leaves this host.
         useIncomingQueryString:
           type: boolean
         matches:

@@ -60,6 +60,68 @@ describe("validateRule", () => {
     }
   });
 
+  // CF-38. The console already refuses these in the form; the point of having
+  // them here too is the rules the form never sees — imports, curl, a client
+  // written against the OpenAPI spec.
+  describe("redirectURL", () => {
+    const withUrl = (redirectURL: string) => ({ ...redirectRule, redirectURL });
+
+    it.each([
+      "https://www.example.com/new",
+      "http://www.example.com/new",
+      "HTTPS://www.example.com/new",
+      // The "Relative URL" toggle's form of the same field.
+      "/new",
+      "/",
+      // A path may contain a backslash or a double slash — just not lead with
+      // one, which is what the rejections below are about.
+      "/a//b",
+      "/a\\b",
+      // Regex captures are substituted at the edge, after validation.
+      "https://www.example.com/$1",
+      "/archive/$1",
+    ])("accepts %j", (url) => {
+      expect(() => validateRule(withUrl(url))).not.toThrow();
+    });
+
+    it.each([
+      "not a url",
+      // A bare path with no leading slash: relative to the current directory at
+      // the edge, which is not a thing the rule author can reason about.
+      "new/landing",
+      "www.example.com/new",
+      // Schemes the edge cannot put in a Location header meaningfully.
+      "ftp://www.example.com/new",
+      "javascript:alert(1)",
+      // A scheme with nowhere to send the visitor.
+      "https://",
+      // Protocol-relative and its backslash variant: both read as a path and
+      // both leave the host, so a rule written by a client that never saw the
+      // console could 301 an entire host off-site. The browser resolves
+      // "//evil.example.com" against the scheme alone.
+      "//evil.example.com/phish",
+      "/\\evil.example.com",
+      "/\\\\evil.example.com",
+      // Would split the response if it reached the header verbatim.
+      "https://www.example.com/new\r\nX-Injected: 1",
+      "/new\npath",
+      " https://www.example.com/new",
+      "https://www.example.com/a b",
+    ])("rejects %j", (url) => {
+      expect(() => validateRule(withUrl(url))).toThrowError(ApiError);
+    });
+
+    it("points at the field it rejected", () => {
+      try {
+        validateRule(withUrl("not a url"));
+        expect.unreachable();
+      } catch (err) {
+        const details = (err as ApiError).details as { path: string }[];
+        expect(details.some((d) => d.path === "/redirectURL")).toBe(true);
+      }
+    });
+  });
+
   it("rejects a redirect body carrying a rewrite-only field", () => {
     // additionalProperties:false — forwardSettings is not valid on a redirect.
     const mixed = { ...redirectRule, forwardSettings: { pathAndQS: "/x" } };
