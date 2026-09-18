@@ -47,13 +47,17 @@ it waiting.
 ```bash
 cd examples/infra
 terraform init
-terraform apply -var 'cache_ttl_ms=10000'
+terraform apply
 ```
 
-`cache_ttl_ms=10000` shortens the edge's rule cache from a minute to ten seconds,
-so a rule change shows up while someone is still watching. It is baked into the
-function at package time, so it cannot be changed later without republishing and
-another distribution deploy — set it now, not during a demo.
+The edge caches rules for a minute by default, which is the propagation delay the
+README documents and the one a demo should show.
+
+While iterating you may want that shorter — `terraform apply -var 'cache_ttl_ms=10000'`
+drops it to ten seconds, so a rule change lands while you are still watching. It
+is baked into the function at package time, so it cannot be changed later without
+republishing and another distribution deploy: set it now, not during a demo, and
+do not leave a demo environment on it.
 
 Keep these:
 
