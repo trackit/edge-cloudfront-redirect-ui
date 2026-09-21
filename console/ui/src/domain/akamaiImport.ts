@@ -1224,7 +1224,15 @@ const emptyPreview = (
  * whole-file failure comes back as `error` with no rows, and a single bad row
  * comes back skipped with a reason.
  */
-export function parseExport(text: string, opts: ParseOptions): ImportPreview {
+export function parseExport(source: string, opts: ParseOptions): ImportPreview {
+  // A byte-order mark survives an export and then breaks the parse it precedes.
+  // Stripped here rather than in a mapper because `detectFormat` trims and
+  // `String.prototype.trim` removes U+FEFF: a BOM'd JSON export was therefore
+  // detected correctly and *then* thrown out by `JSON.parse` on the untrimmed
+  // text, which refused the whole file rather than a row of it. Windows tooling
+  // writes one routinely, which is most of what these exports come from.
+  const text = source.replace(/^\uFEFF/, "");
+
   // --- Refuse the whole file, before doing any work on it ---
   if (text.length > MAX_IMPORT_BYTES) {
     const mb = Math.round(text.length / (1024 * 1024));

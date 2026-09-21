@@ -273,6 +273,27 @@ describe("parseExport — simple CSV", () => {
 });
 
 describe("parseExport — matchRules JSON", () => {
+  /**
+   * A BOM is what a Windows-authored export carries, and most of these files
+   * come from Windows tooling. `detectFormat` trims — and `trim` removes U+FEFF
+   * — so the format was recognised and `JSON.parse` then threw on the untrimmed
+   * text, refusing the whole file with "could not be parsed".
+   */
+  it("reads a JSON export that starts with a byte-order mark", () => {
+    const json = JSON.stringify({
+      rules: [{ name: "r1", redirectURL: "/dest", statusCode: 301 }],
+    });
+    const preview = parseExport(`\uFEFF${json}`, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
+
+    expect(preview.error).toBeUndefined();
+    expect(preview.format).toBe("match-rules-json");
+    expect(preview.rows).toHaveLength(1);
+    expect(asRedirect(preview.rows[0].input).redirectURL).toBe("/dest");
+  });
+
   it("maps a clean matches[] rule and carries negate through", () => {
     const json = JSON.stringify({
       rules: [
