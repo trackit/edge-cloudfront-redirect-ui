@@ -1049,11 +1049,25 @@ const mapMatchRulesJson = (text: string, defaultHost: string): Candidate[] => {
 
 /**
  * The flattened Edge Redirector policy CSV: one row per match criterion, with
- * the redirect result repeated on each. Rows of one policy (same `policyId`)
- * describe one rule whose conditions AND together, so they are regrouped and
- * handed to `mapMatchRule` as a synthetic `matches[]` rule — the same path the
- * JSON export takes. A blank `policyId` cannot group, so each such row becomes
- * its own rule rather than silently merging with unrelated ones.
+ * the redirect result repeated on each. Rows of one policy that agree on that
+ * result describe one rule whose conditions AND together, so they are regrouped
+ * and handed to `mapMatchRule` as a synthetic `matches[]` rule — the same path
+ * the JSON export takes. A blank `policyId` cannot group, so each such row
+ * becomes its own rule rather than silently merging with unrelated ones.
+ *
+ * The result is part of the identity because a policy holds *several* rules, and
+ * flattening left no other way to tell them apart: grouping on the policy alone
+ * would AND conditions from different rules together — a rule that imports
+ * cleanly and matches nothing — and keep only the first row's target, discarding
+ * the rest without a message.
+ *
+ * What it still cannot distinguish: two rules of one policy that redirect to the
+ * same place with the same status. They merge, and their conditions AND. The
+ * flattening threw away the only discriminator, so the loss is in the source, not
+ * here — and it is the conservative direction, since the merged rule is a dead
+ * one rather than a misrouted one and no result is lost (both were identical). An
+ * export that carries a per-rule column (a rule name, a rule index) would be the
+ * real key; none of the exports we have seen does.
  */
 const mapEdgeRedirectorPolicyCsv = (
   text: string,
@@ -1076,20 +1090,35 @@ const mapEdgeRedirectorPolicyCsv = (
   const caseAt = idx.get("casesensitive");
   const headerNameAt = idx.get("name") ?? idx.get("headername");
 
-  // A Map iterates in insertion order, so grouping preserves file order. A blank
-  // `policyId` cannot group, so it is keyed by row position behind a NUL — a
-  // prefix no real policy id can carry — which keeps each such row its own rule
-  // instead of merging unrelated ones.
-  const byPolicy = new Map<string, string[][]>();
+  // The policy plus the result identifies a rule: the result is repeated on every
+  // row of one, so rows that disagree about it belong to different rules. Keyed on
+  // the raw cells, never the mapped values — `mapStatus` folds 308 onto 301, and
+  // merging two rules on that would AND their conditions *and* still drop a
+  // status. A column absent from the export reads as `""` on every row, which
+  // degrades the key rather than splitting anything.
+  //
+  // The parts are joined on a NUL so no run of cells can spell another
+  // combination, and a blank `policyId` — which cannot group at all — is keyed by
+  // row position behind that same NUL, a prefix no real policy id can carry. A Map
+  // iterates in insertion order, so groups come out in file order, and rows of one
+  // rule regroup even when the export does not keep them adjacent.
+  const byRule = new Map<string, string[][]>();
   rows.slice(1).forEach((row, i) => {
     const policyId = cell(row, policyAt);
-    const key = policyId === "" ? `\0${i}` : policyId;
-    const group = byPolicy.get(key);
-    if (group === undefined) byPolicy.set(key, [row]);
+    const result = [
+      cell(row, targetAt),
+      cell(row, statusAt),
+      cell(row, qsAt),
+    ].join("\0");
+    const key = policyId === "" ? `\0${i}` : `${policyId}\0${result}`;
+    const group = byRule.get(key);
+    if (group === undefined) byRule.set(key, [row]);
     else group.push(row);
   });
 
-  return [...byPolicy.values()].map((group, at): Candidate => {
+  return [...byRule.values()].map((group, at): Candidate => {
+    // The whole group agrees on the result by construction — it is part of the
+    // key — so the first row speaks for all of them.
     const first = group[0];
 
     // A row with no matchType carries no condition (result-only); skip it so it

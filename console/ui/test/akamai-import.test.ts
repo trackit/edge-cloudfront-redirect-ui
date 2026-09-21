@@ -667,7 +667,7 @@ describe("parseExport — Edge Redirector policy CSV", () => {
     expect(`${one}/${two}/`).toBe("/a/b/");
   });
 
-  it("groups rows sharing a policyId into one rule, ANDing their conditions", () => {
+  it("groups rows sharing a policyId and result into one rule, ANDing their conditions", () => {
     const csv = [
       HEADER,
       "500,Multi,note,302,/dest,,,path,equals,/old,False,False",
@@ -703,6 +703,178 @@ describe("parseExport — Edge Redirector policy CSV", () => {
     });
     expect(preview.rows).toHaveLength(2);
     expect(preview.rows.map((r) => r.status)).toEqual(["ok", "ok"]);
+  });
+
+  /**
+   * A policy holds several rules, so the policy id alone cannot identify one.
+   * Grouping on it would AND `/a` with `/b` — a rule that imports cleanly and
+   * matches nothing — and keep only the first row's target, dropping `/b-dest`
+   * with no message at all.
+   */
+  it("splits a policy's rows into one rule per redirect result", () => {
+    const csv = [
+      HEADER,
+      "500,Multi,note,301,/a-dest,,,path,equals,/a,False,False",
+      "500,Multi,note,302,/b-dest,,,path,equals,/b,False,False",
+    ].join("\n");
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
+
+    expect(preview.rows).toHaveLength(2);
+    expect(preview.summary.ready).toBe(2);
+    const inputs = preview.rows.map((row) => asRedirect(row.input));
+    expect(inputs.map((input) => input.redirectURL)).toEqual([
+      "/a-dest",
+      "/b-dest",
+    ]);
+    expect(inputs.map((input) => input.statusCode)).toEqual([301, 302]);
+    expect(inputs.map((input) => input.matches.length)).toEqual([1, 1]);
+    expect(inputs.map((input) => input.matches[0].matchValue)).toEqual([
+      "/a",
+      "/b",
+    ]);
+  });
+
+  it("keeps the AND within a rule while a sibling rule stays separate", () => {
+    const csv = [
+      HEADER,
+      "500,Multi,note,301,/a-dest,True,,path,equals,/a,False,False",
+      "500,Multi,note,301,/a-dest,True,,protocol,equals,https,False,False",
+      "500,Multi,note,302,/b-dest,,,path,equals,/b,False,False",
+    ].join("\n");
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
+
+    expect(preview.rows).toHaveLength(2);
+    const [anded, sibling] = preview.rows.map((row) => asRedirect(row.input));
+    expect(anded.matches).toHaveLength(2);
+    expect(anded.matches.map((match) => match.matchType)).toEqual([
+      "path",
+      "protocol",
+    ]);
+    expect(anded.useIncomingQueryString).toBe(true);
+    expect(sibling.matches).toHaveLength(1);
+    expect(sibling.useIncomingQueryString).toBe(false);
+  });
+
+  /**
+   * The result is repeated on every row of a rule, including one that carries no
+   * criterion — so a result-only row keys to its own rule and joins it, where it
+   * is dropped from the conditions rather than becoming an empty match.
+   */
+  it("keeps a result-only row with the rule it repeats", () => {
+    const csv = [
+      HEADER,
+      "500,Multi,note,301,/dest,,,path,equals,/old,False,False",
+      "500,Multi,note,301,/dest,,,,,,,",
+    ].join("\n");
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
+
+    expect(preview.rows).toHaveLength(1);
+    const input = asRedirect(preview.rows[0].input);
+    expect(input.matches).toHaveLength(1);
+    expect(input.matches[0].matchValue).toBe("/old");
+  });
+
+  /**
+   * A result no other row repeats is a rule of its own: an Edge Redirector
+   * default, with no criterion. It used to be the silently discarded one; now it
+   * is a visible row, and the shadow check says what an unconditional rule does
+   * to the rules imported after it.
+   */
+  it("reads a result nothing else repeats as an unconditional rule", () => {
+    const csv = [
+      HEADER,
+      "500,Multi,note,301,/fallback,,,,,,,",
+      "500,Multi,note,302,/b-dest,,,path,equals,/b,False,False",
+    ].join("\n");
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
+
+    expect(preview.rows).toHaveLength(2);
+    const fallback = asRedirect(preview.rows[0].input);
+    expect(fallback.redirectURL).toBe("/fallback");
+    expect(fallback.matches).toEqual([]);
+    expect(preview.rows[0].status).toBe("warning");
+    expect(preview.rows[0].messages.join(" ")).toMatch(/matches every request/);
+    expect(asRedirect(preview.rows[1].input).redirectURL).toBe("/b-dest");
+  });
+
+  /**
+   * Grouping is by result, not by adjacency: a file that does not keep a rule's
+   * rows together still imports as the rules it describes, rather than having
+   * conditions dropped from an AND — which would widen the rule.
+   */
+  it("regroups rows of one rule the export left apart", () => {
+    const csv = [
+      HEADER,
+      "500,Multi,note,301,/a-dest,,,path,equals,/a,False,False",
+      "500,Multi,note,302,/b-dest,,,path,equals,/b,False,False",
+      "500,Multi,note,301,/a-dest,,,protocol,equals,https,False,False",
+    ].join("\n");
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
+
+    expect(preview.rows).toHaveLength(2);
+    const inputs = preview.rows.map((row) => asRedirect(row.input));
+    // Group order follows each rule's first row.
+    expect(inputs.map((input) => input.redirectURL)).toEqual([
+      "/a-dest",
+      "/b-dest",
+    ]);
+    expect(inputs.map((input) => input.matches.length)).toEqual([2, 1]);
+  });
+
+  /** A blank status / query-string cell is blank on every row, so it never splits. */
+  it("does not split a rule on blank result cells", () => {
+    const csv = [
+      HEADER,
+      "500,Multi,,,/dest,,,path,equals,/old,False,False",
+      "500,Multi,,,/dest,,,protocol,equals,https,False,False",
+    ].join("\n");
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
+
+    expect(preview.rows).toHaveLength(1);
+    const row = preview.rows[0];
+    expect(row.status).toBe("warning");
+    expect(row.messages.join(" ")).toMatch(/defaulted to 302/);
+    const input = asRedirect(row.input);
+    expect(input.statusCode).toBe(302);
+    expect(input.matches).toHaveLength(2);
+  });
+
+  it("keeps two policies with the same result apart", () => {
+    const csv = [
+      HEADER,
+      "500,A,note,301,/dest,,,path,equals,/a,False,False",
+      "501,B,note,301,/dest,,,path,equals,/b,False,False",
+    ].join("\n");
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
+
+    expect(preview.rows).toHaveLength(2);
+    const inputs = preview.rows.map((row) => asRedirect(row.input));
+    expect(inputs.map((input) => input.matches.length)).toEqual([1, 1]);
+    expect(inputs.map((input) => input.matches[0].matchValue)).toEqual([
+      "/a",
+      "/b",
+    ]);
   });
 
   it("warns when a target reinjects a capture no condition provides", () => {
