@@ -1302,7 +1302,7 @@ export function parseExport(source: string, opts: ParseOptions): ImportPreview {
   candidates.forEach((candidate, at) => lastRowOfHost.set(candidate.host, at));
 
   // --- The verdict, one row at a time ---
-  const rows: ParsedRow[] = candidates.map((candidate, at) => {
+  const verdictFor = (candidate: Candidate, at: number): ParsedRow => {
     const draft = candidate.draft;
     draft.priority = String(nextProvisional(candidate.host));
     const validation = validateDraft(draft, []);
@@ -1340,6 +1340,40 @@ export function parseExport(source: string, opts: ParseOptions): ImportPreview {
       input: status === "skipped" ? undefined : toRuleInput(draft),
       validation,
     };
+  };
+
+  /**
+   * The guard this file opens with: "one bad row never fails the batch".
+   *
+   * Step 4 was already covered — a mapper that throws becomes a whole-file
+   * message — but the verdict was not, so a throw out of `validateDraft` or
+   * `toRuleInput` escaped `parseExport`, whose contract is that it never throws.
+   * One unanticipated row would then take the import down with it: no preview,
+   * no reason, and the file blamed rather than the row.
+   *
+   * Reported as `blocked` rather than `validation`, because it is not a finding
+   * about the rule — it is the checker itself giving up on this row, which is
+   * something to hand back rather than swallow.
+   */
+  const rows: ParsedRow[] = candidates.map((candidate, at) => {
+    try {
+      return verdictFor(candidate, at);
+    } catch (caught) {
+      const reason = caught instanceof Error ? caught.message : String(caught);
+      return {
+        index: at + 1,
+        label: candidate.label,
+        host: candidate.host,
+        status: "skipped",
+        messages: candidate.messages,
+        blocked: [
+          ...(candidate.drops ?? []),
+          `could not be checked, so it was not imported: ${reason}`,
+        ],
+        draft: candidate.draft,
+        validation: [],
+      };
+    }
   });
 
   return {
