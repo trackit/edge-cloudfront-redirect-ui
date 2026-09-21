@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { regionOptions, useRegions } from "../regions";
-import type { DistributionDraft } from "../types";
+import { regionOptions, useRegions } from "../domain/regions";
+import type { DistributionDraft } from "../domain/types";
 
 interface Props {
   /** The draft, not a connected Distribution — these fields exist before the

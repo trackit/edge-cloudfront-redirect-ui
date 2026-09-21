@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
 import type { ApiClient } from "../api";
-import { hostKey } from "../hostRoutes";
+import { hostKey } from "../domain/hostRoutes";
 import { IconClose, IconGlobe } from "./icons";
 
 interface Props {

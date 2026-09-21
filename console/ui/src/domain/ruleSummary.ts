@@ -1,5 +1,5 @@
-import { isRedirect, narrowForwardSettings } from "./api";
-import type { MatchCondition, Rule } from "./api";
+import { isRedirect, narrowForwardSettings } from "../api";
+import type { MatchCondition, Rule } from "../api";
 
 /**
  * The one-line renderings a rule list needs. Kept out of the components so the

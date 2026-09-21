@@ -4,15 +4,16 @@ import AddHostModal from "./AddHostModal";
 import DeleteHostDialog from "./DeleteHostDialog";
 import DeleteRuleDialog from "./DeleteRuleDialog";
 import HostsSidebar from "./HostsSidebar";
+import ImportModal from "./ImportModal";
 import RuleEditor from "./RuleEditor";
 import RuleList from "./RuleList";
-import { IconClock, IconPlus } from "./icons";
-import { resolveHostView, useHosts } from "../hosts";
-import { takenPriorities, useRules } from "../rules";
+import { IconClock, IconPlus, IconUpload } from "./icons";
+import { resolveHostView, useHosts } from "../domain/hosts";
+import { takenPriorities, useRules } from "../domain/rules";
 import { useCanWrite } from "../auth/useAuth";
-import { CONSOLE_PATH, hostKey, hostPath } from "../hostRoutes";
+import { CONSOLE_PATH, hostKey, hostPath } from "../domain/hostRoutes";
 import type { HostSummary, Rule, RuleInput } from "../api";
-import type { Distribution } from "../types";
+import type { Distribution } from "../domain/types";
 
 interface Props {
   distribution: Distribution;
@@ -197,6 +198,7 @@ export default function ConsoleBody({ distribution }: Props) {
           key={shown}
           distribution={distribution}
           host={shown}
+          hosts={hosts.map((summary) => summary.host)}
           onCountsChanged={reload}
         />
       ) : (
@@ -238,16 +240,29 @@ export default function ConsoleBody({ distribution }: Props) {
 function HostWorkspace({
   distribution,
   host,
+  hosts,
   onCountsChanged,
 }: {
   distribution: Distribution;
   host: string;
+  /** Every host in the distribution, for the import's target-host picker. */
+  hosts: string[];
   onCountsChanged: () => void;
 }) {
-  const { grouped, loading, error, reload, create, update, toggle, remove } =
-    useRules(distribution.targetId, host);
+  const {
+    grouped,
+    loading,
+    error,
+    reload,
+    create,
+    update,
+    toggle,
+    remove,
+    importRules,
+  } = useRules(distribution.targetId, host);
   const [editing, setEditing] = useState<EditorTarget>(null);
   const [deletingRule, setDeletingRule] = useState<Rule | null>(null);
+  const [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState<string[]>([]);
   // Disabled rather than hidden. A viewer whose console is missing controls
   // reads it as broken or as a different product; one whose controls are dead
@@ -323,6 +338,16 @@ function HostWorkspace({
             className="btn btn-ghost btn-sm"
             disabled={error !== null || !canWrite}
             title={readOnly}
+            onClick={() => setImporting(true)}
+          >
+            <IconUpload size={15} />
+            Import
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            disabled={error !== null || !canWrite}
+            title={readOnly}
             onClick={() => setEditing("rewrite")}
           >
             <IconPlus size={15} />
@@ -391,6 +416,17 @@ function HostWorkspace({
           rule={deletingRule}
           onConfirm={() => deleteRule(deletingRule)}
           onClose={() => setDeletingRule(null)}
+        />
+      )}
+
+      {importing && (
+        <ImportModal
+          distributionId={distribution.distributionId}
+          hosts={hosts}
+          defaultHost={host}
+          onImport={importRules}
+          onImported={onCountsChanged}
+          onClose={() => setImporting(false)}
         />
       )}
     </main>

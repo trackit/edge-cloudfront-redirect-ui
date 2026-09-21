@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api";
+import { api } from "../api";
 
 /**
  * The regions a target's table may live in, as the API reports them.
