@@ -80,6 +80,14 @@ describe("validateRule", () => {
       // Regex captures are substituted at the edge, after validation.
       "https://www.example.com/$1",
       "/archive/$1",
+      // A target that *starts* with a capture is a template: its leading segment
+      // comes from the match, so there is nothing here to check. An Akamai import
+      // produces these (CF-20), and the console judges whether the condition's
+      // group opens where the path does — see the schema's $comment.
+      "$1/$2/",
+      "$1/gone",
+      "$10/x",
+      "$1",
     ])("accepts %j", (url) => {
       expect(() => validateRule(withUrl(url))).not.toThrow();
     });
@@ -107,6 +115,19 @@ describe("validateRule", () => {
       "/new\npath",
       " https://www.example.com/new",
       "https://www.example.com/a b",
+      // Widening for templates does not widen to the off-host case: an unfilled
+      // group substitutes as "", so these expand to "//evil.example.com" and
+      // leave the host — the very thing the second alternative forbids.
+      "$1//evil.example.com",
+      "$1/\\evil.example.com",
+      // `$0` is not a capture reference: the edge substitutes `$1`..`$n`, so
+      // this is a bare relative path with a dollar sign in it.
+      "$0/x",
+      // A capture that is not what the value *starts* with decides nothing about
+      // the leading segment, so the ordinary rules still apply.
+      "x$1/y",
+      // Whitespace is no more acceptable in a template than anywhere else.
+      "$1/a b",
     ])("rejects %j", (url) => {
       expect(() => validateRule(withUrl(url))).toThrowError(ApiError);
     });

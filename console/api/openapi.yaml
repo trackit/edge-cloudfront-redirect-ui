@@ -1076,12 +1076,18 @@ components:
         redirectURL:
           type: string
           minLength: 1
-          pattern: "^(?:[hH][tT][tT][pP][sS]?://[^\\s]+|/(?![/\\\\])[^\\s]*)$"
+          pattern: "^(?:[hH][tT][tT][pP][sS]?://[^\\s]+|/(?![/\\\\])[^\\s]*|\\$[1-9][0-9]*(?!/[/\\\\])[^\\s]*)$"
           description: >-
-            Absolute http(s) URL, or a root-relative path starting with `/`.
+            Absolute http(s) URL, a root-relative path starting with `/`, or a
+            target beginning with a capture reference (`$1/$2/`) whose leading
+            segment the edge builds from the match at request time.
+
+
             The scheme is case-insensitive; whitespace is rejected anywhere in
-            the value, as is a path starting `//` or `/\` — the browser resolves
-            those against the scheme alone and leaves this host.
+            the value, as is `//` or `/\` after the first slash — the browser
+            resolves those against the scheme alone and leaves this host. `$n`
+            followed by `//` or `/\` is refused for the same reason: an unfilled
+            group substitutes as the empty string.
         useIncomingQueryString:
           type: boolean
         matches:

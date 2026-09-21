@@ -491,8 +491,33 @@ export const validateDraft = (
     const target = draft.redirectURL.trim();
     if (target === "") {
       details.push({ path: "/redirectURL", message: "is required" });
+    } else if (/\s/.test(target)) {
+      // Ahead of the capture branch, not after it: whitespace is wrong in every
+      // shape this field can take, and a target starting with `$1` was reaching
+      // the API with a space in it because that branch short-circuited the chain.
+      //
+      // Rejected rather than encoded: guessing at which spaces were meant to be
+      // %20 and which were a typo is not the form's call, and the value reaches
+      // a Location header verbatim.
+      details.push({
+        path: "/redirectURL",
+        message: "cannot contain a space — percent-encode it as %20",
+      });
     } else if (LEADING_CAPTURE.test(target)) {
-      if (!capturesFromRequestStart(draft.matches)) {
+      if (/^\$[1-9][0-9]*\/[/\\]/.test(target)) {
+        // `$1//host` is the off-host case wearing a capture: a group that
+        // matches nothing substitutes as the empty string — and `(.*)` matches
+        // nothing quite happily — leaving `//host`, which the browser resolves
+        // against the scheme alone. Refused whatever the condition looks like,
+        // because "this group is never empty" is not something either side can
+        // promise.
+        details.push({
+          path: "/redirectURL",
+          message:
+            "must not continue with // or /\\ after the captured group — an " +
+            "empty capture would leave the browser reading that as another host",
+        });
+      } else if (!capturesFromRequestStart(draft.matches)) {
         details.push({
           path: "/redirectURL",
           message:
@@ -521,14 +546,6 @@ export const validateDraft = (
       details.push({
         path: "/redirectURL",
         message: "must start with http:// or https://",
-      });
-    } else if (/\s/.test(target)) {
-      // Rejected rather than encoded here: guessing at which spaces were meant
-      // to be %20 and which were a typo is not the form's call, and the value
-      // reaches a Location header verbatim.
-      details.push({
-        path: "/redirectURL",
-        message: "cannot contain a space — percent-encode it as %20",
       });
     } else if (!REDIRECT_TARGET.test(target)) {
       // The backstop for whatever the named cases above miss, so the form can
