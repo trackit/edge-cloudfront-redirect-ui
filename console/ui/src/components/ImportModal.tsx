@@ -1,6 +1,11 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { IconArrow, IconCheck, IconClose, IconInfo, IconUpload } from "./icons";
-import { isVacuousMatch, parseExport } from "../domain/akamaiImport";
+import {
+  MAX_IMPORT_BYTES,
+  isVacuousMatch,
+  parseExport,
+} from "../domain/akamaiImport";
+import { useFocusTrap } from "../useFocusTrap";
 import type {
   ImportPreview,
   ParsedRow,
@@ -134,6 +139,8 @@ export default function ImportModal({
   const busyRef = useRef(false);
   busyRef.current = busy;
   const [dragover, setDragover] = useState(false);
+  /** Bytes of a file refused for its size, so the reason can be shown. */
+  const [oversized, setOversized] = useState<number | undefined>(undefined);
   const [result, setResult] = useState<ImportOutcome | undefined>(undefined);
   // One request per rule, so a batch of any size takes a while: the count is the
   // only thing that distinguishes "working" from "stuck".
@@ -142,29 +149,42 @@ export default function ImportModal({
   );
 
   /**
+   * Whether this modal has written anything at all, for the whole time it is
+   * open. Not read off `result`: editing the host or the source clears that (so
+   * a stale outcome is never shown against new input), which also lost the fact
+   * that rules had been created — and with it the sidebar refresh below, leaving
+   * counts that disagree with the table until something else reloaded them.
+   */
+  const createdAnything = useRef(false);
+  if ((result?.created ?? 0) > 0) createdAnything.current = true;
+
+  /**
    * Refreshing the sidebar counts (`onImported`) reloads the host list, which
    * unmounts this modal — so it is deferred to close, not fired on success.
    * Doing it mid-run would tear the results down before they could be read.
    */
   const close = (): void => {
-    if ((result?.created ?? 0) > 0) onImported();
+    if (createdAnything.current) onImported();
     onClose();
   };
   const closeRef = useRef(close);
   closeRef.current = close;
 
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus();
+  // Focus in on mount, Tab contained while open, focus back to the opener on
+  // unmount — the same hook the drawer and the settings modal use, which this
+  // dialog was doing by hand minus the containment. `aria-modal` promises the
+  // containment, so without it the promise was false: Tab walked out to the
+  // console behind the overlay.
+  useFocusTrap(panelRef);
 
+  // Escape stays here rather than in the hook: a dialog mid-import must not be
+  // dismissed out from under the run, and only this component knows that.
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape" && !busyRef.current) closeRef.current();
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      previouslyFocused?.focus();
-    };
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
   const preview: ImportPreview = useMemo(
@@ -200,10 +220,25 @@ export default function ImportModal({
     : [defaultHost, ...hosts];
 
   const loadFile = async (file: File): Promise<void> => {
-    const content = await file.text();
     setFilename(file.name);
-    setText(content);
     setResult(undefined);
+
+    // Refused on `file.size` — bytes, before reading — rather than after.
+    // `parseExport`'s own cap sees the decoded text, so it cannot stop a huge
+    // file being pulled into memory first; and it cannot be reused here either,
+    // because it compares UTF-16 code units against a byte limit, so a
+    // multibyte export can weigh far more than the cap while sitting under it.
+    // Reading a byte-slice instead would be worse than both: the truncated text
+    // decodes to fewer code units than the limit, so nothing refuses it and the
+    // file imports silently short.
+    if (file.size > MAX_IMPORT_BYTES) {
+      setOversized(file.size);
+      setText("");
+      return;
+    }
+
+    setOversized(undefined);
+    setText(await file.text());
   };
 
   const onDrop = (event: React.DragEvent): void => {
@@ -214,7 +249,10 @@ export default function ImportModal({
   };
 
   const doImport = async (): Promise<void> => {
-    if (busy || done || items.length === 0) return;
+    // `busyRef`, not `busy`: two clicks landing in the same render both read the
+    // state as false and both start a run, writing every rule twice. The ref is
+    // already kept in step above for Escape, which needs it for the same reason.
+    if (busyRef.current || done || items.length === 0) return;
     setBusy(true);
     setProgress({ done: 0, total: items.length });
     try {
@@ -373,9 +411,20 @@ export default function ImportModal({
             onChange={(event) => {
               setText(event.target.value);
               setFilename(undefined);
+              setOversized(undefined);
               setResult(undefined);
             }}
           />
+
+          {oversized !== undefined && (
+            <div className="form-error" role="alert">
+              <span>
+                That file is ~{Math.round(oversized / (1024 * 1024))} MB (limit{" "}
+                {MAX_IMPORT_BYTES / (1024 * 1024)} MB), so it was not read.
+                Split it into smaller exports and import them separately.
+              </span>
+            </div>
+          )}
 
           {text.trim() !== "" && !hasFormat && (
             <div className="callout" role="status">
@@ -491,6 +540,19 @@ export default function ImportModal({
                   {result.failures.map((failure) => (
                     <li key={failure.sourceIndex}>
                       Row {failure.sourceIndex}: {failure.message}
+                      {/* The fields the API named, when it named any. Without
+                          them a schema refusal reads as "this row failed" and
+                          the user has no way to tell which cell to fix. */}
+                      {failure.details !== undefined && (
+                        <ul>
+                          {failure.details.map((detail, at) => (
+                            <li key={at}>
+                              <span className="mono">{detail.path}</span>{" "}
+                              {detail.message}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </li>
                   ))}
                 </ul>

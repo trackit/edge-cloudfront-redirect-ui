@@ -356,3 +356,127 @@ test("reports rows the API rejects instead of failing the whole import", async (
   await expect(page.getByText("Imported 0 rules.")).toBeVisible();
   await expect(page.getByText(/Row 1:/)).toBeVisible();
 });
+
+/**
+ * A refused row's `details` are the only part that says *which field* the API
+ * objected to: a `VALIDATION_ERROR`'s message is the same sentence whatever the
+ * cause. They were dropped on the way into the failure list, so an import that
+ * hit a schema disagreement reported "this row failed" and left the user to
+ * guess which cell of their export to fix.
+ */
+test("names the field the API refused, not just the row", async ({
+  page,
+  api,
+}) => {
+  await openHostWithRules(page, api);
+  api.createRuleReply({
+    status: 400,
+    body: errorBody("VALIDATION_ERROR", "Rule failed schema validation", [
+      { path: "/redirectURL", message: 'must match pattern "^(?:https?…)$"' },
+    ]),
+  });
+
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByPlaceholder(/Paste an Edge Redirector/).fill(csv);
+  await page.getByRole("button", { name: /Import 2 rules/ }).click();
+
+  await expect(page.getByText("Imported 0 rules.")).toBeVisible();
+  await expect(page.getByText(/Row 1:/)).toBeVisible();
+  // The field, and the reason the server gave for it.
+  await expect(page.getByText("/redirectURL").first()).toBeVisible();
+  await expect(page.getByText(/must match pattern/).first()).toBeVisible();
+});
+
+/**
+ * The sidebar counts are refreshed on close rather than on success, because
+ * refreshing unmounts this modal and would tear the results down before they
+ * could be read. That deferral hung on `result`, which editing the source
+ * clears — so importing and then touching the textarea lost the refresh, and
+ * the counts disagreed with the table until something else reloaded them.
+ */
+test("refreshes the counts even if the source is edited after a run", async ({
+  page,
+  api,
+}) => {
+  await openHostWithRules(page, api);
+
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByPlaceholder(/Paste an Edge Redirector/).fill(csv);
+  await page.getByRole("button", { name: /Import 2 rules/ }).click();
+  await expect(page.getByText("Imported 2 rules.")).toBeVisible();
+
+  // Anything that clears the outcome: typing in the source is the easy one.
+  await page.getByPlaceholder(/Paste an Edge Redirector/).fill("");
+
+  const before = api.calls.filter(
+    (call) => call.method === "GET" && /\/hosts$/.test(call.url),
+  ).length;
+
+  // The footer's "Close" belongs to the finished state, which clearing the
+  // source has just undone — so the way out is the header's dismiss, exactly as
+  // it would be for a user who changed their mind.
+  await page.locator(".modal-x").click();
+
+  // `onImported` reloads the host list; that request is the observable proof it
+  // fired at all.
+  await expect
+    .poll(
+      () =>
+        api.calls.filter(
+          (call) => call.method === "GET" && /\/hosts$/.test(call.url),
+        ).length,
+    )
+    .toBeGreaterThan(before);
+});
+
+/**
+ * A file over the limit must be refused, not truncated.
+ *
+ * The limit is bytes, but `parseExport`'s own check sees decoded text and
+ * compares UTF-16 code units — so a multibyte export can weigh well over the
+ * cap while sitting under it. Reading a byte-slice of the file and letting that
+ * check refuse it therefore does not work: the truncation lands below the limit
+ * the check looks at, nothing refuses it, and the import silently drops
+ * whatever fell off the end. The size is read from the file instead, before any
+ * of it is read into memory.
+ */
+test("refuses an oversized file instead of importing part of it", async ({
+  page,
+  api,
+}) => {
+  await openHostWithRules(page, api);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+
+  // Multibyte on purpose: two bytes per character, so this is ~12 MB of file
+  // and ~6 M code units — over the byte cap, under the same number read as
+  // code units, which is exactly the case a slice would have let through.
+  // Multibyte, and deliberately under the 5000-row cap so the size path is the
+  // one under test: ~4000 long rows of two-byte characters, which weigh ~16 MB
+  // as a file while decoding to ~8 M code units. That is the shape that slips
+  // past a check comparing code units to a byte limit.
+  const header = "ruleName,matchURL,redirectURL,result.statusCode\n";
+  const pad = "é".repeat(2000);
+  const row = `Rule,/s,/t${pad},301\n`;
+  const csv = header + row.repeat(4000);
+  expect(Buffer.byteLength(csv)).toBeGreaterThan(10 * 1024 * 1024);
+  expect(csv.length).toBeLessThan(10 * 1024 * 1024);
+
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "huge.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(csv),
+  });
+
+  await expect(page.getByRole("alert")).toContainText("so it was not read");
+  // Nothing was previewed, so there is nothing to import — where a byte-slice
+  // instead offered a preview of *most* of the file, with no warning at all.
+  await expect(
+    page.locator(".modal-foot").getByRole("button", { name: /^Import/ }),
+  ).toBeDisabled();
+  await expect(page.getByText(/\d+ ready/)).toHaveCount(0);
+  expect(
+    api.calls.filter(
+      (call) => call.method === "POST" && /\/rules$/.test(call.url),
+    ),
+  ).toHaveLength(0);
+});
