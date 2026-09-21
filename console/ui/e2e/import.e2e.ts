@@ -386,3 +386,45 @@ test("names the field the API refused, not just the row", async ({
   await expect(page.getByText("/redirectURL").first()).toBeVisible();
   await expect(page.getByText(/must match pattern/).first()).toBeVisible();
 });
+
+/**
+ * The sidebar counts are refreshed on close rather than on success, because
+ * refreshing unmounts this modal and would tear the results down before they
+ * could be read. That deferral hung on `result`, which editing the source
+ * clears — so importing and then touching the textarea lost the refresh, and
+ * the counts disagreed with the table until something else reloaded them.
+ */
+test("refreshes the counts even if the source is edited after a run", async ({
+  page,
+  api,
+}) => {
+  await openHostWithRules(page, api);
+
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByPlaceholder(/Paste an Edge Redirector/).fill(csv);
+  await page.getByRole("button", { name: /Import 2 rules/ }).click();
+  await expect(page.getByText("Imported 2 rules.")).toBeVisible();
+
+  // Anything that clears the outcome: typing in the source is the easy one.
+  await page.getByPlaceholder(/Paste an Edge Redirector/).fill("");
+
+  const before = api.calls.filter(
+    (call) => call.method === "GET" && /\/hosts$/.test(call.url),
+  ).length;
+
+  // The footer's "Close" belongs to the finished state, which clearing the
+  // source has just undone — so the way out is the header's dismiss, exactly as
+  // it would be for a user who changed their mind.
+  await page.locator(".modal-x").click();
+
+  // `onImported` reloads the host list; that request is the observable proof it
+  // fired at all.
+  await expect
+    .poll(
+      () =>
+        api.calls.filter(
+          (call) => call.method === "GET" && /\/hosts$/.test(call.url),
+        ).length,
+    )
+    .toBeGreaterThan(before);
+});

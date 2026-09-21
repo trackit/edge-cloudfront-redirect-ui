@@ -142,12 +142,22 @@ export default function ImportModal({
   );
 
   /**
+   * Whether this modal has written anything at all, for the whole time it is
+   * open. Not read off `result`: editing the host or the source clears that (so
+   * a stale outcome is never shown against new input), which also lost the fact
+   * that rules had been created — and with it the sidebar refresh below, leaving
+   * counts that disagree with the table until something else reloaded them.
+   */
+  const createdAnything = useRef(false);
+  if ((result?.created ?? 0) > 0) createdAnything.current = true;
+
+  /**
    * Refreshing the sidebar counts (`onImported`) reloads the host list, which
    * unmounts this modal — so it is deferred to close, not fired on success.
    * Doing it mid-run would tear the results down before they could be read.
    */
   const close = (): void => {
-    if ((result?.created ?? 0) > 0) onImported();
+    if (createdAnything.current) onImported();
     onClose();
   };
   const closeRef = useRef(close);
