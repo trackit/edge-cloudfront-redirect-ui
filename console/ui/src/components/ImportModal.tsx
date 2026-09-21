@@ -5,6 +5,7 @@ import {
   isVacuousMatch,
   parseExport,
 } from "../domain/akamaiImport";
+import { useFocusTrap } from "../useFocusTrap";
 import type {
   ImportPreview,
   ParsedRow,
@@ -169,18 +170,21 @@ export default function ImportModal({
   const closeRef = useRef(close);
   closeRef.current = close;
 
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus();
+  // Focus in on mount, Tab contained while open, focus back to the opener on
+  // unmount — the same hook the drawer and the settings modal use, which this
+  // dialog was doing by hand minus the containment. `aria-modal` promises the
+  // containment, so without it the promise was false: Tab walked out to the
+  // console behind the overlay.
+  useFocusTrap(panelRef);
 
+  // Escape stays here rather than in the hook: a dialog mid-import must not be
+  // dismissed out from under the run, and only this component knows that.
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape" && !busyRef.current) closeRef.current();
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      previouslyFocused?.focus();
-    };
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
   const preview: ImportPreview = useMemo(
