@@ -428,3 +428,55 @@ test("refreshes the counts even if the source is edited after a run", async ({
     )
     .toBeGreaterThan(before);
 });
+
+/**
+ * A file over the limit must be refused, not truncated.
+ *
+ * The limit is bytes, but `parseExport`'s own check sees decoded text and
+ * compares UTF-16 code units — so a multibyte export can weigh well over the
+ * cap while sitting under it. Reading a byte-slice of the file and letting that
+ * check refuse it therefore does not work: the truncation lands below the limit
+ * the check looks at, nothing refuses it, and the import silently drops
+ * whatever fell off the end. The size is read from the file instead, before any
+ * of it is read into memory.
+ */
+test("refuses an oversized file instead of importing part of it", async ({
+  page,
+  api,
+}) => {
+  await openHostWithRules(page, api);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+
+  // Multibyte on purpose: two bytes per character, so this is ~12 MB of file
+  // and ~6 M code units — over the byte cap, under the same number read as
+  // code units, which is exactly the case a slice would have let through.
+  // Multibyte, and deliberately under the 5000-row cap so the size path is the
+  // one under test: ~4000 long rows of two-byte characters, which weigh ~16 MB
+  // as a file while decoding to ~8 M code units. That is the shape that slips
+  // past a check comparing code units to a byte limit.
+  const header = "ruleName,matchURL,redirectURL,result.statusCode\n";
+  const pad = "é".repeat(2000);
+  const row = `Rule,/s,/t${pad},301\n`;
+  const csv = header + row.repeat(4000);
+  expect(Buffer.byteLength(csv)).toBeGreaterThan(10 * 1024 * 1024);
+  expect(csv.length).toBeLessThan(10 * 1024 * 1024);
+
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "huge.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(csv),
+  });
+
+  await expect(page.getByRole("alert")).toContainText("so it was not read");
+  // Nothing was previewed, so there is nothing to import — where a byte-slice
+  // instead offered a preview of *most* of the file, with no warning at all.
+  await expect(
+    page.locator(".modal-foot").getByRole("button", { name: /^Import/ }),
+  ).toBeDisabled();
+  await expect(page.getByText(/\d+ ready/)).toHaveCount(0);
+  expect(
+    api.calls.filter(
+      (call) => call.method === "POST" && /\/rules$/.test(call.url),
+    ),
+  ).toHaveLength(0);
+});

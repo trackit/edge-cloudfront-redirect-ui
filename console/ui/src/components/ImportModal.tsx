@@ -1,6 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { IconArrow, IconCheck, IconClose, IconInfo, IconUpload } from "./icons";
-import { isVacuousMatch, parseExport } from "../domain/akamaiImport";
+import {
+  MAX_IMPORT_BYTES,
+  isVacuousMatch,
+  parseExport,
+} from "../domain/akamaiImport";
 import type {
   ImportPreview,
   ParsedRow,
@@ -134,6 +138,8 @@ export default function ImportModal({
   const busyRef = useRef(false);
   busyRef.current = busy;
   const [dragover, setDragover] = useState(false);
+  /** Bytes of a file refused for its size, so the reason can be shown. */
+  const [oversized, setOversized] = useState<number | undefined>(undefined);
   const [result, setResult] = useState<ImportOutcome | undefined>(undefined);
   // One request per rule, so a batch of any size takes a while: the count is the
   // only thing that distinguishes "working" from "stuck".
@@ -210,10 +216,25 @@ export default function ImportModal({
     : [defaultHost, ...hosts];
 
   const loadFile = async (file: File): Promise<void> => {
-    const content = await file.text();
     setFilename(file.name);
-    setText(content);
     setResult(undefined);
+
+    // Refused on `file.size` — bytes, before reading — rather than after.
+    // `parseExport`'s own cap sees the decoded text, so it cannot stop a huge
+    // file being pulled into memory first; and it cannot be reused here either,
+    // because it compares UTF-16 code units against a byte limit, so a
+    // multibyte export can weigh far more than the cap while sitting under it.
+    // Reading a byte-slice instead would be worse than both: the truncated text
+    // decodes to fewer code units than the limit, so nothing refuses it and the
+    // file imports silently short.
+    if (file.size > MAX_IMPORT_BYTES) {
+      setOversized(file.size);
+      setText("");
+      return;
+    }
+
+    setOversized(undefined);
+    setText(await file.text());
   };
 
   const onDrop = (event: React.DragEvent): void => {
@@ -386,9 +407,20 @@ export default function ImportModal({
             onChange={(event) => {
               setText(event.target.value);
               setFilename(undefined);
+              setOversized(undefined);
               setResult(undefined);
             }}
           />
+
+          {oversized !== undefined && (
+            <div className="form-error" role="alert">
+              <span>
+                That file is ~{Math.round(oversized / (1024 * 1024))} MB (limit{" "}
+                {MAX_IMPORT_BYTES / (1024 * 1024)} MB), so it was not read.
+                Split it into smaller exports and import them separately.
+              </span>
+            </div>
+          )}
 
           {text.trim() !== "" && !hasFormat && (
             <div className="callout" role="status">

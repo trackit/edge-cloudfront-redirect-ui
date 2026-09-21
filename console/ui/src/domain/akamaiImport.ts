@@ -1194,7 +1194,7 @@ const MAPPERS: Record<
  * A ceiling on the input we will parse. Both PapaParse and `JSON.parse` load the
  * whole string into memory, so a huge paste/file would freeze the tab.
  */
-const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 
 /**
  * A ceiling on the number of rules, which is the figure that actually costs
