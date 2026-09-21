@@ -224,7 +224,10 @@ export default function ImportModal({
   };
 
   const doImport = async (): Promise<void> => {
-    if (busy || done || items.length === 0) return;
+    // `busyRef`, not `busy`: two clicks landing in the same render both read the
+    // state as false and both start a run, writing every rule twice. The ref is
+    // already kept in step above for Escape, which needs it for the same reason.
+    if (busyRef.current || done || items.length === 0) return;
     setBusy(true);
     setProgress({ done: 0, total: items.length });
     try {
