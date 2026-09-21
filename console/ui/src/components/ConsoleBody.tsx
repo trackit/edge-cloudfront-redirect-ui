@@ -10,6 +10,7 @@ import RuleList from "./RuleList";
 import { IconClock, IconPlus, IconUpload } from "./icons";
 import { resolveHostView, useHosts } from "../domain/hosts";
 import { takenPriorities, useRules } from "../domain/rules";
+import { useCanWrite } from "../auth/useAuth";
 import { CONSOLE_PATH, hostKey, hostPath } from "../domain/hostRoutes";
 import type { HostSummary, Rule, RuleInput } from "../api";
 import type { Distribution } from "../domain/types";
@@ -263,6 +264,12 @@ function HostWorkspace({
   const [deletingRule, setDeletingRule] = useState<Rule | null>(null);
   const [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState<string[]>([]);
+  // Disabled rather than hidden. A viewer whose console is missing controls
+  // reads it as broken or as a different product; one whose controls are dead
+  // and say why reads it as a permission. The API refuses either way — this only
+  // decides what the user is told.
+  const canWrite = useCanWrite();
+  const readOnly = canWrite ? undefined : "Your account has read-only access";
 
   /** Marks a row busy for the duration of a write, so it cannot be double-fired. */
   const withBusy = useCallback(
@@ -329,7 +336,8 @@ function HostWorkspace({
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            disabled={error !== null}
+            disabled={error !== null || !canWrite}
+            title={readOnly}
             onClick={() => setImporting(true)}
           >
             <IconUpload size={15} />
@@ -338,7 +346,8 @@ function HostWorkspace({
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            disabled={error !== null}
+            disabled={error !== null || !canWrite}
+            title={readOnly}
             onClick={() => setEditing("rewrite")}
           >
             <IconPlus size={15} />
@@ -347,7 +356,8 @@ function HostWorkspace({
           <button
             type="button"
             className="btn btn-primary btn-sm"
-            disabled={error !== null}
+            disabled={error !== null || !canWrite}
+            title={readOnly}
             onClick={() => setEditing("redirect")}
           >
             <IconPlus size={15} />
@@ -356,7 +366,7 @@ function HostWorkspace({
         </div>
       </header>
 
-      {/* ER-306: a write is not live when it returns. Stated once, next to the
+      {/* A write is not live when it returns. Stated once, next to the
           list, rather than only inside the editor — it also explains a deletion
           that still redirects. */}
       <p className="propagation">
@@ -384,6 +394,7 @@ function HostWorkspace({
         loading={loading}
         failed={error !== null}
         busy={busy}
+        canWrite={canWrite}
         onCreate={setEditing}
         onEdit={setEditing}
         onToggle={(rule) => void withBusy(rule.sk, () => toggle(rule))}

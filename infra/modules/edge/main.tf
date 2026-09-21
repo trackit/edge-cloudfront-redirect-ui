@@ -36,6 +36,21 @@ locals {
     filesha256("${local.lambda_source_dir}/${f}")
     if f != "src/edge-config.generated.ts"
   ]))
+
+  # Everything that can change what the bundle contains: the handler, the baked
+  # config, the build itself, and the dependency tree it pulls from. This is what
+  # a published version is keyed on — see `source_code_hash` below.
+  #
+  # try(): the lockfile is only guaranteed to exist for the default `npm ci`. A
+  # consumer who skips the install (or uses another package manager) may not have
+  # one, and a missing file would otherwise fail the whole plan.
+  code_hash = base64sha256(join("", [
+    local.handler_hash,
+    local.generated_config,
+    filesha256("${local.lambda_source_dir}/build.mjs"),
+    filesha256("${local.lambda_source_dir}/package.json"),
+    try(filesha256("${local.monorepo_root}/package-lock.json"), ""),
+  ]))
 }
 
 # Terraform owns the table, so it renders the baked config the handler imports.
@@ -47,16 +62,20 @@ resource "local_file" "generated_config" {
 }
 
 # esbuild → dist/. Runs at apply so a bare `terraform apply` produces the zip.
+#
+# On every apply, deliberately. `dist/` is a file on disk, and state cannot say
+# whether *this* machine has one: keyed on the sources instead, the build was
+# skipped on any runner that checked out a commit changing none of them, and
+# `archive_file` below was left with no directory to zip (CF-41). A fresh CI
+# runner is that case for every merge that does not touch the handler.
+#
+# The rebuild costs seconds and does not republish the function — that is
+# `local.code_hash`'s decision, and it is keyed on the sources this used to be
+# keyed on. It also keeps the read ordering honest: `archive_file` is a data
+# source, so Terraform reads it during plan unless a dependency is changing.
 resource "null_resource" "build" {
   triggers = {
-    config       = local_file.generated_config.content
-    handler      = local.handler_hash
-    build_script = filesha256("${local.lambda_source_dir}/build.mjs")
-    package      = filesha256("${local.lambda_source_dir}/package.json")
-    # try(): the lockfile is only guaranteed to exist for the default `npm ci`.
-    # A consumer who skips the install (or uses another package manager) may not
-    # have one, and a missing file would otherwise fail the whole plan.
-    lockfile = try(filesha256("${local.monorepo_root}/package-lock.json"), "")
+    always = timestamp()
   }
 
   provisioner "local-exec" {
@@ -145,8 +164,14 @@ resource "aws_lambda_function" "this" {
   handler       = "index.handler"
   runtime       = "nodejs20.x"
 
-  filename         = data.archive_file.lambda_zip.output_path
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  filename = data.archive_file.lambda_zip.output_path
+
+  # The sources' hash, not the archive's. The build above now runs on every
+  # apply, and two esbuild runs over identical sources need not produce a
+  # byte-identical zip — taking the hash from the archive would publish a new
+  # version, and with it a CloudFront distribution update, on every deploy that
+  # changed nothing at all.
+  source_code_hash = local.code_hash
 
   # Lambda@Edge caps: viewer-request allows 5s / 128 MB. No env vars permitted —
   # config is baked into the bundle instead.

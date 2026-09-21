@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { EDITOR } from "./principal-claims.js";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { handler } from "../src/handler.js";
 import {
@@ -13,7 +14,7 @@ import { FakeTargetsRepository } from "./fake-targets-repository.js";
 import { FakeRulesRepository } from "./fake-rules-repository.js";
 
 /**
- * Rule operations are scoped to a target (ER-202 criterion 4): an *unknown*
+ * Rule operations are scoped to a target (CF-12 criterion 4): an *unknown*
  * target must 404 rather than being indistinguishable from a valid one, and that
  * check must run before the body — or the table — is looked at.
  */
@@ -35,8 +36,8 @@ const event = (
     headers: {},
     body: body === undefined ? undefined : JSON.stringify(body),
     isBase64Encoded: false,
-    requestContext: { http: { method } },
-  }) as APIGatewayProxyEventV2;
+    requestContext: { http: { method }, ...EDITOR },
+  }) as unknown as APIGatewayProxyEventV2;
 
 const parse = (body: string | undefined): unknown =>
   JSON.parse(body ?? "null") as unknown;

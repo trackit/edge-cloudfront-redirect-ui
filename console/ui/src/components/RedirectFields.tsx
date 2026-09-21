@@ -1,6 +1,10 @@
 import PriorityField from "./PriorityField";
 import Toggle from "./Toggle";
-import { convertRedirectUrl } from "../domain/ruleDraft";
+import {
+  canBeRelative,
+  convertRedirectUrl,
+  originOf,
+} from "../domain/ruleDraft";
 import type { RedirectDraft } from "../domain/ruleDraft";
 
 interface Props {
@@ -17,6 +21,12 @@ const STATUS_CODES = [
 
 /** The redirect-specific half of the rule editor: what to answer, and with what. */
 export default function RedirectFields({ draft, host, onChange }: Props) {
+  // Offered only where it means "the same destination, written shorter". For a
+  // redirect that points at another host it would move the destination, so it
+  // is disabled and says which host it would have moved it to.
+  const canGoRelative = canBeRelative(draft.redirectURL, host);
+  const target = originOf(draft.redirectURL);
+
   return (
     <fieldset className="editor-section">
       <legend>Destination</legend>
@@ -62,14 +72,31 @@ export default function RedirectFields({ draft, host, onChange }: Props) {
 
       <Toggle
         label="Relative URL"
-        description="Redirect to a path on the same host instead of an absolute URL."
+        description={
+          canGoRelative
+            ? "Redirect to a path on the same host instead of an absolute URL."
+            : `Unavailable: this points at ${target ?? "another host"}, and a path would send visitors to ${host} instead.`
+        }
         checked={draft.relative}
+        disabled={!canGoRelative}
         onChange={(relative) =>
           // Rewrites the value as well as the flag: the two forms describe the
           // same destination, so switching should not make the user retype it.
+          //
+          // Going relative also records the origin it dropped, so coming back
+          // restores the address that was there rather than assuming https and
+          // the default port.
           onChange({
             relative,
-            redirectURL: convertRedirectUrl(draft.redirectURL, relative, host),
+            relativeFrom: relative
+              ? originOf(draft.redirectURL)
+              : draft.relativeFrom,
+            redirectURL: convertRedirectUrl(
+              draft.redirectURL,
+              relative,
+              host,
+              draft.relativeFrom,
+            ),
           })
         }
       />

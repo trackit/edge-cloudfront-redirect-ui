@@ -62,6 +62,31 @@ run "publishes_a_version" {
   }
 }
 
+# CF-41. The bundle is a file on disk that state cannot vouch for, so the build
+# runs on every apply and the published version is keyed on the sources instead
+# of on the zip. Both halves are asserted here because a regression in either one
+# only shows up in CI, on the second deploy, as a missing directory.
+run "build_is_unconditional_and_publishes_on_source_change" {
+  command = plan
+
+  assert {
+    # The keys, not the value: the trigger is a `timestamp()`, which Terraform
+    # treats as unknown until apply — which is precisely what forces the rebuild
+    # and defers the archive read. A source-keyed trigger is what skipped the
+    # build on a runner that had no dist/ to zip.
+    condition     = contains(keys(null_resource.build.triggers), "always")
+    error_message = "the build must run on every apply — state cannot know whether this machine has dist/"
+  }
+
+  assert {
+    # Reachable at plan time only because it no longer comes from the archive,
+    # which is deferred to apply. Taken from the zip, this assertion cannot be
+    # evaluated at all — which is the regression it guards.
+    condition     = aws_lambda_function.this.source_code_hash != ""
+    error_message = "source_code_hash must be derived from the sources, not from the archive's bytes"
+  }
+}
+
 run "function_name_passthrough" {
   command = plan
 

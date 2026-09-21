@@ -124,6 +124,19 @@ export class FakeRulesRepository implements RulesRepository {
     return Promise.resolve("moved");
   }
 
+  // All-or-nothing, and Puts only — the real one is a single transaction of
+  // conditional Puts over keys that are all currently held, so a destination
+  // being free is the one failure it can report. Checked for every item before
+  // anything is written, so a refusal leaves the table untouched.
+  reorder(items: RuleItem[]): Promise<boolean> {
+    if (items.some((item) => !this.items.has(this.key(item.pk, item.sk)))) {
+      return Promise.resolve(false);
+    }
+
+    for (const item of items) this.items.set(this.key(item.pk, item.sk), item);
+    return Promise.resolve(true);
+  }
+
   // Merges, like the UpdateItem it stands in for: every other field survives.
   setDisabled(
     host: string,

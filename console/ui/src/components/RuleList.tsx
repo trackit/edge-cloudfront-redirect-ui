@@ -27,6 +27,8 @@ interface Props {
   onDelete: (rule: Rule) => void;
   /** Sort keys currently being written, so their row can show it. */
   busy: string[];
+  /** False for a viewer: the row's controls are shown but inert, and say why. */
+  canWrite: boolean;
 }
 
 /**
@@ -41,6 +43,9 @@ interface Props {
  * No drag-to-reorder — out of scope for the MVP. Priority is edited as a number in
  * the editor, which is also the only thing that actually moves a rule.
  */
+/** Said the same way in every place a viewer meets a control they cannot use. */
+const READ_ONLY = "Your account has read-only access";
+
 export default function RuleList({
   host,
   grouped,
@@ -51,6 +56,7 @@ export default function RuleList({
   onToggle,
   onDelete,
   busy,
+  canWrite,
 }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const total = grouped.redirects.length + grouped.rewrites.length;
@@ -134,28 +140,26 @@ export default function RuleList({
       {showRedirects && (
         <RuleGroup
           title="Redirects"
-          kind="redirect"
           phase="viewer-request"
           rules={grouped.redirects}
-          onCreate={onCreate}
           onEdit={onEdit}
           onToggle={onToggle}
           onDelete={onDelete}
           busy={busy}
+          canWrite={canWrite}
         />
       )}
 
       {showRewrites && (
         <RuleGroup
           title="Rewrites"
-          kind="rewrite"
           phase="origin-request"
           rules={grouped.rewrites}
-          onCreate={onCreate}
           onEdit={onEdit}
           onToggle={onToggle}
           onDelete={onDelete}
           busy={busy}
+          canWrite={canWrite}
         />
       )}
     </div>
@@ -164,24 +168,23 @@ export default function RuleList({
 
 function RuleGroup({
   title,
-  kind,
   phase,
   rules,
-  onCreate,
   onEdit,
   onToggle,
   onDelete,
   busy,
+  canWrite,
 }: {
   title: string;
-  kind: "redirect" | "rewrite";
   phase: string;
   rules: Rule[];
-  onCreate: (kind: "redirect" | "rewrite") => void;
   onEdit: (rule: Rule) => void;
   onToggle: (rule: Rule) => void;
   onDelete: (rule: Rule) => void;
   busy: string[];
+  /** False for a viewer: the row's controls are shown but inert, and say why. */
+  canWrite: boolean;
 }) {
   return (
     <section className="rule-group">
@@ -193,14 +196,9 @@ function RuleGroup({
             fires on a cache miss. */}
         <span className="phase-chip mono">{phase}</span>
 
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm rule-group-add"
-          onClick={() => onCreate(kind)}
-        >
-          <IconPlus size={15} />
-          Create {kind}
-        </button>
+        {/* No create button here. Creating lives once, in the host header — which
+            is also the only copy that refuses a write a viewer cannot make and
+            stays dead while the list could not be read (CF-25). */}
       </header>
 
       <ul className="rule-cards">
@@ -212,6 +210,7 @@ function RuleGroup({
             <RuleCard
               rule={rule}
               busy={busy.includes(rule.sk)}
+              canWrite={canWrite}
               onEdit={onEdit}
               onToggle={onToggle}
               onDelete={onDelete}
@@ -226,12 +225,14 @@ function RuleGroup({
 function RuleCard({
   rule,
   busy,
+  canWrite,
   onEdit,
   onToggle,
   onDelete,
 }: {
   rule: Rule;
   busy: boolean;
+  canWrite: boolean;
   onEdit: (rule: Rule) => void;
   onToggle: (rule: Rule) => void;
   onDelete: (rule: Rule) => void;
@@ -277,7 +278,8 @@ function RuleCard({
           role="switch"
           aria-checked={enabled}
           aria-label={`${enabled ? "Disable" : "Enable"} ${label}`}
-          disabled={busy}
+          disabled={busy || !canWrite}
+          title={canWrite ? undefined : READ_ONLY}
           className={`switch${enabled ? " is-on" : ""}`}
           onClick={() => onToggle(rule)}
         >
@@ -289,6 +291,7 @@ function RuleCard({
           className="icon-btn"
           aria-label={`Edit ${label}`}
           disabled={busy}
+          title={canWrite ? undefined : "View this rule"}
           onClick={() => onEdit(rule)}
         >
           <IconEdit size={16} />
@@ -298,7 +301,8 @@ function RuleCard({
           type="button"
           className="icon-btn is-danger"
           aria-label={`Delete ${label}`}
-          disabled={busy}
+          disabled={busy || !canWrite}
+          title={canWrite ? undefined : READ_ONLY}
           onClick={() => onDelete(rule)}
         >
           <IconTrash size={16} />

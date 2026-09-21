@@ -1,6 +1,6 @@
 output "console_url" {
   value       = "https://${aws_cloudfront_distribution.this.domain_name}"
-  description = "Where the console is served. Prompts for the basic-auth credential."
+  description = "Where the console is served."
 }
 
 output "distribution_id" {
@@ -20,10 +20,10 @@ output "bucket_name" {
 
 output "function_arn" {
   value       = aws_cloudfront_function.gate.arn
-  description = "ARN of the gate function (basic auth, /api strip, SPA fallback)."
+  description = "ARN of the gate function (/api strip, SPA fallback)."
 }
 
 output "api_health_command" {
-  value       = "curl -i -u '<username>:<password>' https://${aws_cloudfront_distribution.this.domain_name}/api/health"
+  value       = "curl -i https://${aws_cloudfront_distribution.this.domain_name}/api/health"
   description = "Checks the console can reach the API through the /api/* behavior. Expect {\"status\":\"ok\"}."
 }

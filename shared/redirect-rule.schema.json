@@ -19,7 +19,13 @@
     },
     "type": { "const": "erMatchRule" },
     "statusCode": { "enum": [301, 302] },
-    "redirectURL": { "type": "string", "minLength": 1 },
+    "redirectURL": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:[hH][tT][tT][pP][sS]?://[^\\s]+|/(?![/\\\\])[^\\s]*)$",
+      "description": "Where the rule sends the request: an absolute http(s) URL, or a root-relative path starting with \"/\" — and a path means a path on this host, so \"//host\" and \"/\\host\" are not paths. This is the console's \"Relative URL\" toggle — one field, two forms.",
+      "$comment": "Kept in step with the console's own check (ruleDraft.ts REDIRECT_TARGET), so a value the form accepts is never refused by the API — including the scheme's case, which is why it is spelled as character classes: draft-07 `pattern` has no case-insensitive flag. Two things it is deliberately strict about, both because the value is written to a Location header verbatim: whitespace anywhere, since a raw CR/LF would split the response; and a second \"/\" or a \"\\\\\" after the first slash, since the browser resolves \"//evil.example.com\" against the scheme alone and leaves the host entirely — a path that is not a path on this host. `$1` capture references are unaffected."
+    },
     "useIncomingQueryString": { "type": "boolean" },
     "matches": {
       "type": "array",

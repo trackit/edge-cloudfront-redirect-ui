@@ -1,6 +1,6 @@
 # @cloudfront-redirect-rules/api
 
-The control-plane console API (ER-201). A single Node 22 Lambda behind an HTTP
+The control-plane console API (CF-11). A single Node 22 Lambda behind an HTTP
 API Gateway (v2) that manages redirect/rewrite rules in DynamoDB. It is a client
 of the rules table — it only ever writes rules the [Lambda@Edge](../../infra/lambda)
 reads; the two never talk directly.
@@ -11,17 +11,17 @@ shapes are never redefined here.
 
 ## Routes
 
-| Method               | Path                                          | Status                        |
-| -------------------- | --------------------------------------------- | ----------------------------- |
-| `GET`                | `/health`                                     | ✅ implemented                |
-| `GET` / `POST`       | `/targets`                                    | ✅ implemented (ER-202)       |
-| `GET`/`PUT`/`DELETE` | `/targets/{id}`                               | ✅ implemented (ER-202)       |
-| `GET` / `POST`       | `/targets/{targetId}/hosts/{host}/rules`      | ✅ implemented (ER-203)       |
-| `GET`/`PUT`/`DELETE` | `/targets/{targetId}/hosts/{host}/rules/{sk}` | ✅ implemented (ER-203)       |
-| `PATCH`              | `/targets/{targetId}/hosts/{host}/rules/{sk}` | ✅ `disabled` toggle (ER-203) |
+| Method               | Path                                          | Status                       |
+| -------------------- | --------------------------------------------- | ---------------------------- |
+| `GET`                | `/health`                                     | ✅ implemented               |
+| `GET` / `POST`       | `/targets`                                    | ✅ implemented (CF-12)       |
+| `GET`/`PUT`/`DELETE` | `/targets/{id}`                               | ✅ implemented (CF-12)       |
+| `GET` / `POST`       | `/targets/{targetId}/hosts/{host}/rules`      | ✅ implemented (CF-13)       |
+| `GET`/`PUT`/`DELETE` | `/targets/{targetId}/hosts/{host}/rules/{sk}` | ✅ implemented (CF-13)       |
+| `PATCH`              | `/targets/{targetId}/hosts/{host}/rules/{sk}` | ✅ `disabled` toggle (CF-13) |
 
 Rule routes are scoped to a **target** (a DynamoDB table from the targets
-registry, ER-202) and a **host** (the partition key), and write to that target's
+registry, CF-12) and a **host** (the partition key), and write to that target's
 table.
 
 The server owns both keys. A request body carries the rule's fields plus a
@@ -49,6 +49,36 @@ within the edge cache TTL (~1 min), not instantly.
 - **Validation** (`src/lib/validate.ts`) — Ajv compiled against the shared
   schemas; failures become `400 VALIDATION_ERROR` with per-field `details`.
 
+### Why registering a target only half-checks the table
+
+`src/lib/verify-table.ts` rejects a new target when `DescribeTable` says
+`ResourceNotFoundException`, and lets every other failure through with a
+warning. That asymmetry is deliberate, and worth knowing before you tighten it.
+
+A mistyped table name would otherwise be a valid registration. The duplicate
+check compares `tableName` exactly — and has to, since DynamoDB table names are
+case-sensitive — so `Edgeroute-rules` is a different table from
+`edgeroute-rules`, not a duplicate. Both entries sit in the registry under the
+same display name, and the broken one only surfaces on the first rules request,
+as a 502.
+
+But "cannot tell" is not "does not exist". A target that is unreachable _right
+now_ is expected: registering is a runtime action while IAM is granted at apply
+time, so `target_table_arns` is routinely still empty when the target goes in.
+Rejecting on a failed assume-role, a denied `DescribeTable` or a throttle would
+break that order; those keep surfacing later as `502 TARGET_UNREACHABLE`, which
+explains itself.
+
+Which makes the IAM grant decide how much of the check works, because IAM
+answers a denied `DescribeTable` before DynamoDB can say whether the table is
+there. The module grants it account-wide (`table/*`, the `DescribeTargetTables`
+statement) rather than over `target_table_arns`: a grant scoped to the tables
+that _should_ exist denies precisely the mistyped names, which arrive as
+`AccessDenied` and are allowed through. For a target with its own `roleArn` the
+same applies to that role's policy, which this module does not write — if it
+names its table exactly, a typo reads as "cannot tell" and the check is inert
+for that target. The `could not verify table` warning is what makes that visible.
+
 ## Develop
 
 ```bash
@@ -70,5 +100,7 @@ All four run in CI.
 ## Deploy
 
 Terraform lives in [`infra/`](infra) — HTTP API Gateway + Lambda + IAM + logs.
-See its [README](infra/README.md). Auth (Cognito) is ER-205; the API deploys
-open until then.
+See its [README](infra/README.md), and `cognito.tf` beside it for auth (CF-23):
+a Cognito user pool, and a JWT authorizer that refuses a request at the gateway
+before it reaches the Lambda. Four routes stay public — `/health`, and the three
+`/auth` routes that issue the token in the first place.

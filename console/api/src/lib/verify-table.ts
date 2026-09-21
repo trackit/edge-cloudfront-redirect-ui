@@ -13,37 +13,13 @@ export interface TableLocation {
 export type TableVerifier = (table: TableLocation) => Promise<void>;
 
 /**
- * Rejects a target whose table does not exist.
+ * Rejects a target whose table does not exist — and only that. Every other
+ * `DescribeTable` failure means we could not tell, which is not the same answer
+ * and is expected while IAM is still catching up with the registration.
  *
- * Without this, a mistyped table name is a perfectly valid registration: the
- * duplicate check in `handlers/targets.ts` compares `tableName` exactly — and
- * has to, since DynamoDB table names are case-sensitive — so `Edgeroute-rules`
- * is simply a different table from `edgeroute-rules`, not a duplicate. Both
- * entries then sit in the registry under the same display name, and the broken
- * one only reveals itself on the first rules request, as a 502.
- *
- * **Only `ResourceNotFoundException` rejects.** Every other failure — the role
- * cannot be assumed, the policy does not allow `DescribeTable`, DynamoDB
- * throttled us — means we could not determine anything, and a target that is
- * unreachable *right now* is expected: registering is a runtime action while IAM
- * is granted at apply time, so `target_table_arns` is routinely still empty when
- * the target goes in (see console/api/infra/README.md, and the `assumeRole`
- * comment in dynamo.ts). Rejecting those would break that order. They keep
- * surfacing later as 502 TARGET_UNREACHABLE, which explains itself.
- *
- * So this closes the case where AWS positively says "no such table", and leaves
- * "cannot tell" alone.
- *
- * Which means the grant decides how much of this actually works, because IAM
- * answers a denied `DescribeTable` before DynamoDB ever says whether the table
- * is there. The module therefore grants it account-wide (`table/*`, see the
- * `DescribeTargetTables` statement) rather than over `target_table_arns` — a
- * grant scoped to the tables that should exist denies precisely the mistyped
- * names, which arrive here as `AccessDenied` and are allowed through. For a
- * target with a `roleArn` the same is true of the *target* role's policy, which
- * this module does not write: if it names its table exactly, a typo reads as
- * "cannot tell" and the check is inert for that target. The warning below is
- * what makes that visible.
+ * The asymmetry, and how the IAM grant decides whether this check works at all,
+ * are in console/api/README.md § "Why registering a target only half-checks the
+ * table". Read that before narrowing either branch.
  */
 export const assertTableExists: TableVerifier = async (table) => {
   try {
@@ -52,11 +28,9 @@ export const assertTableExists: TableVerifier = async (table) => {
     );
   } catch (err) {
     if (!isResourceNotFound(err)) {
-      // The only trace that the check did not run. Allowing the registration is
-      // correct here, but it is indistinguishable from a table that exists —
-      // so a policy that lost `dynamodb:DescribeTable` would otherwise turn the
-      // check off with no symptom at all, which is how it went missing to begin
-      // with. AccessDenied on every registration is the line to grep for.
+      // The only trace that the check did not run: allowing the registration is
+      // right, but looks identical to a table that exists, so a policy that
+      // loses `dynamodb:DescribeTable` would turn the check off with no symptom.
       console.warn(
         `console-api: could not verify table "${table.tableName}" in ${table.region}: ${errorName(err) || "unknown error"} — registering it unchecked`,
       );
@@ -66,9 +40,9 @@ export const assertTableExists: TableVerifier = async (table) => {
     throw new ApiError(400, "VALIDATION_ERROR", "Target failed validation", [
       {
         path: "/tableName",
-        // Names the region because the same table name in the wrong region is
-        // the other half of this mistake, and flags case because that is the
-        // difference an operator re-reads three times without seeing.
+        // Names the region and the case: the same name in the wrong region is
+        // the other half of this mistake, and case is the difference an
+        // operator re-reads three times without seeing.
         message: `no DynamoDB table "${table.tableName}" exists in ${table.region} — check the spelling, the case (table names are case-sensitive) and the region`,
       },
     ]);
