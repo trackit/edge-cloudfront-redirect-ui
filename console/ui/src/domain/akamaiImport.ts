@@ -347,23 +347,33 @@ const policyIndexNote = (text: string): string | null => {
 const ABSOLUTE_URL = /^https?:\/\//i;
 
 /**
- * Escapes a glob so only `*` stays special, then anchors it.
+ * Escapes a glob so only `*` stays special, and anchors it when the operator it
+ * came from is an anchored one.
  *
  * `*` becomes a *capturing* group so an Akamai redirect target that reinjects the
  * piece it matched (`\1`, `\2` …) has something to reinject. A capturing group
  * matches exactly what `.*` matched, so this never changes *what* a rule matches
  * — it only makes the captured pieces available.
  *
+ * `anchored` is what keeps that true. `equals` compares the whole value and
+ * `contains` looks for the pattern anywhere in it, so only the first may carry
+ * `^…$`: anchoring a `contains` would narrow the rule to the subset of requests
+ * whose value *ends* where the glob does, silently dropping the rest. The edge
+ * runs a translated value through `RegExp.test`, which searches rather than
+ * compares, so an unanchored pattern there means exactly what `contains` means.
+ *
  * The escape class is the one `checkAkamaiVariant` uses at the edge, character
  * for character, and for the same reason: `?` is a literal in an Akamai match
  * value, not a single-character wildcard. Treating it as one here would make the
  * same value mean two different things depending on whether the import rewrote
  * it, and would spend the `$1` slot on the `?` itself.
- * See `infra/lambda/src/lib/check-akamai-variant.ts`.
+ * See `infra/lambda/src/lib/check-akamai-variant.ts`, which anchors on the same
+ * terms — this is the import-time half of that one glob dialect.
  */
-const wildcardToRegex = (glob: string): string => {
+const wildcardToRegex = (glob: string, anchored: boolean): string => {
   const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
-  return `^${escaped.replace(/\*/g, "(.*)")}$`;
+  const body = escaped.replace(/\*/g, "(.*)");
+  return anchored ? `^${body}$` : body;
 };
 
 /**
@@ -434,8 +444,17 @@ const resolveMatchValue = (
   }
 
   if (captureMode && value.includes("*")) {
+    // `contains` matches anywhere in the value and `equals` compares all of it,
+    // so the regex is anchored only for the second. Translating a `contains`
+    // into an anchored pattern would import a *narrower* rule than the export
+    // stated — the same requests minus those whose value continues past the
+    // glob — and nothing downstream could tell that had happened.
+    const anchored = operator !== "contains";
     const messages = [
-      "wildcard translated to a capturing regular expression to feed the redirect",
+      "wildcard translated to a capturing regular expression to feed the " +
+        (anchored
+          ? "redirect, still matched start to end"
+          : "redirect, still matched anywhere in the value"),
     ];
     if (value.includes(" ")) {
       messages.push(
@@ -445,7 +464,7 @@ const resolveMatchValue = (
     }
     return {
       matchOperator: "regex",
-      matchValue: wildcardToRegex(value),
+      matchValue: wildcardToRegex(value, anchored),
       messages,
       drops: [],
     };
@@ -463,8 +482,8 @@ const resolveMatchValue = (
  * A match URL / source path → one path `MatchCondition`.
  *
  * An absolute URL is reduced to its path (our single condition cannot AND a
- * hostname and a path from one column); a `*`/`?` wildcard becomes an anchored
- * regex. Both are lossy, so both add a warning.
+ * hostname and a path from one column); a `*` wildcard becomes a regex, anchored
+ * because a matchURL is an `equals`. Both are lossy, so both add a warning.
  */
 const mapMatchUrl = (
   raw: string,

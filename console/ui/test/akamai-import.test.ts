@@ -619,6 +619,53 @@ describe("parseExport — Edge Redirector policy CSV", () => {
   });
 
   /**
+   * The translation must not narrow the rule. `contains` holds when the pattern
+   * is found anywhere in the path, so the two-segment glob below covers
+   * `/nl/shoes/detail`: it contains `/nl/shoes/`. Anchoring the regex would
+   * quietly drop every such request — the path does not *end* where the glob
+   * does — leaving a rule that imports clean and redirects strictly fewer URLs
+   * than the export stated.
+   *
+   * The edge tests a translated value with `RegExp.test`, which searches instead
+   * of comparing, so the unanchored pattern means there exactly what `contains`
+   * meant. See `checkAkamaiVariant`, which anchors `equals` and only `equals`.
+   */
+  it("keeps a contains wildcard unanchored, so it still matches mid-path", () => {
+    const csv = `${HEADER}\n5001,P_BE,note,301,/\\1/\\2/,True,,path,contains,/*/*/,False,False`;
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
+
+    const match = asRedirect(preview.rows[0].input).matches[0];
+    expect(match.matchValue).toBe("/(.*)/(.*)/");
+
+    // What Akamai did on this request, and what the edge must keep doing.
+    const groups = new RegExp(match.matchValue).exec("/nl/shoes/detail");
+    expect(groups?.slice(1)).toEqual(["nl", "shoes"]);
+    expect(`/${groups?.[1]}/${groups?.[2]}/`).toBe("/nl/shoes/");
+  });
+
+  /**
+   * The other half of the same rule: `equals` compares the whole value, so its
+   * translation stays anchored. Dropping `^…$` here would *widen* the match —
+   * the mirror-image bug of the one above.
+   */
+  it("keeps an equals wildcard anchored, so it does not match mid-path", () => {
+    const csv = `${HEADER}\n5002,P_BE,note,301,/\\1,True,,path,equals,/old/*,False,False`;
+    const preview = parseExport(csv, {
+      filename: "policy.csv",
+      defaultHost: HOST,
+    });
+
+    const match = asRedirect(preview.rows[0].input).matches[0];
+    expect(match.matchValue).toBe("^/old/(.*)$");
+    expect(new RegExp(match.matchValue).test("/old/shoes")).toBe(true);
+    // An `equals` glob is not a substring test: the prefix has to be the start.
+    expect(new RegExp(match.matchValue).test("/nl/old/shoes")).toBe(false);
+  });
+
+  /**
    * The edge writes the target into `Location` verbatim, so one that starts with
    * a capture taken from *inside* the path builds a path-relative redirect: the
    * two-segment glob below is translated to an anchored regex whose first group
