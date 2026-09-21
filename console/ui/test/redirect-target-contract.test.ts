@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { draftFromRule, validateDraft } from "../src/ruleDraft";
-import type { RedirectDraft } from "../src/ruleDraft";
+import { draftFromRule, validateDraft } from "../src/domain/ruleDraft";
+import type { RedirectDraft } from "../src/domain/ruleDraft";
 import type { Rule } from "../src/api";
 
 /**
@@ -52,15 +52,25 @@ const redirectRule = (over: Partial<Rule> = {}): Rule =>
     ...over,
   }) as Rule;
 
-const withTarget = (redirectURL: string): RedirectDraft => {
+const withTarget = (redirectURL: string, relative: boolean): RedirectDraft => {
   const draft = draftFromRule(redirectRule()) as RedirectDraft;
-  return { ...draft, redirectURL };
+  return { ...draft, redirectURL, relative };
 };
 
-const formAccepts = (target: string): boolean =>
-  !validateDraft(withTarget(target), []).some(
+/**
+ * Both modes of the "Relative URL" toggle, because several of the form's checks
+ * are gated on it — testing one mode only left the root-relative branch, and
+ * therefore most of the list, unexercised.
+ */
+const MODES = [true, false];
+
+const formAccepts = (target: string, relative: boolean): boolean =>
+  !validateDraft(withTarget(target, relative), []).some(
     (detail) => detail.path === "/redirectURL",
   );
+
+const anyModeAccepts = (target: string): boolean =>
+  MODES.some((relative) => formAccepts(target, relative));
 
 /**
  * Both forms of a hand-written target, and the shapes an Akamai import produces
@@ -94,20 +104,38 @@ const TARGETS = [
 
 describe("redirectURL: the form and the shared schema", () => {
   it.each(TARGETS)("never lets the form accept %j alone", (target) => {
-    if (!formAccepts(target)) return;
+    for (const relative of MODES) {
+      if (!formAccepts(target, relative)) continue;
 
-    expect(
-      schemaAccepts(target),
-      `the form accepts ${JSON.stringify(target)} but redirectURL.pattern refuses it — ` +
-        "the API would answer 400 with the raw pattern in the message",
-    ).toBe(true);
+      expect(
+        schemaAccepts(target),
+        `the form accepts ${JSON.stringify(target)} (relative=${relative}) but ` +
+          "redirectURL.pattern refuses it — the API would answer 400 with the " +
+          "raw pattern in the message",
+      ).toBe(true);
+    }
   });
 
-  it("is testing something — the list covers both verdicts", () => {
-    // Guards the `return` above: if every target were rejected by the form, the
-    // assertion would never run and this suite would pass while checking nothing.
-    const accepted = TARGETS.filter(formAccepts);
+  /**
+   * Guards the `continue` above. A suite that skipped every row would pass while
+   * checking nothing, which is not hypothetical: before the importer landed, the
+   * form refused every `$n` target, so each of those rows was skipped and the
+   * widened pattern went unexercised from the form's side — which is how two
+   * real disagreements (`$1//evil.example.com`, `$1/a b`) survived a green run.
+   *
+   * So this asserts the shapes that matter are actually live, not merely that
+   * *something* is.
+   */
+  it("is testing something — the interesting shapes are live", () => {
+    const accepted = TARGETS.filter(anyModeAccepts);
+
     expect(accepted.length).toBeGreaterThan(0);
     expect(accepted.length).toBeLessThan(TARGETS.length);
+
+    // An absolute URL, a root-relative path, and a capture template: one of each
+    // of the three alternatives the pattern spells out.
+    expect(accepted).toContain("https://www.example.com/new");
+    expect(accepted).toContain("/new");
+    expect(accepted).toContain("$1/$2/");
   });
 });
