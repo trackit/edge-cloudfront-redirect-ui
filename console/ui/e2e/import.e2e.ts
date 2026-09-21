@@ -356,3 +356,33 @@ test("reports rows the API rejects instead of failing the whole import", async (
   await expect(page.getByText("Imported 0 rules.")).toBeVisible();
   await expect(page.getByText(/Row 1:/)).toBeVisible();
 });
+
+/**
+ * A refused row's `details` are the only part that says *which field* the API
+ * objected to: a `VALIDATION_ERROR`'s message is the same sentence whatever the
+ * cause. They were dropped on the way into the failure list, so an import that
+ * hit a schema disagreement reported "this row failed" and left the user to
+ * guess which cell of their export to fix.
+ */
+test("names the field the API refused, not just the row", async ({
+  page,
+  api,
+}) => {
+  await openHostWithRules(page, api);
+  api.createRuleReply({
+    status: 400,
+    body: errorBody("VALIDATION_ERROR", "Rule failed schema validation", [
+      { path: "/redirectURL", message: 'must match pattern "^(?:https?…)$"' },
+    ]),
+  });
+
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByPlaceholder(/Paste an Edge Redirector/).fill(csv);
+  await page.getByRole("button", { name: /Import 2 rules/ }).click();
+
+  await expect(page.getByText("Imported 0 rules.")).toBeVisible();
+  await expect(page.getByText(/Row 1:/)).toBeVisible();
+  // The field, and the reason the server gave for it.
+  await expect(page.getByText("/redirectURL").first()).toBeVisible();
+  await expect(page.getByText(/must match pattern/).first()).toBeVisible();
+});

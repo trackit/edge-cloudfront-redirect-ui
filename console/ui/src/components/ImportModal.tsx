@@ -491,6 +491,19 @@ export default function ImportModal({
                   {result.failures.map((failure) => (
                     <li key={failure.sourceIndex}>
                       Row {failure.sourceIndex}: {failure.message}
+                      {/* The fields the API named, when it named any. Without
+                          them a schema refusal reads as "this row failed" and
+                          the user has no way to tell which cell to fix. */}
+                      {failure.details !== undefined && (
+                        <ul>
+                          {failure.details.map((detail, at) => (
+                            <li key={at}>
+                              <span className="mono">{detail.path}</span>{" "}
+                              {detail.message}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </li>
                   ))}
                 </ul>

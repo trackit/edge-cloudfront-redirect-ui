@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, isRedirect, priorityOf } from "../api";
 import { hostKey } from "./hostRoutes";
 import { PRIORITY_MAX } from "./ruleDraft";
-import type { Rule, RuleInput } from "../api";
+import type { Rule, RuleInput, ValidationDetail } from "../api";
 
 /**
  * Loading and mutating one host's rules.
@@ -40,7 +40,17 @@ export interface ImportOutcome {
   created: number;
   /** Rules an identical one already existed for, so nothing was written. */
   duplicates: number;
-  failures: { sourceIndex: number; message: string }[];
+  failures: {
+    sourceIndex: number;
+    message: string;
+    /**
+     * The API's per-field findings, when it had any. Carried rather than
+     * flattened into `message`: for a `VALIDATION_ERROR` the message is generic
+     * ("Rule failed schema validation") and the field is the only part that
+     * tells the user which cell of their export to fix.
+     */
+    details?: ValidationDetail[];
+  }[];
 }
 
 /** How far along a run is, for a caller that wants to show it. */
@@ -330,6 +340,11 @@ export function useRules(targetId: string, host: string) {
                 err.code === "RULE_EXISTS"
                   ? "priority already in use (created concurrently?)"
                   : err.message,
+              // Only where they say something the message does not: a
+              // VALIDATION_ERROR's message is the same sentence for every
+              // refused field, so without these the user is told a row failed
+              // and never which part of it.
+              ...(err.details.length > 0 ? { details: err.details } : {}),
             });
           }
           onProgress?.({ done, total: items.length });
