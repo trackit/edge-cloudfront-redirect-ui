@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { connectDistribution } from "../src/distribution";
+import { connectDistribution } from "../src/domain/distribution";
 import { ApiError } from "../src/api/error";
 import type { ApiClient, Target } from "../src/api";
-import type { DistributionDraft } from "../src/types";
+import type { DistributionDraft } from "../src/domain/types";
 
 /**
  * The connect flow's 409 fallback.

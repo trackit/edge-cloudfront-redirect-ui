@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../src/api";
 import type { HostSummary } from "../src/api";
-import { resolveHostView, toHostsError } from "../src/hosts";
+import { resolveHostView, toHostsError } from "../src/domain/hosts";
 
 /**
  * The host list's two decisions, both reachable without a DOM: what a failed

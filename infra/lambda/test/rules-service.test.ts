@@ -252,6 +252,84 @@ describe("match conditions", () => {
     });
   });
 
+  /**
+   * A regex condition is written against a path, so it is tested against the path
+   * — the query string is not part of the subject unless the pattern says it is.
+   * Anchored patterns are the common case in a migrated redirect map, and testing
+   * one against `path?utm=x` would silently stop matching campaign traffic.
+   */
+  it("tests a regex against the path, not the query string", async () => {
+    const service = new RulesService(
+      new FakeRepository([
+        rule({
+          redirectURL: "/new/$1",
+          matches: [
+            {
+              matchType: "regex",
+              matchOperator: "regex",
+              matchValue: "^/old/([a-z]+)$",
+            },
+          ],
+        }),
+      ]),
+      60_000,
+    );
+
+    expect(
+      await service.match(params({ path: "/old/shoes?utm=x" }), "REDIRECT"),
+    ).toMatchObject({ redirectURL: "/new/shoes" });
+  });
+
+  /**
+   * The capture feeds `$1`, so a `(.*)` that swallowed the query string would put
+   * it in the target — and `appendQueryStringIfNeeded` would then add it a second
+   * time, handing the viewer a URL with the same parameter twice.
+   */
+  it("keeps the query string out of a capture, so it is not duplicated", async () => {
+    const service = new RulesService(
+      new FakeRepository([
+        rule({
+          redirectURL: "/new/$1",
+          useIncomingQueryString: true,
+          matches: [
+            {
+              matchType: "path",
+              matchOperator: "regex",
+              matchValue: "^/old/(.*)$",
+            },
+          ],
+        } as Partial<RedirectRule>),
+      ]),
+      60_000,
+    );
+
+    expect(
+      await service.match(params({ path: "/old/shoes?color=red" }), "REDIRECT"),
+    ).toMatchObject({ redirectURL: "/new/shoes?color=red" });
+  });
+
+  it("still sees the query string when the pattern mentions it", async () => {
+    const service = new RulesService(
+      new FakeRepository([
+        rule({
+          redirectURL: "/new",
+          matches: [
+            {
+              matchType: "regex",
+              matchOperator: "regex",
+              matchValue: "^/old\\?debug=1$",
+            },
+          ],
+        }),
+      ]),
+      60_000,
+    );
+
+    expect(
+      await service.match(params({ path: "/old?debug=1" }), "REDIRECT"),
+    ).toMatchObject({ redirectURL: "/new" });
+  });
+
   it("skips a rule with a malformed regex instead of failing the whole match", async () => {
     const service = new RulesService(
       new FakeRepository([

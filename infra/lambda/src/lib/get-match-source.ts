@@ -29,12 +29,23 @@ export const getMatchSource = (
     return fullUrl;
   }
 
-  // An `equals` path match with no `?` in the pattern compares the bare path;
-  // everything else keeps the query string so patterns can match against it.
+  // A path match with no `?` in the pattern compares the bare path; a pattern
+  // that mentions `?` clearly means to see the query string, and keeps it.
+  //
+  // Regex mode is included, not just `equals`. An anchored pattern like
+  // `^/old/([a-z]+)$` is written against a path, so testing it against
+  // `path?utm=x` never matches and the rule silently stops firing for exactly
+  // the traffic a migration cares about. And in `formatResult` the capture feeds
+  // `$1`, so a query string swallowed by `(.*)` comes back in the target and is
+  // then appended a second time. `contains` is left alone: an unanchored
+  // substring search over the full path+query is a reasonable thing to have
+  // meant, and nothing in the model says otherwise.
+  const isPathLike =
+    match.matchType === MatchTypeValues.PATH ||
+    match.matchType === MatchTypeValues.REGEX;
   const usePathnameOnly =
-    (match.matchType === MatchTypeValues.PATH ||
-      match.matchType === MatchTypeValues.REGEX) &&
-    match.matchOperator === MatchOperator.EQUALS &&
+    isPathLike &&
+    (match.matchOperator === MatchOperator.EQUALS || isRegexMode) &&
     !match.matchValue.includes("?");
 
   const pathSource = usePathnameOnly ? pathname : request.path;

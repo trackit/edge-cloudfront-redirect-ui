@@ -8,12 +8,12 @@ import {
   pickSslProtocol,
   toRuleInput,
   validateDraft,
-} from "../src/ruleDraft";
+} from "../src/domain/ruleDraft";
 import type {
   CustomDraft,
   RedirectDraft,
   RewriteDraft,
-} from "../src/ruleDraft";
+} from "../src/domain/ruleDraft";
 import type { CustomOrigin, Rule, ValidationDetail } from "../src/api";
 
 /**
@@ -229,6 +229,86 @@ describe("validateDraft — regex", () => {
       [],
     );
     expect(has(details, "/matches/0/matchValue")).toBe(false);
+  });
+});
+
+/**
+ * The edge copies `redirectURL` into `Location` as it stands, so a value that is
+ * neither absolute nor root-relative is resolved against the path the request
+ * came in on: `/a/b/` asking for `a/b/` lands on `/a/b/a/b/`. A reinjected
+ * capture is the interesting case, because only the leading `$1` has a shape the
+ * form cannot read on its own — and even then only when the capture is not
+ * anchored to the start of the request.
+ */
+describe("validateDraft — redirect target with a capture", () => {
+  const withRedirect = (
+    redirectURL: string,
+    matches: Rule["matches"] = [match()],
+  ): RedirectDraft => ({
+    ...(draftFromRule(redirectRule({ redirectURL, matches })) as RedirectDraft),
+    priority: "100",
+  });
+
+  const REGEX_FROM_START = match({
+    matchType: "regex",
+    matchOperator: "regex",
+    matchValue: "(.*)\\/([^\\/]+)$",
+  });
+  const REGEX_AFTER_A_LITERAL = match({
+    matchOperator: "regex",
+    matchValue: "^/old/(.*)$",
+  });
+  const REGEX_ON_A_HEADER = match({
+    matchType: "header",
+    headerName: "X-Country",
+    matchOperator: "regex",
+    matchValue: "^(.*)$",
+  });
+
+  it.each([
+    ["an absolute target", "https://h/new", [match()], false],
+    ["a root-relative target", "/new", [match()], false],
+    // The capture is behind a literal, so `$1` never carries the leading "/".
+    [
+      "a leading capture from inside the path",
+      "$1/x",
+      [REGEX_AFTER_A_LITERAL],
+      true,
+    ],
+    // …and behind a header it is not even part of the path.
+    ["a leading capture off a header", "$1/x", [REGEX_ON_A_HEADER], true],
+    // Nothing fills it: the edge leaves the literal `$1` in the Location.
+    ["a leading capture with no regex at all", "$1/x", [match()], true],
+    // Where the group starts is unknowable for anything but $1.
+    ["a leading $2", "$2/x", [REGEX_FROM_START], true],
+    // An unanchored `(.*)` matches from index 0, so `$1` starts with "/".
+    [
+      "a leading capture from the path's start",
+      "$1/x",
+      [REGEX_FROM_START],
+      false,
+    ],
+    // A capture anywhere but in front leaves the target's own shape readable.
+    [
+      "a root-relative target with a capture",
+      "/new/$1",
+      [REGEX_FROM_START],
+      false,
+    ],
+    // The bug this closed: a `$1` further in used to wave the whole check off.
+    [
+      "a path-relative target with a capture",
+      "new/$1",
+      [REGEX_FROM_START],
+      true,
+    ],
+  ] as const)("rejects %s: %s", (_case, redirectURL, matches, rejected) => {
+    const details = validateDraft(withRedirect(redirectURL, [...matches]), []);
+    expect(has(details, "/redirectURL")).toBe(rejected);
+  });
+
+  it("requires a target", () => {
+    expect(has(validateDraft(withRedirect(""), []), "/redirectURL")).toBe(true);
   });
 });
 
