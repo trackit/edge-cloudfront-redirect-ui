@@ -480,3 +480,104 @@ test("refuses an oversized file instead of importing part of it", async ({
     ),
   ).toHaveLength(0);
 });
+
+/**
+ * The Formats help (CF-32).
+ *
+ * All of it is browser behaviour: that the panel escapes the dialog's scroll
+ * container, that it survives being taller than the space under its button, and
+ * that it goes away on the gestures people actually use. The content of each tab
+ * is checked against the parser in `test/import-formats.test.ts`, so these only
+ * assert that the right tab is showing.
+ */
+
+const openFormats = async (page: Page, api: ApiStub): Promise<void> => {
+  await openHostWithRules(page, api);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByRole("button", { name: "Formats" }).click();
+};
+
+const popover = (page: Page) =>
+  page.getByRole("group", { name: "Accepted import formats" });
+
+test("the Formats help names every format the importer accepts", async ({
+  page,
+  api,
+}) => {
+  await openFormats(page, api);
+
+  // Four, not the three the ticket listed: the policy CSV is a format the
+  // importer detects, and a help panel that omits it sends someone off to
+  // reshape a file that would have imported as it was.
+  const tabs = popover(page).getByRole("tab");
+  await expect(tabs).toHaveCount(4);
+  await expect(tabs).toHaveText([
+    "Edge Redirector CSV",
+    "Edge Redirector policy CSV",
+    "Simple CSV",
+    "matchRules JSON",
+  ]);
+});
+
+test("the Formats help shows one format at a time", async ({ page, api }) => {
+  await openFormats(page, api);
+
+  // The first tab is selected without being clicked, so the panel is never
+  // empty on open.
+  await expect(
+    popover(page).getByRole("tab", { name: "Edge Redirector CSV" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(popover(page).getByRole("tabpanel")).toContainText("ruleName");
+
+  await popover(page).getByRole("tab", { name: "matchRules JSON" }).click();
+
+  await expect(popover(page).getByRole("tabpanel")).toContainText("matchRules");
+  await expect(popover(page).getByRole("tabpanel")).not.toContainText(
+    "ruleName",
+  );
+});
+
+test("the Formats help is not trapped inside the dialog's scroll area", async ({
+  page,
+  api,
+}) => {
+  // The acceptance criterion that needs a DOM assertion rather than an eye: an
+  // inline panel is clipped by `.modal-body`'s overflow the moment it is taller
+  // than the room under its button, which — with an example in it — it is.
+  await openFormats(page, api);
+
+  await expect(popover(page)).toBeVisible();
+  await expect(page.locator(".modal-body .formats-popover")).toHaveCount(0);
+  await expect(page.locator("body > .formats-popover")).toHaveCount(1);
+});
+
+test("the Formats help closes on the gestures that should close it", async ({
+  page,
+  api,
+}) => {
+  await openFormats(page, api);
+  await expect(popover(page)).toBeVisible();
+
+  // Toggling the button it came from.
+  await page.getByRole("button", { name: "Formats" }).click();
+  await expect(popover(page)).toHaveCount(0);
+
+  // A click outside it — on the dialog, which must stay open.
+  await page.getByRole("button", { name: "Formats" }).click();
+  await expect(popover(page)).toBeVisible();
+  await page.getByRole("heading", { name: "Import rules" }).click();
+  await expect(popover(page)).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toBeVisible();
+
+  // Escape takes the panel and leaves the dialog, so a file loaded to check its
+  // format is not thrown away along with the help about that format.
+  await page.getByRole("button", { name: "Formats" }).click();
+  await expect(popover(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(popover(page)).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toBeVisible();
+
+  // And the second Escape closes the dialog, as it did before.
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
