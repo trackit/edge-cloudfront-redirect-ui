@@ -7,10 +7,16 @@
 table_name    = "edgeroute-dev-rules"
 function_name = "edgeroute-dev-redirect-rules"
 
-# Ten seconds instead of a minute, so a rule change is visible while someone is
-# still looking at it. Baked into the function at package time — changing it later
-# means republishing and another distribution deploy.
-cache_ttl_ms = 10000
+# A minute, which is the module's default and the figure the README quotes. Stated
+# rather than left implicit because this is the environment a demo runs against,
+# and the propagation delay someone is shown should be the one the product has.
+#
+# It was ten seconds for a while, so a rule change landed while someone was still
+# looking at it. That made the demo flattering and the documentation wrong.
+#
+# Baked into the function at package time, so changing it means republishing and
+# another distribution deploy — not something to do mid-demo.
+cache_ttl_ms = 60000
 
 tags = {
   project = "edgeroute"
