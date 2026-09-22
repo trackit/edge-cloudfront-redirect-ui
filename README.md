@@ -147,6 +147,15 @@ events.
 In a hurry? `./seed-demo.sh` in `examples/infra` writes the demo host and three
 rules — a 301, a 302 and a rewrite — and is safe to re-run.
 
+**Already have rules somewhere else?** **Import** in the host header reads an
+Akamai Edge Redirector export — CSV or `matchRules` JSON — and previews every
+row before writing any of them: what each rule became, what was lost in
+translation, and which rows cannot be imported at all and why. Nothing is
+written until you accept the preview, and re-importing the same file is safe: a
+rule identical to one already there is counted, not duplicated.
+
+![Previewing an Akamai import](docs/screenshots/console-import.png)
+
 ### 5. See it live
 
 ```bash
