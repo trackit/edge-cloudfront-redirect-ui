@@ -3,6 +3,7 @@ import redirectSchema from "@cloudfront-redirect-rules/shared/redirect-rule.sche
 import rewriteSchema from "@cloudfront-redirect-rules/shared/rewrite-rule.schema.json" with { type: "json" };
 import { ApiError } from "./errors.js";
 import { formatAjvErrors } from "./ajv-errors.js";
+import { assertRegexes } from "./assert-regexes.js";
 import type { RuleType } from "./rule-keys.js";
 
 // Both schemas are registered under their filenames because rewrite-rule cross-
@@ -64,4 +65,9 @@ export const validateRule = (body: unknown): void => {
       formatAjvErrors(validate.errors),
     );
   }
+
+  // After the schema, because it assumes the shape the schema just confirmed —
+  // and because a body that is the wrong shape should be described as that,
+  // rather than as a regex problem.
+  assertRegexes(body);
 };

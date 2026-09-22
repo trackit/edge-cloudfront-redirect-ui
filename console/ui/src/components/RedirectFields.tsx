@@ -1,7 +1,11 @@
 import PriorityField from "./PriorityField";
 import Toggle from "./Toggle";
-import { canBeRelative, convertRedirectUrl, originOf } from "../ruleDraft";
-import type { RedirectDraft } from "../ruleDraft";
+import {
+  canBeRelative,
+  convertRedirectUrl,
+  originOf,
+} from "../domain/ruleDraft";
+import type { RedirectDraft } from "../domain/ruleDraft";
 
 interface Props {
   draft: RedirectDraft;

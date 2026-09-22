@@ -448,7 +448,11 @@ export interface components {
       sk?: components["schemas"]["RuleKeySk"];
       /** @enum {unknown} */
       statusCode: 301 | 302;
-      /** @description Absolute http(s) URL, or a root-relative path starting with `/`. The scheme is case-insensitive; whitespace is rejected anywhere in the value, as is a path starting `//` or `/\` — the browser resolves those against the scheme alone and leaves this host. */
+      /**
+       * @description Absolute http(s) URL, a root-relative path starting with `/`, or a target beginning with a capture reference (`$1/$2/`) whose leading segment the edge builds from the match at request time.
+       *
+       *     The scheme is case-insensitive; whitespace is rejected anywhere in the value, as is `//` or `/\` after the first slash — the browser resolves those against the scheme alone and leaves this host. `$n` followed by `//` or `/\` is refused for the same reason: an unfilled group substitutes as the empty string.
+       */
       redirectURL: string;
       useIncomingQueryString?: boolean;
       matches: components["schemas"]["match"][];
@@ -525,7 +529,7 @@ export interface components {
       type: "erMatchRule";
       /** @enum {unknown} */
       statusCode: 301 | 302;
-      /** @description Where the rule sends the request: an absolute http(s) URL, or a root-relative path starting with "/" — and a path means a path on this host, so "//host" and "/\host" are not paths. This is the console's "Relative URL" toggle — one field, two forms. */
+      /** @description Where the rule sends the request: an absolute http(s) URL, a root-relative path starting with "/" — and a path means a path on this host, so "//host" and "/\host" are not paths — or a target beginning with a capture reference ("$1/$2/"), whose leading segment only exists once the edge substitutes it. The first two are the console's "Relative URL" toggle, one field in two forms. */
       redirectURL: string;
       useIncomingQueryString?: boolean;
       matches: components["schemas"]["match"][];

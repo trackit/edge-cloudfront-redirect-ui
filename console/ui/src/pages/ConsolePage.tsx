@@ -5,7 +5,7 @@ import DistributionChip from "../components/DistributionChip";
 import ProfileMenu from "../components/ProfileMenu";
 import OnboardingScreen from "../components/OnboardingScreen";
 import SettingsModal from "../components/SettingsModal";
-import { useDistributions } from "../distribution";
+import { useDistributions } from "../domain/distribution";
 
 /**
  * Which overlay the console is showing. `null` is the console itself; `add`

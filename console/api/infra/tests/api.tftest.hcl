@@ -54,6 +54,29 @@ run "lambda_runtime_and_handler" {
   }
 }
 
+# CF-41. dist/ is a file on disk that state cannot vouch for, so the build runs
+# on every apply and the function's code is keyed on the sources instead of on
+# the zip. A regression in either half only shows up in CI, on the deploy after
+# this one, as a missing directory.
+run "build_is_unconditional_and_redeploys_on_source_change" {
+  command = plan
+
+  assert {
+    # The keys, not the value: the trigger is a `timestamp()`, which Terraform
+    # treats as unknown until apply — which is what forces the rebuild and
+    # defers the archive read past the plan.
+    condition     = contains(keys(null_resource.build.triggers), "always")
+    error_message = "the build must run on every apply — state cannot know whether this machine has dist/"
+  }
+
+  assert {
+    # Reachable at plan time only because it no longer comes from the archive.
+    # Taken from the zip, this assertion cannot be evaluated at all.
+    condition     = aws_lambda_function.this.source_code_hash != ""
+    error_message = "source_code_hash must be derived from the sources, not from the archive's bytes"
+  }
+}
+
 run "lambda_sizing_defaults" {
   command = plan
 

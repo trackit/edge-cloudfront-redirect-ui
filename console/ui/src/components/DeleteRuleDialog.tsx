@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, isRedirect, priorityOf } from "../api";
 import type { Rule } from "../api";
-import { ruleFrom, ruleTo } from "../ruleSummary";
+import { ruleFrom, ruleTo } from "../domain/ruleSummary";
 import { IconClose } from "./icons";
 
 interface Props {

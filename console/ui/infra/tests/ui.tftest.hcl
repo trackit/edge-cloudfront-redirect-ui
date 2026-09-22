@@ -27,6 +27,19 @@ variables {
 # The gate function
 # =============================================================================
 
+# CF-41. The SPA is built on disk, so a publish gated on the sources is skipped
+# on a runner that has no dist/ — and here that is silent: nothing reads dist/
+# during plan, so the deploy leaves the bucket as the previous one left it.
+run "publish_is_unconditional" {
+  command = plan
+
+  assert {
+    # The keys, not the value: `timestamp()` is unknown until apply.
+    condition     = contains(keys(null_resource.publish.triggers), "always")
+    error_message = "the publish must run on every apply — state cannot know what this machine built, or what the bucket holds"
+  }
+}
+
 run "one_function_on_both_behaviors" {
   command = plan
 

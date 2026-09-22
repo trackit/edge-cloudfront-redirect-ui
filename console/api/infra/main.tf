@@ -21,20 +21,38 @@ locals {
     for f in fileset("${local.monorepo_root}/shared", "*.schema.json") :
     filesha256("${local.monorepo_root}/shared/${f}")
   ]))
+
+  # Everything that can change what the bundle contains. This is what a new
+  # function version is keyed on — see `source_code_hash` below. Same shape as
+  # the edge module's `code_hash`, and for the same reason (CF-41).
+  #
+  # try(): a consumer who skips the install (or uses another package manager)
+  # may have no npm lockfile, and a missing file would fail the whole plan.
+  code_hash = base64sha256(join("", [
+    local.handler_hash,
+    local.shared_schema_hash,
+    filesha256("${local.api_source_dir}/build.mjs"),
+    filesha256("${local.api_source_dir}/package.json"),
+    filesha256("${local.api_source_dir}/tsconfig.json"),
+    try(filesha256("${local.monorepo_root}/package-lock.json"), ""),
+  ]))
 }
 
 # esbuild -> dist/. Runs at apply so a bare `terraform apply` produces the zip.
+#
+# On every apply, deliberately — dist/ is a file on disk and state cannot say
+# whether *this* machine has one. Keyed on the sources instead, the build was
+# skipped on any runner that checked out a commit changing none of them, and the
+# plan-time read of `archive_file` below then found no directory (CF-41, where
+# the same construction in infra/modules/edge broke the deploy first; this stack
+# broke on the very next merge, which touched only console/ui).
+#
+# The rebuild costs seconds and does not publish a new version — that is
+# `local.code_hash`'s decision, and it is keyed on the sources this used to be
+# keyed on.
 resource "null_resource" "build" {
   triggers = {
-    handler      = local.handler_hash
-    schemas      = local.shared_schema_hash
-    build_script = filesha256("${local.api_source_dir}/build.mjs")
-    package      = filesha256("${local.api_source_dir}/package.json")
-    # try(): a consumer who skips the install (or uses another package manager)
-    # may have no npm lockfile, and a missing file would fail the whole plan.
-    lockfile = try(filesha256("${local.monorepo_root}/package-lock.json"), "")
-    # esbuild reads tsconfig, so a compiler-option change must repackage too.
-    tsconfig = filesha256("${local.api_source_dir}/tsconfig.json")
+    always = timestamp()
   }
 
   provisioner "local-exec" {
@@ -215,8 +233,13 @@ resource "aws_lambda_function" "this" {
   handler       = "index.handler"
   runtime       = "nodejs22.x"
 
-  filename         = data.archive_file.lambda_zip.output_path
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  filename = data.archive_file.lambda_zip.output_path
+
+  # The sources' hash, not the archive's: the build above runs on every apply,
+  # and two esbuild runs over identical sources need not produce a byte-identical
+  # zip. Taken from the archive, that would redeploy the function on every
+  # deploy that changed nothing.
+  source_code_hash = local.code_hash
 
   timeout     = var.timeout
   memory_size = var.memory_size

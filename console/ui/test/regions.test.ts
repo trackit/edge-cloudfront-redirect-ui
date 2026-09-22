@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FALLBACK_REGIONS, regionOptions } from "../src/regions";
+import { FALLBACK_REGIONS, regionOptions } from "../src/domain/regions";
 
 describe("regionOptions", () => {
   it("sorts what the deployment allows", () => {

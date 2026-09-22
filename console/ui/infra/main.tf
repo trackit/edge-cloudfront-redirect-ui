@@ -10,17 +10,6 @@ locals {
   # resolve there.
   dist_dir = abspath("${local.ui_source_dir}/dist")
 
-  # Everything the built SPA is made of. The build runs when any of it changes —
-  # `src/**` rather than `src/**/*.ts` because the UI is .tsx and .css too, and
-  # `src/api/schema.gen.ts` lives there, so an OpenAPI change is covered.
-  source_hash = sha256(join("", [
-    for f in setunion(
-      fileset(local.ui_source_dir, "src/**"),
-      fileset(local.ui_source_dir, "public/**"),
-      ["index.html", "package.json", "vite.config.ts", "tsconfig.json", "tsconfig.node.json"],
-    ) : filesha256("${local.ui_source_dir}/${f}")
-  ]))
-
   # Only the host: the /api/* behavior forwards to the API's root, and the
   # function strips the prefix. Validated on the variable.
   api_origin_domain = regex("^https://([a-z0-9.-]+)/?$", var.api_endpoint)[0]
@@ -86,8 +75,7 @@ resource "aws_s3_bucket_policy" "ui" {
 
 # --- Build and upload -------------------------------------------------------
 
-# Build then sync, in one resource, triggered on the sources rather than on the
-# build output.
+# Build then sync, in one resource, on every apply.
 #
 # The obvious alternative — `aws_s3_object` with `for_each = fileset(dist)` — does
 # not work here: `fileset` is evaluated during plan, and on a fresh clone `dist/`
@@ -96,22 +84,23 @@ resource "aws_s3_bucket_policy" "ui" {
 # Content-Type from its extension, which a hand-written for_each would have to
 # carry a MIME map for.
 #
-# The trade-off: object-level drift is invisible to Terraform. Something deleting
-# a file straight out of the bucket is only repaired by the next source change, or
-# by tainting this resource.
+# Unconditional for the reason the two Lambda stacks are (CF-41): the bundle is
+# built on disk, and state cannot say whether *this* machine has one. Keyed on
+# the sources, a runner that checked out a commit changing none of them skipped
+# the build and published nothing — silent here rather than fatal, because
+# nothing reads dist/ during plan, so the deploy just left the bucket holding
+# whatever the previous one put there. It also closes the drift noted below.
+#
+# `aws s3 sync` uploads only what differs, so an unchanged console costs a build
+# and a listing. The dependency on the bucket comes from the sync command
+# interpolating its id, not from a trigger.
+#
+# The remaining trade-off: object-level drift is still invisible to Terraform —
+# a file deleted straight out of the bucket is not *planned* back, it is simply
+# re-uploaded by the next apply.
 resource "null_resource" "publish" {
   triggers = {
-    sources = local.source_hash
-    bucket  = aws_s3_bucket.ui.id
-    build   = local.build_command
-    install = local.install_command
-    # try(): a consumer who skips the install may have no lockfile, and a missing
-    # file would fail the whole plan.
-    lockfile = try(filesha256("${local.monorepo_root}/package-lock.json"), "")
-    # Baked into the bundle, so a pool that was replaced has to republish it —
-    # the sources are unchanged in that case and nothing else here would notice.
-    cognito_domain    = var.cognito_domain
-    cognito_client_id = var.cognito_client_id
+    always = timestamp()
   }
 
   provisioner "local-exec" {
