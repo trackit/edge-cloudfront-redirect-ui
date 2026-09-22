@@ -177,11 +177,14 @@ const handleOriginRequest = async (
   request: CloudFrontRequest,
   params: RequestParams,
 ): Promise<CloudFrontRequestResult> => {
-  // Nothing stamped the header, so `params.hostname` fell back to `Host`. Said
-  // once because it means the viewer-request association is missing, and that is
-  // worth knowing on two counts: rewrites are keying on the origin's domain
-  // rather than the viewer's hostname, and if the distribution forwards viewer
-  // headers then the value being keyed on is one the client chose. See
+  // Nothing stamped the header, so `params.hostname` fell back to `Host` — the
+  // origin's domain, which holds no rules, so no rewrite can match. Said once
+  // because both causes are deployment-shaped rather than per-request.
+  //
+  // Two ways to get here, and the log names both because they look identical from
+  // inside: the viewer-request association is not attached, or it is and this
+  // behavior's cache and origin request policies do not forward the header, so
+  // CloudFront dropped it on the way. The second is the easy one to miss — see
   // lib/viewer-host.ts.
   if (
     request.headers[VIEWER_HOST_HEADER] === undefined &&
@@ -190,7 +193,8 @@ const handleOriginRequest = async (
     warnedMissingViewerHost = true;
     console.warn("redirect-rules: no viewer host stamped at origin-request", {
       keyedOn: params.hostname,
-      fix: "attach the viewer-request association to this cache behavior",
+      header: VIEWER_HOST_HEADER,
+      fix: "attach the viewer-request association to this cache behavior, and forward this header to the origin (origin request policy)",
     });
   }
 

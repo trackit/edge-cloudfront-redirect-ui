@@ -6,9 +6,9 @@ import {
   SAMPLE_DISTRIBUTION,
   connectDistribution,
   emptyDistribution,
-} from "../distribution";
+} from "../domain/distribution";
 import { ApiError } from "../api";
-import type { Distribution, DistributionDraft } from "../types";
+import type { Distribution, DistributionDraft } from "../domain/types";
 import { IconArrow, IconBolt, IconServer, IconSliders } from "./icons";
 
 interface Props {
@@ -149,6 +149,7 @@ export default function OnboardingScreen({ onConnect, onCancel }: Props) {
               <DistributionFields
                 value={d}
                 onChange={(patch) => setD((prev) => ({ ...prev, ...patch }))}
+                isNew
               />
             </div>
 

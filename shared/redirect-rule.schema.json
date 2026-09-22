@@ -19,7 +19,13 @@
     },
     "type": { "const": "erMatchRule" },
     "statusCode": { "enum": [301, 302] },
-    "redirectURL": { "type": "string", "minLength": 1 },
+    "redirectURL": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:[hH][tT][tT][pP][sS]?://[^\\s]+|/(?![/\\\\])[^\\s]*|\\$[1-9][0-9]*(?!/[/\\\\])[^\\s]*)$",
+      "description": "Where the rule sends the request: an absolute http(s) URL, a root-relative path starting with \"/\" — and a path means a path on this host, so \"//host\" and \"/\\host\" are not paths — or a target beginning with a capture reference (\"$1/$2/\"), whose leading segment only exists once the edge substitutes it. The first two are the console's \"Relative URL\" toggle, one field in two forms.",
+      "$comment": "Whitespace is rejected anywhere and a second \"/\" or a \"\\\\\" cannot follow the first, both because the value is written to a Location header verbatim: a raw CR/LF would split the response, and the browser resolves \"//evil.example.com\" against the scheme alone, leaving the host entirely. The scheme is spelled as character classes because draft-07 `pattern` has no case-insensitive flag.\n\nThe third alternative is a template, not a URL: a target that *starts* with `$n` has no leading segment to check, because the edge builds it from the capture at request time (`rules-service.ts` substitutes `$1` from the first matching regex condition). Whether that expands to something rooted depends on where the condition's group opens, which only the caller can see — the console judges it in `ruleDraft.ts` (`capturesFromRequestStart`), and this pattern deliberately stops short of guessing. What it still refuses is `$n` followed by \"//\" or \"/\\\\\": an unfilled group substitutes as the empty string, so those expand to the off-host case above."
+    },
     "useIncomingQueryString": { "type": "boolean" },
     "matches": {
       "type": "array",

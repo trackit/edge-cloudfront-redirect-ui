@@ -18,6 +18,14 @@ output "table_region" {
   description = "Region the rules table lives in (for `aws dynamodb` commands)."
 }
 
+# The console API grants itself access to rules tables by ARN at apply time, so
+# this is what `target_table_arns` is set from. Without it that has to be
+# hand-assembled from the account id and table name.
+output "table_arn" {
+  value       = module.table.table_arn
+  description = "ARN of the rules table — pass to console/api/infra as target_table_arns."
+}
+
 # The edge keys rules on the viewer Host header, which for the default domain is
 # the distribution's own domain — so the demo rule's pk is that domain. Rendered
 # here so there is nothing to hand-edit.
@@ -53,19 +61,43 @@ output "test_redirect_command" {
 # is the distribution's domain, which the `Host` header no longer holds by the time
 # rewrites are evaluated. If this rule takes effect, that mechanism works.
 output "sample_rewrite_put_item_command" {
-  description = "Inserts a demo rewrite: /old-docs -> the origin's /index.html."
+  description = "Inserts a demo rewrite: /old-pricing -> the origin's /pricing.html."
   value       = <<-EOT
     aws dynamodb put-item --region ${var.region} --table-name ${module.table.table_name} --item '{
       "pk": {"S": "${aws_cloudfront_distribution.this.domain_name}"},
       "sk": {"S": "REWRITE#00100"},
       "type": {"S": "frMatchRule"},
       "forwardSettings": {"M": {
-        "pathAndQS": {"S": "/index.html"}
+        "pathAndQS": {"S": "/pricing.html"}
       }},
       "matches": {"L": [{"M": {
         "matchType": {"S": "path"},
         "matchOperator": {"S": "equals"},
-        "matchValue": {"S": "/old-docs"},
+        "matchValue": {"S": "/old-pricing"},
+        "negate": {"BOOL": false},
+        "caseSensitive": {"BOOL": false}
+      }}]},
+      "disabled": {"BOOL": false}
+    }'
+  EOT
+}
+
+# Repointing the same rule is what shows a rule *change* being served, rather than
+# a rule existing: the path stays /old-pricing and the page it serves changes.
+output "repoint_rewrite_put_item_command" {
+  description = "Overwrites the demo rewrite so /old-pricing serves /plans.html instead."
+  value       = <<-EOT
+    aws dynamodb put-item --region ${var.region} --table-name ${module.table.table_name} --item '{
+      "pk": {"S": "${aws_cloudfront_distribution.this.domain_name}"},
+      "sk": {"S": "REWRITE#00100"},
+      "type": {"S": "frMatchRule"},
+      "forwardSettings": {"M": {
+        "pathAndQS": {"S": "/plans.html"}
+      }},
+      "matches": {"L": [{"M": {
+        "matchType": {"S": "path"},
+        "matchOperator": {"S": "equals"},
+        "matchValue": {"S": "/old-pricing"},
         "negate": {"BOOL": false},
         "caseSensitive": {"BOOL": false}
       }}]},
@@ -75,6 +107,6 @@ output "sample_rewrite_put_item_command" {
 }
 
 output "test_rewrite_command" {
-  description = "Before the rule: 403/404 from S3. After it: 200 and the origin's page."
-  value       = "curl -i https://${aws_cloudfront_distribution.this.domain_name}/old-docs"
+  description = "Before the rule: 404 from S3. After it: 200 and the page the rule points at."
+  value       = "curl -i https://${aws_cloudfront_distribution.this.domain_name}/old-pricing"
 }

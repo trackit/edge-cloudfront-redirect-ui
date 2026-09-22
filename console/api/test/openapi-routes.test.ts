@@ -9,7 +9,7 @@ import { routes } from "../src/routes.js";
  * route, so the deployed API is whatever `routes.ts` says — `openapi.yaml` is a
  * separate hand-written document. `redocly lint` only checks the spec is a valid
  * OpenAPI file; it never reads the code. Nothing else stops the two drifting,
- * and the console UI (ER-301) is expected to generate its client from the spec.
+ * and the console UI generates its client from the spec.
  */
 
 const HTTP_METHODS = [

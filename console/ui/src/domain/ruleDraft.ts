@@ -1,4 +1,5 @@
-import { isRedirect, narrowForwardSettings, priorityOf } from "./api";
+import safeRegex from "safe-regex";
+import { isRedirect, narrowForwardSettings, priorityOf } from "../api";
 import type {
   CustomOrigin,
   MatchCondition,
@@ -6,7 +7,7 @@ import type {
   RuleInput,
   S3Origin,
   ValidationDetail,
-} from "./api";
+} from "../api";
 /** A blank condition, as both the editor's "add" button and a new draft need one. */
 export const emptyMatch = (): MatchCondition => ({
   matchType: "path",
@@ -48,6 +49,20 @@ export interface RedirectDraft {
    * derived from the value on load and used to convert it on toggle.
    */
   relative: boolean;
+  /**
+   * UI-only, like `relative`, and never sent — `toRuleInput` names every field
+   * it writes.
+   *
+   * The origin the URL had when the toggle was switched on, scheme and port
+   * included: `http://www.example.com:8080`. Switching the toggle back off
+   * restores it rather than re-deriving `https://<host>`, which would silently
+   * drop a scheme or a port the user never touched.
+   *
+   * Only lives as long as the editor is open. A rule reopened later has no
+   * memory of how it was written, and `relative` is derived from the value
+   * again — which is correct: a stored path does mean "this host".
+   */
+  relativeFrom?: string;
   keepQueryString: boolean;
   matches: MatchCondition[];
 }
@@ -150,6 +165,83 @@ const S3_DEFAULTS: S3Draft = {
 
 const ABSOLUTE_URL = /^https?:\/\//i;
 
+/**
+ * A target whose first characters are `$1`.
+ *
+ * Only the *leading* backreference decides the shape of the `Location` the edge
+ * builds, and only `$1` at that: where a later group starts inside the pattern
+ * is not something this can read, so `$2…` is not treated as knowable.
+ */
+const LEADING_CAPTURE = /^\$1(?!\d)/;
+
+/**
+ * Whether a pattern's first capturing group starts at the beginning of whatever
+ * the pattern is tested against: `^(…)`, or an unanchored `(.*`/`(.+`, which
+ * starts at index 0 anyway — a leading `.*` absorbs any prefix, so the match
+ * never has to begin further in.
+ *
+ * A non-capturing `(?:` opens no group, so it does not qualify.
+ */
+const CAPTURES_FROM_START = /^(?:\^\((?!\?)|\(\.[*+])/;
+
+/** Regex mode at the edge: a `regex` operator, or a `regex` match type. */
+const isRegexMode = (match: MatchCondition): boolean =>
+  match.matchOperator === "regex" || match.matchType === "regex";
+
+/**
+ * Whether the condition that fills `$1` takes its capture from the start of the
+ * request, which is what makes a target that *begins* with `$1` safe.
+ *
+ * The edge substitutes from the first regex condition that matches, against the
+ * request path for a `path`/`regex` condition and against the whole URL for a
+ * pattern that mentions a scheme (`rules-service.ts` `firstRegexCapture`,
+ * `lib/get-match-source.ts`). Both of those sources start with something a
+ * browser can resolve — `/…` or `https://…` — so a group anchored to their
+ * start expands to a `Location` that is still root-relative or absolute.
+ *
+ * Every other source cannot say that: a group behind a literal (`^/old/(.*)$`
+ * captures `shoes`), or a capture off a `hostname`, `header` or `cookie`
+ * condition, expands to a bare word.
+ */
+const capturesFromRequestStart = (matches: MatchCondition[]): boolean => {
+  // A negated regex only lets a rule through by *not* matching, so it never
+  // supplies the capture. Any of the others may be the one that does — the edge
+  // takes the first that matches, which is per-request — so all of them qualify
+  // or none does.
+  const sources = matches.filter(
+    (match) => isRegexMode(match) && match.negate !== true,
+  );
+  return (
+    sources.length > 0 &&
+    sources.every(
+      (match) =>
+        (match.matchType === "path" || match.matchType === "regex") &&
+        CAPTURES_FROM_START.test(match.matchValue),
+    )
+  );
+};
+
+/**
+ * Whether a regex is free of catastrophic backtracking (ReDoS), via `safe-regex`.
+ * An unparseable pattern is treated as safe here — its invalidity is reported
+ * separately — so a single value never draws two overlapping errors.
+ */
+const isSafeRegex = (pattern: string): boolean => {
+  try {
+    return safeRegex(pattern);
+  } catch {
+    return true;
+  }
+};
+
+/**
+ * The whole of what a redirect target may be, kept in step with
+ * `redirectURL`'s `pattern` in shared/redirect-rule.schema.json — the messages
+ * below name the individual reasons, but this is what the API will actually
+ * apply, so the form must not accept anything it rejects.
+ */
+const REDIRECT_TARGET = /^(?:https?:\/\/[^\s]+|\/(?![/\\])[^\s]*)$/i;
+
 export const emptyRedirect = (): RedirectDraft => ({
   kind: "redirect",
   priority: "",
@@ -242,17 +334,55 @@ export const draftFromRule = (rule: Rule): RuleDraft => {
 };
 
 /**
+ * The scheme and authority of an absolute URL — `https://shop.example.com:8443`.
+ * `undefined` for a relative one, which has no origin to remember.
+ */
+export const originOf = (url: string): string | undefined => {
+  const scheme = ABSOLUTE_URL.exec(url)?.[0];
+  if (scheme === undefined) return undefined;
+  const slash = url.slice(scheme.length).indexOf("/");
+  return slash === -1 ? url : url.slice(0, scheme.length + slash);
+};
+
+/** The host of an absolute URL, lowercased, without scheme, port or path. */
+const hostOf = (url: string): string | undefined =>
+  originOf(url)?.replace(ABSOLUTE_URL, "").split(":")[0]?.toLowerCase();
+
+/**
+ * Whether the relative toggle expresses the same destination for this value.
+ *
+ * "Relative" means "a path on whichever host was asked for", so it only says
+ * the same thing when the URL already names the rule's own host. Offered for a
+ * redirect to somewhere else, it is a retarget wearing the costume of a
+ * reformat: `/x` served from www.example.com sends visitors to
+ * www.example.com/x, whatever shop.example.com the rule used to name — same
+ * status code, same path, different site (CF-33).
+ *
+ * A relative URL has no host to disagree with, so switching back off is always
+ * available.
+ */
+export const canBeRelative = (url: string, host: string): boolean => {
+  const target = hostOf(url);
+  return target === undefined || host === "" || target === host.toLowerCase();
+};
+
+/**
  * Rewrites a redirect URL between relative and absolute.
  *
- * Turning "relative" on drops the scheme and host; turning it off puts the
- * current host back. Possible only because the console knows the host — it is the
- * rule's partition key — and it beats making the user retype the address to change
- * how it is expressed.
+ * Turning "relative" on drops the scheme and host; turning it off puts an
+ * absolute form back. It beats making the user retype the address to change how
+ * it is expressed.
+ *
+ * `from` is the origin the value had when it was made relative, if the editor
+ * still remembers it. Without it the only origin available is `https://<host>`,
+ * which is right for a rule stored as a path but would invent `https` and drop
+ * a port for one the user only just converted.
  */
 export const convertRedirectUrl = (
   url: string,
   toRelative: boolean,
   host: string,
+  from?: string,
 ): string => {
   if (toRelative) {
     if (!ABSOLUTE_URL.test(url)) return url;
@@ -261,8 +391,10 @@ export const convertRedirectUrl = (
     return slash === -1 ? "/" : withoutScheme.slice(slash);
   }
 
-  if (ABSOLUTE_URL.test(url) || host === "") return url;
-  return `https://${host}${url.startsWith("/") ? url : `/${url}`}`;
+  if (ABSOLUTE_URL.test(url)) return url;
+  const origin = from ?? (host === "" ? undefined : `https://${host}`);
+  if (origin === undefined) return url;
+  return `${origin}${url.startsWith("/") ? url : `/${url}`}`;
 };
 
 /**
@@ -317,30 +449,112 @@ export const validateDraft = (
     // Either is regex mode at the edge: a `regex` operator, or a `regex` match
     // type. Checking only the operator lets a `matchType: "regex"` with an
     // invalid pattern through to the server.
-    if (match.matchOperator === "regex" || match.matchType === "regex") {
+    if (isRegexMode(match)) {
+      let compiles = true;
       try {
         new RegExp(match.matchValue);
       } catch {
+        compiles = false;
         details.push({
           path: `/matches/${at}/matchValue`,
           message: "is not a valid regular expression",
+        });
+      }
+      // The edge runs this pattern on every matching request, so a catastrophic
+      // one (ReDoS) would hang the edge. Reject it here rather than let it ship —
+      // this guards both the importer and the manual editor.
+      if (compiles && !isSafeRegex(match.matchValue)) {
+        details.push({
+          path: `/matches/${at}/matchValue`,
+          message:
+            "is a potentially catastrophic regular expression (ReDoS) that " +
+            "could hang the edge on every request",
         });
       }
     }
   });
 
   if (draft.kind === "redirect") {
-    if (draft.redirectURL.trim() === "") {
+    // The value as it will be sent: `toRuleInput` trims it, so surrounding
+    // space is not an error, and checking the untrimmed string would reject a
+    // trailing space the save would have dropped anyway.
+    //
+    // The edge writes this value into `Location` as it stands, so it has to be
+    // absolute or root-relative: anything else is resolved against the path the
+    // request came in on, and `/a/b/` asking for `a/b/` lands on `/a/b/a/b/`.
+    //
+    // A reinjected capture is checked on the same terms, not exempted from them.
+    // Only a target that *starts* with `$1` has a leading segment the form
+    // cannot read, and even then only when the capture is not anchored to the
+    // start of the request — a later `$1` sits behind a literal prefix this can
+    // check like any other.
+    const target = draft.redirectURL.trim();
+    if (target === "") {
       details.push({ path: "/redirectURL", message: "is required" });
-    } else if (draft.relative && !draft.redirectURL.startsWith("/")) {
+    } else if (/\s/.test(target)) {
+      // Ahead of the capture branch, not after it: whitespace is wrong in every
+      // shape this field can take, and a target starting with `$1` was reaching
+      // the API with a space in it because that branch short-circuited the chain.
+      //
+      // Rejected rather than encoded: guessing at which spaces were meant to be
+      // %20 and which were a typo is not the form's call, and the value reaches
+      // a Location header verbatim.
+      details.push({
+        path: "/redirectURL",
+        message: "cannot contain a space — percent-encode it as %20",
+      });
+    } else if (LEADING_CAPTURE.test(target)) {
+      if (/^\$[1-9][0-9]*\/[/\\]/.test(target)) {
+        // `$1//host` is the off-host case wearing a capture: a group that
+        // matches nothing substitutes as the empty string — and `(.*)` matches
+        // nothing quite happily — leaving `//host`, which the browser resolves
+        // against the scheme alone. Refused whatever the condition looks like,
+        // because "this group is never empty" is not something either side can
+        // promise.
+        details.push({
+          path: "/redirectURL",
+          message:
+            "must not continue with // or /\\ after the captured group — an " +
+            "empty capture would leave the browser reading that as another host",
+        });
+      } else if (!capturesFromRequestStart(draft.matches)) {
+        details.push({
+          path: "/redirectURL",
+          message:
+            "starts with a captured group that is not taken from the start of " +
+            "the request, so the redirect may not begin with / — the browser " +
+            "would resolve it against the path it came from, sending /a/b/ to " +
+            "/a/b/a/b/. Write the leading path in the target (/$1), or widen " +
+            "the condition's group so it captures from the start of the path",
+        });
+      }
+    } else if (draft.relative && !target.startsWith("/")) {
       details.push({
         path: "/redirectURL",
         message: "must start with / when it is a relative URL",
       });
-    } else if (!draft.relative && !ABSOLUTE_URL.test(draft.redirectURL)) {
+    } else if (draft.relative && /^\/[/\\]/.test(target)) {
+      // `//host` and `/\host` read as paths but are not: the browser resolves
+      // them against the scheme alone and leaves this host, which is the one
+      // thing a "relative" URL is supposed to guarantee it does not do.
+      details.push({
+        path: "/redirectURL",
+        message:
+          "must not start with // or /\\ — the browser reads that as another host, not a path on this one",
+      });
+    } else if (!draft.relative && !ABSOLUTE_URL.test(target)) {
       details.push({
         path: "/redirectURL",
         message: "must start with http:// or https://",
+      });
+    } else if (!REDIRECT_TARGET.test(target)) {
+      // The backstop for whatever the named cases above miss, so the form can
+      // never pass the API something its schema refuses: a bare "https://" with
+      // no host lands here.
+      details.push({
+        path: "/redirectURL",
+        message:
+          "must be a full URL like https://example.com/path, or a path like /path",
       });
     }
     return details;

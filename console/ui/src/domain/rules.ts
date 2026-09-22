@@ -1,0 +1,386 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiError, api, isRedirect, priorityOf } from "../api";
+import { hostKey } from "./hostRoutes";
+import { PRIORITY_MAX } from "./ruleDraft";
+import type { Rule, RuleInput, ValidationDetail } from "../api";
+
+/**
+ * Loading and mutating one host's rules.
+ *
+ * Everything here goes through `api.rules.*`, which owns the URL shape and the
+ * percent-encoding a sort key needs. Nothing in this module builds an `sk`: the
+ * server derives it from `type` and `priority`, and the value a mutation returns
+ * is the authority on where the rule now lives.
+ */
+
+/** Redirects and rewrites are separate priority sequences at the edge. */
+export interface GroupedRules {
+  redirects: Rule[];
+  rewrites: Rule[];
+}
+
+/** One rule to import, and the host it belongs to (its own, or the target). */
+export interface ImportItem {
+  host: string;
+  input: RuleInput;
+  /**
+   * Which line of the source file this came from. Carried through so a failure
+   * names the line the user can go and look at: the batch skips the rows it
+   * refused, so its own positions stopped matching the file at the first skip.
+   */
+  sourceIndex: number;
+}
+
+/**
+ * The tally an import returns: how many rules were created, how many were
+ * already there, and which rows the API refused, with why. A partial success is
+ * the expected shape, not an error — some rows can land while others fail.
+ */
+export interface ImportOutcome {
+  created: number;
+  /** Rules an identical one already existed for, so nothing was written. */
+  duplicates: number;
+  failures: {
+    sourceIndex: number;
+    message: string;
+    /**
+     * The API's per-field findings, when it had any. Carried rather than
+     * flattened into `message`: for a `VALIDATION_ERROR` the message is generic
+     * ("Rule failed schema validation") and the field is the only part that
+     * tells the user which cell of their export to fix.
+     */
+    details?: ValidationDetail[];
+  }[];
+}
+
+/** How far along a run is, for a caller that wants to show it. */
+export interface ImportProgress {
+  done: number;
+  total: number;
+}
+
+/**
+ * A rule's content, as one comparable string — everything except where it sits.
+ *
+ * Priority, `pk`, `sk` and `disabled` are deliberately out: they say where a rule
+ * lives and whether it is on, not what it does. Two rules with the same
+ * fingerprint would redirect identically, so importing the second is a duplicate
+ * — which is what makes re-running an interrupted import safe rather than
+ * doubling everything that already landed.
+ */
+export const ruleFingerprint = (rule: Rule | RuleInput): string =>
+  JSON.stringify([
+    rule.type,
+    "statusCode" in rule ? rule.statusCode : null,
+    "redirectURL" in rule ? rule.redirectURL : null,
+    "useIncomingQueryString" in rule ? rule.useIncomingQueryString : null,
+    "forwardSettings" in rule ? rule.forwardSettings : null,
+    (rule.matches ?? []).map((match) => [
+      match.matchType,
+      match.matchOperator,
+      match.matchValue,
+      match.headerName ?? null,
+      match.negate === true,
+      match.caseSensitive === true,
+    ]),
+  ]);
+
+const byPriority = (a: Rule, b: Rule): number =>
+  priorityOf(a.sk) - priorityOf(b.sk);
+
+/**
+ * Splits a host's rules the way the edge evaluates them: redirects run at
+ * viewer-request and rewrites at origin-request, so they are two independent
+ * lists rather than one list with a type column. Each is sorted by priority,
+ * which is also the order the API returns — sorted again here so the grouping
+ * does not depend on that.
+ */
+const groupRules = (rules: Rule[]): GroupedRules => ({
+  redirects: rules.filter(isRedirect).sort(byPriority),
+  rewrites: rules.filter((rule) => !isRedirect(rule)).sort(byPriority),
+});
+
+/**
+ * The priorities already taken for a rule type, so an editor can reject a
+ * collision before spending a request on a 409. The server still enforces it —
+ * this only saves the round trip, it is not the guarantee.
+ */
+export const takenPriorities = (
+  rules: Rule[],
+  type: Rule["type"],
+  except?: string,
+): number[] =>
+  rules
+    .filter((rule) => rule.type === type && rule.sk !== except)
+    .map((rule) => priorityOf(rule.sk));
+
+/**
+ * One host's rules, with the mutations the console needs.
+ *
+ * `host` may be empty — no host is selected yet — and that is not an error
+ * state: it loads nothing and reports nothing, because there is no request to
+ * make. An unknown host, by contrast, is a successful empty list; the API
+ * returns `[]` rather than a 404.
+ *
+ * Every mutation refetches instead of patching local state. A write can move a
+ * rule to a new key, and a refetch is one request against a list that is a
+ * single-partition query — cheap enough that reconciling by hand would be
+ * optimising the wrong thing.
+ */
+export function useRules(targetId: string, host: string) {
+  const [rules, setRules] = useState<Rule[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  /**
+   * Which (target, host) the state belongs to.
+   *
+   * Nothing cancels an in-flight request, so switching host twice quickly leaves
+   * two responses racing: the first host's can land second and overwrite the
+   * list under a heading that names the other one. Every write to state is
+   * therefore gated on the request still being the current one, and the ref is
+   * updated synchronously — a state value would not be readable by a callback
+   * that captured the previous render.
+   */
+  const currentKey = useRef("");
+  const key = `${targetId}\u0000${host}`;
+
+  const load = useCallback(
+    async (options?: { keepVisible?: boolean }) => {
+      currentKey.current = key;
+
+      if (host === "") {
+        setRules([]);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
+      // A host switch clears up front: the previous host's rules must not stay
+      // on screen under the new host's heading, and a failed load must not fall
+      // back to showing them. A refetch after a write passes `keepVisible`
+      // instead — the host has not changed, so the list stays put and only its
+      // contents update when the response lands. That is what lets the mutating
+      // row show its own busy state rather than the whole list flashing to
+      // skeletons for a change as small as a toggle.
+      if (options?.keepVisible !== true) {
+        setRules([]);
+        setLoading(true);
+      }
+      setError(null);
+      try {
+        const loaded = await api.rules.list(targetId, host);
+        if (currentKey.current !== key) return;
+        setRules(loaded);
+      } catch (caught) {
+        if (currentKey.current !== key) return;
+        setError(asApiError(caught, "Could not load the rules for this host"));
+      } finally {
+        if (currentKey.current === key) setLoading(false);
+      }
+    },
+    [targetId, host, key],
+  );
+
+  useEffect(() => {
+    // The promise is deliberately not awaited: `load` handles its own failures
+    // into state, so there is nothing left for a rejection handler to do.
+    void load();
+  }, [load]);
+
+  /**
+   * Wraps a write so the list is refetched on success and the caller gets the
+   * failure to render next to its own form. Re-thrown rather than pushed into
+   * `error`: a modal's validation errors belong in the modal, not in the banner
+   * above the list it is covering.
+   */
+  const mutate = useCallback(
+    async <T>(action: () => Promise<T>): Promise<T> => {
+      const result = await action();
+      // Kept visible: the host has not changed, so refetch in place rather than
+      // blanking the list the user is still looking at.
+      await load({ keepVisible: true });
+      return result;
+    },
+    [load],
+  );
+
+  const create = useCallback(
+    (input: RuleInput) => mutate(() => api.rules.create(targetId, host, input)),
+    [mutate, targetId, host],
+  );
+
+  /**
+   * Full replace. `sk` addresses the rule as it is stored now, while `priority`
+   * in the body says where it should end up — passing a changed priority moves
+   * the rule, and the response carries its new key.
+   */
+  const update = useCallback(
+    (sk: string, input: RuleInput) =>
+      mutate(() => api.rules.put(targetId, host, sk, input)),
+    [mutate, targetId, host],
+  );
+
+  const toggle = useCallback(
+    (rule: Rule) =>
+      mutate(() =>
+        api.rules.toggle(targetId, host, rule.sk, rule.disabled !== true),
+      ),
+    [mutate, targetId, host],
+  );
+
+  const remove = useCallback(
+    (sk: string) => mutate(() => api.rules.remove(targetId, host, sk)),
+    [mutate, targetId, host],
+  );
+
+  /**
+   * Creates many rules from an import, one request each — there is no bulk route.
+   *
+   * Rules can land on several hosts (a rule may name its own), and priorities are
+   * per host, so the items are grouped by host and each host's live rules are
+   * read once to place the batch after its current maximum. Assigning here rather
+   * than in the parser is the only way the numbers can be right: the parser never
+   * sees a host it is not already looking at.
+   *
+   * Sequential, not `Promise.all` — the priorities within a host are consecutive,
+   * and firing them at once would race the server's uniqueness check. A failure
+   * does not abort the run: each is caught and reported against its source line,
+   * so one rejection does not cost the rows after it. One refetch at the end
+   * reflects the true final state; `mutate`'s per-write refetch would fire once
+   * per rule.
+   *
+   * A rule identical to one the host already has is counted and skipped rather
+   * than created again. That is what makes the run repeatable: an import cut off
+   * halfway — a closed tab, an API that went away — is finished by importing the
+   * same file again, which writes only what is missing instead of doubling
+   * everything that already landed.
+   */
+  const importRules = useCallback(
+    async (
+      items: ImportItem[],
+      onProgress?: (progress: ImportProgress) => void,
+    ): Promise<ImportOutcome> => {
+      const failures: ImportOutcome["failures"] = [];
+      let created = 0;
+      let duplicates = 0;
+      let done = 0;
+
+      // Grouped on the normalized host: two spellings of one host are one
+      // partition, so grouping on the raw string would read it twice and hand
+      // both groups the same starting priority — a collision on every write
+      // after the first.
+      const byHost = new Map<string, ImportItem[]>();
+      items.forEach((item) => {
+        const key = hostKey(item.host);
+        const group = byHost.get(key) ?? [];
+        group.push(item);
+        byHost.set(key, group);
+      });
+
+      for (const [ruleHost, group] of byHost) {
+        let cursor = 0;
+        const used = new Set<number>();
+        const present = new Set<string>();
+        try {
+          const existing = await api.rules.list(targetId, ruleHost);
+          for (const priority of takenPriorities(existing, "erMatchRule")) {
+            used.add(priority);
+          }
+          if (used.size > 0) cursor = Math.max(...used) + 1;
+          for (const rule of existing) present.add(ruleFingerprint(rule));
+        } catch {
+          // Could not read the host's rules — start from zero, treat nothing as
+          // already present, and let any real collision surface as a per-row
+          // failure below rather than aborting.
+        }
+
+        for (const { input, sourceIndex } of group) {
+          done++;
+          const fingerprint = ruleFingerprint(input);
+          if (present.has(fingerprint)) {
+            duplicates++;
+            onProgress?.({ done, total: items.length });
+            continue;
+          }
+
+          while (used.has(cursor)) cursor++;
+          // The batch lands after the host's current maximum, so a host whose
+          // last rule sits near the top can run out of room. Said plainly, and
+          // without spending a request the API would refuse anyway.
+          //
+          // The free slots *below* the maximum are deliberately not used as a
+          // fallback: priority is evaluation order at the edge, so filling a gap
+          // would quietly put an imported rule in front of rules that were
+          // already there. Renumbering is the user's call, not ours.
+          if (cursor > PRIORITY_MAX) {
+            failures.push({
+              sourceIndex,
+              message:
+                `no priority left on ${ruleHost} after its current highest ` +
+                `(the last one is ${PRIORITY_MAX}) — renumber or remove rules ` +
+                `there, then import again`,
+            });
+            onProgress?.({ done, total: items.length });
+            continue;
+          }
+          const priority = cursor++;
+          used.add(priority);
+          try {
+            await api.rules.create(targetId, ruleHost, { ...input, priority });
+            created++;
+            // Added as we go, so two identical rows in one file produce one rule
+            // instead of two.
+            present.add(fingerprint);
+          } catch (caught) {
+            const err = asApiError(caught, "Could not create this rule");
+            failures.push({
+              sourceIndex,
+              message:
+                err.code === "RULE_EXISTS"
+                  ? "priority already in use (created concurrently?)"
+                  : err.message,
+              // Only where they say something the message does not: a
+              // VALIDATION_ERROR's message is the same sentence for every
+              // refused field, so without these the user is told a row failed
+              // and never which part of it.
+              ...(err.details.length > 0 ? { details: err.details } : {}),
+            });
+          }
+          onProgress?.({ done, total: items.length });
+        }
+      }
+
+      await load();
+      return { created, duplicates, failures };
+    },
+    [targetId, load],
+  );
+
+  return {
+    rules,
+    grouped: groupRules(rules),
+    loading,
+    error,
+    reload: load,
+    create,
+    update,
+    toggle,
+    remove,
+    importRules,
+  };
+}
+
+/**
+ * Anything thrown by the client is already an `ApiError`; this only covers the
+ * bug case, so an unexpected throw still renders as a message instead of an
+ * empty banner.
+ */
+export const asApiError = (caught: unknown, fallback: string): ApiError =>
+  caught instanceof ApiError
+    ? caught
+    : new ApiError({
+        status: 0,
+        code: "MALFORMED_RESPONSE",
+        message: fallback,
+      });

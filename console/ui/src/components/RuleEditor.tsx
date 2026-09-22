@@ -7,7 +7,7 @@ import RewriteFields from "./RewriteFields";
 import Toggle from "./Toggle";
 import { ApiError } from "../api";
 import type { MatchCondition, Rule, RuleInput, ValidationDetail } from "../api";
-import { asApiError } from "../rules";
+import { asApiError } from "../domain/rules";
 import {
   draftFromRule,
   emptyRedirect,
@@ -15,8 +15,12 @@ import {
   labelForPath,
   toRuleInput,
   validateDraft,
-} from "../ruleDraft";
-import type { RedirectDraft, RuleDraft, RewriteDraft } from "../ruleDraft";
+} from "../domain/ruleDraft";
+import type {
+  RedirectDraft,
+  RuleDraft,
+  RewriteDraft,
+} from "../domain/ruleDraft";
 
 interface Props {
   host: string;

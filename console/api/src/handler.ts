@@ -4,6 +4,8 @@ import type {
 } from "aws-lambda";
 import type { ApiRequest, ApiResponse } from "./context.js";
 import { ApiError } from "./lib/errors.js";
+import { principalFrom } from "./lib/principal.js";
+import type { Principal } from "./lib/principal.js";
 import { createRouter } from "./router.js";
 import { routes } from "./routes.js";
 
@@ -33,19 +35,46 @@ const parseBody = (event: APIGatewayProxyEventV2): unknown => {
   }
 };
 
-const toApiRequest = (event: APIGatewayProxyEventV2): ApiRequest => ({
-  method: event.requestContext.http.method,
-  path: event.rawPath,
-  params: {},
-  query: stringRecord(event.queryStringParameters),
-  headers: stringRecord(event.headers, true),
-  body: parseBody(event),
-});
+/**
+ * The caller, from claims the gateway has already verified.
+ *
+ * Absent on the public routes, which carry no authorizer. The authorizer context
+ * is what decides that; the `Authorization` header only supplies the claim shape,
+ * and `principalFrom` is where that split is enforced.
+ */
+const toPrincipal = (event: APIGatewayProxyEventV2): Principal | undefined =>
+  principalFrom(
+    (
+      event.requestContext as {
+        authorizer?: { jwt?: { claims?: Record<string, unknown> } };
+      }
+    ).authorizer?.jwt?.claims,
+    // Header names arrive lowercased from API Gateway v2, but a direct invoke or
+    // a test can spell it either way, so both are read.
+    event.headers?.authorization ?? event.headers?.Authorization,
+  );
+
+const toApiRequest = (event: APIGatewayProxyEventV2): ApiRequest => {
+  const principal = toPrincipal(event);
+  return {
+    method: event.requestContext.http.method,
+    path: event.rawPath,
+    params: {},
+    query: stringRecord(event.queryStringParameters),
+    headers: stringRecord(event.headers, true),
+    body: parseBody(event),
+    // Spread rather than set: `principal: undefined` would still be an own
+    // property, and the router distinguishes "no principal" from "a principal
+    // that happens to be undefined" only by absence.
+    ...(principal === undefined ? {} : { principal }),
+  };
+};
 
 const serialize = (res: ApiResponse): APIGatewayProxyStructuredResultV2 => ({
   statusCode: res.status,
   headers: { "content-type": "application/json" },
   body: JSON.stringify(res.body),
+  ...(res.cookies === undefined ? {} : { cookies: res.cookies }),
 });
 
 /** Lambda entry point for the console API. */

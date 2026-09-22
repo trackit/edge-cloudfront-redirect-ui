@@ -9,15 +9,21 @@ info:
     redefined here.
 
 
-    The targets registry (ER-202) and rules CRUD with the `disabled` toggle
-    (ER-203) are implemented. Authentication is ER-205 — the API is open until
-    then.
+    The targets registry (CF-12), rules CRUD with the `disabled` toggle
+    (CF-13) and authentication (CF-23) are implemented. Every operation
+    requires a Cognito access token except the four noted as unauthenticated:
+    `/health`, and the three `/auth` routes that issue a token in the first
+    place.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
 servers:
   - url: /
     description: Relative to the deployed HTTP API stage.
+# Applies to every operation. The four that issue or need no token override it
+# with `security: []` — a token cannot be a precondition for obtaining one.
+security:
+  - bearerAuth: []
 tags:
   - name: system
     description: Operational endpoints.
@@ -30,6 +36,7 @@ paths:
     get:
       operationId: getHealth
       summary: Liveness probe.
+      security: []
       description: Returns 200 while the API is serving. Unauthenticated.
       tags: [system]
       responses:
@@ -43,6 +50,112 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/session:
+    post:
+      operationId: createSession
+      summary: Exchange an authorization code for a session.
+      security: []
+      description: >-
+        Completes the hosted-UI login. The refresh token is returned as an
+        HttpOnly cookie rather than in the body, so it is never readable by
+        script; the body carries only a short-lived access token. Unauthenticated
+        by necessity — this is what issues the token.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionRequest"
+      responses:
+        "200":
+          description: Signed in. Sets the refresh cookie.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/refresh:
+    post:
+      operationId: refreshSession
+      summary: Mint a new access token from the refresh cookie.
+      security: []
+      description: >-
+        Also how the console answers "am I signed in?" on load: nothing is kept
+        in browser storage, so the only way to know is to ask. A 401 is the
+        ordinary answer for a signed-out visitor, not an error.
+      tags: [auth]
+      responses:
+        "200":
+          description: A fresh access token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/logout:
+    post:
+      operationId: endSession
+      summary: Clear the session and say where to finish signing out.
+      security: []
+      description: >-
+        Clears the refresh cookie and returns the identity provider's logout
+        URL. Both halves are needed: the provider keeps its own session cookie,
+        so clearing ours alone would let the next sign-in through with no
+        prompt.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
+      responses:
+        "200":
+          description: Signed out here. Send the browser to `logoutUrl` to finish.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Logout"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /meta:
+    get:
+      operationId: getMeta
+      summary: What this deployment will accept.
+      description: >-
+        Deployment-specific constraints a client would otherwise have to guess.
+        The allowed regions cannot be an enum in this document, because
+        ALLOWED_REGIONS replaces them per deployment — this is where to read the
+        set the running API is actually validating against.
+      tags: [system]
+      responses:
+        "200":
+          description: This deployment's constraints.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meta"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/InternalError"
   /targets:
@@ -61,6 +174,8 @@ paths:
                   $ref: "#/components/schemas/Target"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -84,6 +199,10 @@ paths:
                 $ref: "#/components/schemas/Target"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
@@ -108,6 +227,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -137,6 +258,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
@@ -157,6 +282,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -196,6 +325,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -242,6 +373,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
@@ -280,6 +415,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -313,6 +452,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -364,10 +505,84 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/RuleConflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/TargetUnreachable"
+  /targets/{targetId}/hosts/{host}/rules/reorder:
+    parameters:
+      - $ref: "#/components/parameters/TargetId"
+      - $ref: "#/components/parameters/Host"
+    post:
+      operationId: reorderRules
+      summary: Reorder a host's rules of one kind.
+      description: >-
+        Puts the host's redirects — or its rewrites — into the order given, as one
+        atomic write. This is what saves a drag & drop: a priority is part of a
+        rule's key, so a reorder is several moves, and done as separate requests a
+        failure part way would leave the host in an order nobody asked for. At the
+        edge that is live traffic following it.
+
+
+        **The rules keep the priorities they already have.** They are handed back
+        out in ascending order to the sequence in `order`, so the rules swap
+        numbers and no number is invented or retired: a host laid out 100/200/300
+        still reads 100/200/300 afterwards, and one laid out 10/50/900 keeps its
+        own spacing. Nothing is created or deleted, and every rule that is already
+        in the right place is left untouched — an order that matches the stored
+        one costs no writes at all.
+
+
+        `order` must name exactly the host's rules of that `type`, by sort key.
+        Sending a key of the other kind is a 400 — redirects and rewrites are
+        independent sequences at the edge — and naming a set that is not the
+        stored one is a 409, which is what a client sees when another tab created
+        or deleted a rule after it read the list. It does not detect a concurrent
+        *edit*: a PUT to one of these rules landing between the read and this
+        write is overwritten with the fields the reorder read, as last-write-wins
+        everywhere else here.
+
+
+        The response is the reordered rules, in their new order, with the keys
+        they now answer on — the same shape as `GET …/rules` narrowed to one kind.
+        A reorder takes effect at the edge within the cache TTL (~1 min), like
+        every other rule change.
+      tags: [rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuleReorder"
+      responses:
+        "200":
+          description: The host's rules of that kind, in their new order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Rule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/RuleOrderConflict"
         "500":
           $ref: "#/components/responses/InternalError"
         "502":
@@ -392,6 +607,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -434,6 +651,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
@@ -473,6 +694,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -493,6 +718,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -500,6 +729,16 @@ paths:
         "502":
           $ref: "#/components/responses/TargetUnreachable"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        The Cognito access token from `/auth/session` or `/auth/refresh`, sent as
+        `Authorization: Bearer <token>`. Verified by the JWT authorizer on the
+        HTTP API, which refuses the request before it reaches the Lambda — so an
+        operation documented here as authenticated never runs without one.
   parameters:
     TargetPathId:
       name: id
@@ -513,7 +752,7 @@ components:
       name: targetId
       in: path
       required: true
-      description: Target (DynamoDB table) id from the targets registry (ER-202).
+      description: Target (DynamoDB table) id from the targets registry (CF-12).
       schema:
         type: string
         minLength: 1
@@ -546,6 +785,80 @@ components:
       properties:
         status:
           const: ok
+    Meta:
+      description: >-
+        What this deployment accepts. Read rather than assumed: a console with
+        its own copy of any of this offers choices the API rejects.
+      type: object
+      additionalProperties: false
+      required: [regions]
+      properties:
+        regions:
+          description: >-
+            Every region a target's `region` may name, sorted. The API's
+            built-in list of commercial regions unless ALLOWED_REGIONS is set,
+            in which case exactly that.
+          type: array
+          items:
+            type: string
+            pattern: "^[a-z]{2}(-[a-z]+)+-\\d+$"
+    SessionRequest:
+      description: The authorization code, as the hosted UI handed it back.
+      type: object
+      additionalProperties: false
+      required: [code, redirectUri]
+      properties:
+        code:
+          description: Single-use authorization code from the redirect.
+          type: string
+        redirectUri:
+          description: >-
+            The redirect URI the login started from. Sent again because the token
+            endpoint compares the two, which is what stops a code issued for one
+            client being redeemed by another. Must be on the app client's
+            callback list, so it is not a value an attacker can choose.
+          type: string
+        codeVerifier:
+          description: PKCE verifier, when the login used one.
+          type: string
+    Session:
+      description: >-
+        A signed-in session. The refresh token is deliberately absent — it is set
+        as an HttpOnly cookie, and repeating it here would undo that.
+      type: object
+      additionalProperties: false
+      required: [accessToken, idToken, expiresIn]
+      properties:
+        accessToken:
+          description: "Bearer token for this API. Send as `Authorization: Bearer`."
+          type: string
+        idToken:
+          description: Identity token. Carries the email and group claims the console displays.
+          type: string
+        expiresIn:
+          description: Seconds until the access token expires. Refresh before it does.
+          type: integer
+    LogoutRequest:
+      type: object
+      additionalProperties: false
+      required: [returnTo]
+      properties:
+        returnTo:
+          description: >-
+            Where the identity provider should send the browser once it has
+            cleared its own session. Must be on the app client's logout list.
+          type: string
+    Logout:
+      type: object
+      additionalProperties: false
+      required: [logoutUrl]
+      properties:
+        logoutUrl:
+          description: >-
+            Send the browser here to finish signing out. Skipping it leaves the
+            provider's session cookie in place, so the next sign-in returns with
+            no prompt.
+          type: string
     TargetInput:
       description: Fields a client supplies to create or update a target.
       type: object
@@ -697,6 +1010,32 @@ components:
           description: >-
             `true` takes the rule out of service at the edge while leaving it in
             the table at its current priority; `false` puts it back.
+    RuleReorder:
+      description: >-
+        A new order for one kind of a host's rules. `type` picks the sequence —
+        redirects and rewrites are independent at the edge — and `order` lists
+        that sequence's rules by sort key, first to last.
+      type: object
+      additionalProperties: false
+      required: [type, order]
+      properties:
+        type:
+          enum: [erMatchRule, frMatchRule]
+          description: >-
+            Which sequence is being reordered: `erMatchRule` for the redirects,
+            `frMatchRule` for the rewrites. Every key in `order` must belong to
+            it.
+        order:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            pattern: "^(REDIRECT|REWRITE)#\\d{5}$"
+          description: >-
+            The host's rules of that type, by sort key, in the order they should
+            end up in — exactly those rules, each once. The priorities in these
+            keys are the ones handed back out, which is why the set has to be
+            complete: a missing rule would be a priority the reorder gives away.
     RulePriority:
       type: integer
       minimum: 0
@@ -737,6 +1076,18 @@ components:
         redirectURL:
           type: string
           minLength: 1
+          pattern: "^(?:[hH][tT][tT][pP][sS]?://[^\\s]+|/(?![/\\\\])[^\\s]*|\\$[1-9][0-9]*(?!/[/\\\\])[^\\s]*)$"
+          description: >-
+            Absolute http(s) URL, a root-relative path starting with `/`, or a
+            target beginning with a capture reference (`$1/$2/`) whose leading
+            segment the edge builds from the match at request time.
+
+
+            The scheme is case-insensitive; whitespace is rejected anywhere in
+            the value, as is `//` or `/\` after the first slash — the browser
+            resolves those against the scheme alone and leaves this host. `$n`
+            followed by `//` or `/\` is refused for the same reason: an unfilled
+            group substitutes as the empty string.
         useIncomingQueryString:
           type: boolean
         matches:
@@ -810,14 +1161,17 @@ components:
                 the addressed resource does not exist within a known target.
               enum:
                 - BAD_REQUEST
+                - FORBIDDEN
                 - HOST_EXISTS
                 - INTERNAL
                 - INVALID_JSON
                 - METHOD_NOT_ALLOWED
                 - NOT_FOUND
                 - RULE_EXISTS
+                - RULES_CHANGED
                 - TARGET_EXISTS
                 - TARGET_UNREACHABLE
+                - UNAUTHORIZED
                 - UNKNOWN_TARGET
                 - VALIDATION_ERROR
             message:
@@ -834,6 +1188,23 @@ components:
   responses:
     BadRequest:
       description: The request was malformed or failed schema validation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: >-
+        No usable identity on the request — no token, an invalid one, or an
+        expired session. Signing in again resolves it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: >-
+        A signed-in user who may not do this. Distinct from 401 on purpose:
+        signing in again will not help, so the console must not offer that as
+        the remedy. Writes need the `editor` role; `viewer` may only read.
       content:
         application/json:
           schema:
@@ -904,6 +1275,19 @@ components:
         That priority is already taken for this host and rule type. Priority is
         part of a rule's key, so two rules cannot share one. Nothing was written
         — on a move, neither the rule being moved nor the one already there.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RuleOrderConflict:
+      description: >-
+        `RULES_CHANGED` — the order does not describe the host's rules as they
+        are now: it names a rule the host does not have, or leaves one of them
+        out. The usual cause is another tab (or another person) creating or
+        deleting a rule after this client read the list, and the reorder is
+        refused rather than guessed at, since the priorities it hands out come
+        from the very set that has changed. Nothing was written. Reload the rules
+        and reorder them again.
       content:
         application/json:
           schema:

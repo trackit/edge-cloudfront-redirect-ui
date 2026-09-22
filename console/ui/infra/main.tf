@@ -1,0 +1,231 @@
+locals {
+  ui_source_dir = coalesce(var.ui_source_dir, "${path.module}/..")
+  # console/ui is an npm workspace, so the install runs at the repo root.
+  monorepo_root = coalesce(var.monorepo_root, "${path.module}/../../..")
+
+  install_command = trimspace(var.npm_install_command)
+  build_command   = "npm run build --workspace @cloudfront-redirect-rules/ui"
+
+  # local-exec runs at monorepo_root, so a path relative to this module would not
+  # resolve there.
+  dist_dir = abspath("${local.ui_source_dir}/dist")
+
+  # Only the host: the /api/* behavior forwards to the API's root, and the
+  # function strips the prefix. Validated on the variable.
+  api_origin_domain = regex("^https://([a-z0-9.-]+)/?$", var.api_endpoint)[0]
+
+  s3_origin_id  = "console-ui"
+  api_origin_id = "console-api"
+}
+
+# --- The bucket the SPA is served from -------------------------------------
+
+# trivy:ignore:AVD-AWS-0089 access logging is unnecessary for a demo console
+# trivy:ignore:AVD-AWS-0090 versioning is unnecessary — every object is rebuilt from source
+resource "aws_s3_bucket" "ui" {
+  bucket_prefix = "${var.name}-ui-"
+  # The bucket holds build output and nothing else, so a destroy should not need
+  # the objects emptied by hand first.
+  force_destroy = true
+  tags          = var.tags
+}
+
+resource "aws_s3_bucket_public_access_block" "ui" {
+  bucket                  = aws_s3_bucket.ui.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_cloudfront_origin_access_control" "ui" {
+  name                              = "${var.name}-ui"
+  description                       = "OAC for the ${var.name} SPA bucket"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# Grants this distribution, and only it, read access to the objects. Depends on
+# the distribution ARN; the distribution does not depend on the policy, so there
+# is no cycle.
+data "aws_iam_policy_document" "ui" {
+  statement {
+    sid       = "AllowCloudFrontServicePrincipalReadOnly"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.ui.arn}/*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [aws_cloudfront_distribution.this.arn]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "ui" {
+  bucket = aws_s3_bucket.ui.id
+  policy = data.aws_iam_policy_document.ui.json
+}
+
+# --- Build and upload -------------------------------------------------------
+
+# Build then sync, in one resource, on every apply.
+#
+# The obvious alternative — `aws_s3_object` with `for_each = fileset(dist)` — does
+# not work here: `fileset` is evaluated during plan, and on a fresh clone `dist/`
+# does not exist yet, so the plan would contain zero objects and the first apply
+# would upload nothing at all, silently. `aws s3 sync` also sets each object's
+# Content-Type from its extension, which a hand-written for_each would have to
+# carry a MIME map for.
+#
+# Unconditional for the reason the two Lambda stacks are (CF-41): the bundle is
+# built on disk, and state cannot say whether *this* machine has one. Keyed on
+# the sources, a runner that checked out a commit changing none of them skipped
+# the build and published nothing — silent here rather than fatal, because
+# nothing reads dist/ during plan, so the deploy just left the bucket holding
+# whatever the previous one put there. It also closes the drift noted below.
+#
+# `aws s3 sync` uploads only what differs, so an unchanged console costs a build
+# and a listing. The dependency on the bucket comes from the sync command
+# interpolating its id, not from a trigger.
+#
+# The remaining trade-off: object-level drift is still invisible to Terraform —
+# a file deleted straight out of the bucket is not *planned* back, it is simply
+# re-uploaded by the next apply.
+resource "null_resource" "publish" {
+  triggers = {
+    always = timestamp()
+  }
+
+  provisioner "local-exec" {
+    working_dir = local.monorepo_root
+    # Vite copies any VITE_-prefixed variable out of the process environment into
+    # the bundle, and the environment wins over a .env file — so an operator's
+    # local .env cannot quietly point a deployed console at their own pool.
+    environment = {
+      VITE_COGNITO_DOMAIN    = var.cognito_domain
+      VITE_COGNITO_CLIENT_ID = var.cognito_client_id
+    }
+    command = join(" && ", compact([
+      local.install_command == "" ? "" : local.install_command,
+      local.build_command,
+      # --delete so a renamed hashed asset does not accumulate forever.
+      "aws s3 sync ${local.dist_dir} s3://${aws_s3_bucket.ui.id} --delete",
+    ]))
+  }
+}
+
+# --- The gate ---------------------------------------------------------------
+
+# One function, attached to both behaviors: the /api prefix strip and the SPA
+# fallback. See gate.js for why it is one function.
+#
+# `file` rather than `templatefile`: the credential was the only value ever
+# interpolated, so with Cognito doing the deciding there is nothing left to
+# render and the file is plain JavaScript the test can read as-is.
+resource "aws_cloudfront_function" "gate" {
+  name    = "${var.name}-gate"
+  runtime = "cloudfront-js-2.0"
+  comment = "/api prefix strip, SPA fallback for ${var.name}"
+  publish = true
+
+  code = file("${path.module}/gate.js")
+}
+
+# --- Distribution -----------------------------------------------------------
+
+# Nothing here is cached: the SPA so a redeploy is visible without an
+# invalidation, and the API because its responses are per-request state.
+data "aws_cloudfront_cache_policy" "caching_disabled" {
+  name = "Managed-CachingDisabled"
+}
+
+# Forwards the viewer's headers, query string and cookies to the API, except
+# Host — API Gateway requires its own hostname to route the request.
+data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
+  name = "Managed-AllViewerExceptHostHeader"
+}
+
+# trivy:ignore:AVD-AWS-0010 access logging is unnecessary for a demo console
+# trivy:ignore:AVD-AWS-0011 WAF is out of scope; the gate function is the control
+resource "aws_cloudfront_distribution" "this" {
+  enabled             = true
+  comment             = "${var.name} — console SPA + API"
+  price_class         = var.price_class
+  default_root_object = "index.html"
+
+  origin {
+    origin_id                = local.s3_origin_id
+    domain_name              = aws_s3_bucket.ui.bucket_regional_domain_name
+    origin_access_control_id = aws_cloudfront_origin_access_control.ui.id
+  }
+
+  origin {
+    origin_id   = local.api_origin_id
+    domain_name = local.api_origin_domain
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  # The SPA.
+  default_cache_behavior {
+    target_origin_id       = local.s3_origin_id
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_disabled.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.gate.arn
+    }
+  }
+
+  # The API, same origin as the SPA so the browser needs no CORS — which matters,
+  # because the API sends no CORS headers at all.
+  ordered_cache_behavior {
+    path_pattern           = "/api/*"
+    target_origin_id       = local.api_origin_id
+    viewer_protocol_policy = "redirect-to-https"
+    # Rules are written over POST/PUT/PATCH/DELETE; a read-only method set here
+    # would turn every edit in the console into a 403 from CloudFront.
+    allowed_methods          = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods           = ["GET", "HEAD"]
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.gate.arn
+    }
+  }
+
+  # No custom_error_response mapping 404 to index.html, which is the usual SPA
+  # recipe: those are distribution-wide, so the API's own 404s — an unknown host
+  # or rule — would come back as index.html with status 200, and the console would
+  # report them as malformed JSON. The gate function does the SPA fallback per
+  # request instead, which leaves the API's status codes alone.
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+
+  tags = var.tags
+}

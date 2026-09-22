@@ -1,0 +1,596 @@
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { IconArrow, IconCheck, IconClose, IconInfo, IconUpload } from "./icons";
+import {
+  MAX_IMPORT_BYTES,
+  isVacuousMatch,
+  parseExport,
+} from "../domain/akamaiImport";
+import { useFocusTrap } from "../useFocusTrap";
+import type {
+  ImportPreview,
+  ParsedRow,
+  SourceFormat,
+} from "../domain/akamaiImport";
+import type { RedirectDraft } from "../domain/ruleDraft";
+import type {
+  ImportItem,
+  ImportOutcome,
+  ImportProgress,
+} from "../domain/rules";
+
+interface Props {
+  /** The distribution rules are imported into, named in the subtitle. */
+  distributionId: string;
+  /** Every host in the distribution, for the target-host picker. */
+  hosts: string[];
+  /** The host selected by default — the one the console was showing. */
+  defaultHost: string;
+  onImport: (
+    items: ImportItem[],
+    onProgress?: (progress: ImportProgress) => void,
+  ) => Promise<ImportOutcome>;
+  /** Called on close after a run created at least one rule, to refresh counts. */
+  onImported: () => void;
+  onClose: () => void;
+}
+
+const FORMAT_LABEL: Record<SourceFormat, string> = {
+  "edge-redirector-csv": "Edge Redirector CSV",
+  "edge-redirector-policy-csv": "Edge Redirector policy CSV",
+  "simple-csv": "Simple CSV",
+  "match-rules-json": "matchRules JSON",
+};
+
+const ACCEPT = ".csv,.json,.txt";
+
+/**
+ * How many rows the preview renders. Every row is still parsed, counted in the
+ * summary and imported — this only keeps the list from putting thousands of DOM
+ * nodes on the page, which is what made a large export feel like a frozen tab.
+ */
+const PREVIEW_ROW_LIMIT = 200;
+
+/**
+ * The condition a preview row leads with: the one that decides what the rule
+ * actually matches.
+ *
+ * Normally the path condition. Two cases override it, and both are the same
+ * mistake in different clothes: showing a filter that filters nothing.
+ *  - the redirect reinjects a capture (`$1` …), so the regex that *provides* it
+ *    is the meaningful matcher and hiding it would hide where `$1` comes from;
+ *  - the path condition is vacuous (`contains "/ /*"`, the Akamai idiom for
+ *    "everything"), so the row would read as a catch-all while the real guard
+ *    sits in a regex right next to it.
+ */
+const fromLabel = (draft: RedirectDraft): string => {
+  if (draft.matches.length === 0) return "(any)";
+
+  const reinjectsCapture = /\$[1-9]\d*/.test(draft.redirectURL);
+  const captureSource = reinjectsCapture
+    ? draft.matches.find((match) => match.matchOperator === "regex")
+    : undefined;
+  const realGuard = draft.matches.find(
+    (match) => match.matchType === "path" && !isVacuousMatch(match),
+  );
+  const lead =
+    captureSource ??
+    realGuard ??
+    draft.matches.find((match) => match.matchOperator === "regex") ??
+    draft.matches.find((match) => match.matchType === "path") ??
+    draft.matches[0];
+
+  if (lead.matchType === "path" && lead.matchOperator !== "regex") {
+    return lead.matchValue;
+  }
+  const name =
+    lead.matchType === "header" && lead.headerName
+      ? `header:${lead.headerName}`
+      : lead.matchType;
+  return `${name} ${lead.matchValue}`;
+};
+
+/** The right-aligned note on a row: why it was skipped, or what it lost. */
+const noteFor = (row: ParsedRow): string => {
+  if (row.status === "skipped") {
+    if (row.validation.some((detail) => detail.path.includes("redirectURL"))) {
+      return "Missing redirectURL.";
+    }
+    if (row.validation.length > 0) {
+      return row.validation
+        .map((detail) => `${detail.path} ${detail.message}`)
+        .join(", ");
+    }
+    // A row refused for what the source said, not for what the draft is: the
+    // reason is the only thing that tells the user which line to redo by hand.
+    if (row.blocked.length > 0) return row.blocked.join(", ");
+  }
+  return row.messages.join(", ");
+};
+
+/**
+ * Import Akamai Edge Redirector rules into a distribution.
+ *
+ * A centred overlay rather than a native <dialog>, for the reason SettingsModal
+ * documents: Strict Mode's mount/unmount probe fires the dialog's `close` event
+ * and would tear the modal down before it sticks.
+ *
+ * The preview is derived, not stored: every keystroke, dropped file or change of
+ * target host re-runs `parseExport`, so the table is exactly what Import sends.
+ * Rules land on the target host unless they name their own hostname condition,
+ * which is why one file can preview across several hosts.
+ */
+export default function ImportModal({
+  distributionId,
+  hosts,
+  defaultHost,
+  onImport,
+  onImported,
+  onClose,
+}: Props) {
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const [targetHost, setTargetHost] = useState(defaultHost);
+  const [filename, setFilename] = useState<string | undefined>(undefined);
+  const [text, setText] = useState("");
+  const [showFormats, setShowFormats] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
+  const [dragover, setDragover] = useState(false);
+  /** Bytes of a file refused for its size, so the reason can be shown. */
+  const [oversized, setOversized] = useState<number | undefined>(undefined);
+  const [result, setResult] = useState<ImportOutcome | undefined>(undefined);
+  // One request per rule, so a batch of any size takes a while: the count is the
+  // only thing that distinguishes "working" from "stuck".
+  const [progress, setProgress] = useState<ImportProgress | undefined>(
+    undefined,
+  );
+
+  /**
+   * Whether this modal has written anything at all, for the whole time it is
+   * open. Not read off `result`: editing the host or the source clears that (so
+   * a stale outcome is never shown against new input), which also lost the fact
+   * that rules had been created — and with it the sidebar refresh below, leaving
+   * counts that disagree with the table until something else reloaded them.
+   */
+  const createdAnything = useRef(false);
+  if ((result?.created ?? 0) > 0) createdAnything.current = true;
+
+  /**
+   * Refreshing the sidebar counts (`onImported`) reloads the host list, which
+   * unmounts this modal — so it is deferred to close, not fired on success.
+   * Doing it mid-run would tear the results down before they could be read.
+   */
+  const close = (): void => {
+    if (createdAnything.current) onImported();
+    onClose();
+  };
+  const closeRef = useRef(close);
+  closeRef.current = close;
+
+  // Focus in on mount, Tab contained while open, focus back to the opener on
+  // unmount — the same hook the drawer and the settings modal use, which this
+  // dialog was doing by hand minus the containment. `aria-modal` promises the
+  // containment, so without it the promise was false: Tab walked out to the
+  // console behind the overlay.
+  useFocusTrap(panelRef);
+
+  // Escape stays here rather than in the hook: a dialog mid-import must not be
+  // dismissed out from under the run, and only this component knows that.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape" && !busyRef.current) closeRef.current();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const preview: ImportPreview = useMemo(
+    () => parseExport(text, { filename, defaultHost: targetHost }),
+    [text, filename, targetHost],
+  );
+
+  const items: ImportItem[] = preview.rows
+    .filter((row) => row.input !== undefined)
+    .map((row) => ({
+      host: row.host,
+      input: row.input!,
+      sourceIndex: row.index,
+    }));
+  const hasFormat = preview.format !== "unrecognized";
+  /**
+   * Whether to state the query-string default, which is the one thing about an
+   * import that is invisible in the preview and opposite to the editor's default.
+   *
+   * Akamai drops the incoming query string unless the rule opts in, and a CSV
+   * without a `useIncomingQueryString` column says nothing — so every row from one
+   * imports with it off, while a rule typed by hand starts with it on. Said once,
+   * here: a per-row warning would flag almost every row of almost every file and
+   * so would stop meaning anything.
+   */
+  const dropsQueryString = preview.rows.some(
+    (row) => row.input !== undefined && !row.draft.keepQueryString,
+  );
+  const done = result !== undefined;
+  // The picker always offers the default host, even if the list has not loaded.
+  const hostOptions = hosts.includes(defaultHost)
+    ? hosts
+    : [defaultHost, ...hosts];
+
+  const loadFile = async (file: File): Promise<void> => {
+    setFilename(file.name);
+    setResult(undefined);
+
+    // Refused on `file.size` — bytes, before reading — rather than after.
+    // `parseExport`'s own cap sees the decoded text, so it cannot stop a huge
+    // file being pulled into memory first; and it cannot be reused here either,
+    // because it compares UTF-16 code units against a byte limit, so a
+    // multibyte export can weigh far more than the cap while sitting under it.
+    // Reading a byte-slice instead would be worse than both: the truncated text
+    // decodes to fewer code units than the limit, so nothing refuses it and the
+    // file imports silently short.
+    if (file.size > MAX_IMPORT_BYTES) {
+      setOversized(file.size);
+      setText("");
+      return;
+    }
+
+    setOversized(undefined);
+    setText(await file.text());
+  };
+
+  const onDrop = (event: React.DragEvent): void => {
+    event.preventDefault();
+    setDragover(false);
+    const file = event.dataTransfer.files[0];
+    if (file !== undefined) void loadFile(file);
+  };
+
+  const doImport = async (): Promise<void> => {
+    // `busyRef`, not `busy`: two clicks landing in the same render both read the
+    // state as false and both start a run, writing every rule twice. The ref is
+    // already kept in step above for Escape, which needs it for the same reason.
+    if (busyRef.current || done || items.length === 0) return;
+    setBusy(true);
+    setProgress({ done: 0, total: items.length });
+    try {
+      setResult(await onImport(items, setProgress));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="modal-overlay"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) close();
+      }}
+    >
+      <div
+        className="modal modal-wide"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+      >
+        <header className="modal-head">
+          <div>
+            <h2 id={titleId}>Import rules</h2>
+            <p className="modal-sub">
+              Rules are imported into{" "}
+              <span className="mono">{distributionId}</span>
+            </p>
+          </div>
+          <button
+            className="modal-x"
+            type="button"
+            onClick={close}
+            aria-label="Close"
+            disabled={busy}
+          >
+            <IconClose size={16} />
+          </button>
+        </header>
+
+        <div className="modal-body">
+          <div className="field">
+            <label htmlFor="import-target-host">Target host</label>
+            <select
+              id="import-target-host"
+              className="select"
+              value={targetHost}
+              onChange={(event) => {
+                setTargetHost(event.target.value);
+                setResult(undefined);
+              }}
+            >
+              {hostOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <div className="hint">
+              Rules are imported into this host by default, unless the rule
+              carries its own hostname condition.
+            </div>
+          </div>
+
+          <div className="import-load">
+            <div className="import-load-head">
+              <span className="field-label">Load file (.csv, .json)</span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                aria-expanded={showFormats}
+                onClick={() => setShowFormats((open) => !open)}
+              >
+                <IconInfo size={14} />
+                Formats
+              </button>
+            </div>
+
+            {showFormats && (
+              <div className="callout" role="note">
+                <IconInfo size={15} />
+                <span>
+                  Edge Redirector CSV (ruleName, matchURL, redirectURL,
+                  result.statusCode); a simple source/target CSV; or a
+                  matchRules JSON export (matches[] + result).
+                </span>
+              </div>
+            )}
+
+            <input
+              ref={fileRef}
+              type="file"
+              accept={ACCEPT}
+              className="sr-only"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file !== undefined) void loadFile(file);
+                event.target.value = "";
+              }}
+            />
+
+            <div
+              className={`dropzone${dragover ? " dragover" : ""}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => fileRef.current?.click()}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  fileRef.current?.click();
+                }
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setDragover(true);
+              }}
+              onDragLeave={() => setDragover(false)}
+              onDrop={onDrop}
+            >
+              <IconUpload size={22} />
+              <p className="dropzone-lead">
+                {filename !== undefined ? (
+                  <>
+                    Loaded <span className="mono">{filename}</span>
+                  </>
+                ) : (
+                  "Drag & drop a file here, or click to browse"
+                )}
+              </p>
+              <button
+                type="button"
+                className="btn btn-dark btn-sm"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  fileRef.current?.click();
+                }}
+              >
+                Browse files…
+              </button>
+            </div>
+          </div>
+
+          <div className="import-divider">
+            <span>Manually edit if needed</span>
+          </div>
+
+          <textarea
+            className="input mono import-textarea"
+            rows={5}
+            value={text}
+            placeholder="Paste an Edge Redirector CSV or matchRules JSON…"
+            aria-label="Export contents"
+            onChange={(event) => {
+              setText(event.target.value);
+              setFilename(undefined);
+              setOversized(undefined);
+              setResult(undefined);
+            }}
+          />
+
+          {oversized !== undefined && (
+            <div className="form-error" role="alert">
+              <span>
+                That file is ~{Math.round(oversized / (1024 * 1024))} MB (limit{" "}
+                {MAX_IMPORT_BYTES / (1024 * 1024)} MB), so it was not read.
+                Split it into smaller exports and import them separately.
+              </span>
+            </div>
+          )}
+
+          {text.trim() !== "" && !hasFormat && (
+            <div className="callout" role="status">
+              <IconInfo size={15} />
+              <span>{preview.error}</span>
+            </div>
+          )}
+
+          {text.trim() !== "" && hasFormat && preview.error !== undefined && (
+            <div className="form-error" role="alert">
+              <span>{preview.error}</span>
+            </div>
+          )}
+
+          {hasFormat && preview.rows.length > 0 && (
+            <>
+              <div className="import-badges">
+                <span className="import-pill is-detected">
+                  Detected: {FORMAT_LABEL[preview.format as SourceFormat]}
+                </span>
+                <span className="import-pill is-ready">
+                  {preview.summary.ready} ready
+                </span>
+                {preview.summary.warnings > 0 && (
+                  <span className="import-pill is-warning">
+                    {preview.summary.warnings}{" "}
+                    {preview.summary.warnings === 1 ? "warning" : "warnings"}
+                  </span>
+                )}
+                {preview.summary.skipped > 0 && (
+                  <span className="import-pill is-skipped">
+                    {preview.summary.skipped} skipped
+                  </span>
+                )}
+                {preview.summary.hosts > 1 && (
+                  <span className="import-pill is-hosts">
+                    {preview.summary.hosts} hosts
+                  </span>
+                )}
+              </div>
+
+              {dropsQueryString && (
+                <div className="callout" role="note">
+                  <IconInfo size={15} />
+                  <span>
+                    Imported rules drop the incoming query string, as Edge
+                    Redirector does, unless the source says to keep it. Turn
+                    &ldquo;Keep incoming query string&rdquo; on per rule after
+                    the import if a target needs it.
+                  </span>
+                </div>
+              )}
+
+              <h3 className="import-preview-title">Preview</h3>
+              <ul className="import-rows">
+                {preview.rows.slice(0, PREVIEW_ROW_LIMIT).map((row) => {
+                  const note = noteFor(row);
+                  return (
+                    <li
+                      key={row.index}
+                      className={`import-row is-${row.status}`}
+                    >
+                      <span
+                        className={`import-dot is-${row.status}`}
+                        aria-hidden="true"
+                      />
+                      {row.draft.redirectURL !== "" && (
+                        <span className="import-code">
+                          {row.draft.statusCode}
+                        </span>
+                      )}
+                      <span className="import-host">{row.host}</span>
+                      <span className="import-from mono">
+                        {fromLabel(row.draft)}
+                      </span>
+                      <span className="import-arrow" aria-hidden="true">
+                        <IconArrow size={14} />
+                      </span>
+                      <span className="import-to mono">
+                        {row.draft.redirectURL || "—"}
+                      </span>
+                      {note !== "" && (
+                        <span className="import-note">{note}</span>
+                      )}
+                    </li>
+                  );
+                })}
+                {preview.rows.length > PREVIEW_ROW_LIMIT && (
+                  <li className="import-row is-more">
+                    {preview.rows.length - PREVIEW_ROW_LIMIT} more rows not
+                    shown. All of them are counted above and will be imported.
+                  </li>
+                )}
+              </ul>
+            </>
+          )}
+
+          {result !== undefined && (
+            <div
+              className={result.failures.length > 0 ? "form-error" : "callout"}
+              role="status"
+            >
+              <strong>
+                Imported {result.created}{" "}
+                {result.created === 1 ? "rule" : "rules"}.
+                {result.duplicates > 0 &&
+                  ` ${result.duplicates} already existed and ${
+                    result.duplicates === 1 ? "was" : "were"
+                  } left alone.`}
+              </strong>
+              {result.failures.length > 0 && (
+                <ul>
+                  {result.failures.map((failure) => (
+                    <li key={failure.sourceIndex}>
+                      Row {failure.sourceIndex}: {failure.message}
+                      {/* The fields the API named, when it named any. Without
+                          them a schema refusal reads as "this row failed" and
+                          the user has no way to tell which cell to fix. */}
+                      {failure.details !== undefined && (
+                        <ul>
+                          {failure.details.map((detail, at) => (
+                            <li key={at}>
+                              <span className="mono">{detail.path}</span>{" "}
+                              {detail.message}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {result.failures.length > 0 && (
+                <p>
+                  Import the same file again to retry: rules already created are
+                  recognised and skipped.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <footer className="modal-foot">
+          <button
+            className="btn btn-ghost"
+            type="button"
+            disabled={busy}
+            onClick={close}
+          >
+            {done ? "Close" : "Cancel"}
+          </button>
+          {!done && (
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={busy || items.length === 0}
+              onClick={() => void doImport()}
+            >
+              <IconCheck size={16} />
+              {busy
+                ? `Importing ${progress?.done ?? 0}/${progress?.total ?? items.length}…`
+                : `Import ${items.length} ${items.length === 1 ? "rule" : "rules"}`}
+            </button>
+          )}
+        </footer>
+      </div>
+    </div>
+  );
+}

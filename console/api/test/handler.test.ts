@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { EDITOR, claims } from "./principal-claims.js";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { handler } from "../src/handler.js";
 import {
@@ -22,8 +23,8 @@ const event = (
     headers: {},
     body,
     isBase64Encoded: false,
-    requestContext: { http: { method } },
-  }) as APIGatewayProxyEventV2;
+    requestContext: { http: { method }, ...EDITOR },
+  }) as unknown as APIGatewayProxyEventV2;
 
 const parse = (body: string | undefined): unknown =>
   JSON.parse(body ?? "{}") as unknown;
@@ -115,6 +116,43 @@ describe("handler", () => {
     });
   });
 
+  /**
+   * The edge runs a rule's regular expressions on every request that reaches it,
+   * so a pattern it cannot run safely must not be stored. The console checks the
+   * same two things before sending, but that is a courtesy: anything that is not
+   * the console writes straight here, which is why the guard has to be on this
+   * side too.
+   */
+  const withRegex = (matchValue: string): string =>
+    JSON.stringify({
+      priority: 900,
+      type: "erMatchRule",
+      statusCode: 301,
+      redirectURL: "/x",
+      matches: [{ matchType: "regex", matchOperator: "regex", matchValue }],
+    });
+
+  it.each([
+    ["catastrophic backtracking", "(a+)+$"],
+    ["a pattern that does not compile", "^/old/("],
+  ])("400s a rule whose regex has %s", async (_case, matchValue) => {
+    const res = await handler(event("POST", RULES, withRegex(matchValue)));
+
+    expect(res.statusCode).toBe(400);
+    expect(parse(res.body)).toMatchObject({
+      error: {
+        code: "VALIDATION_ERROR",
+        details: [{ path: "/matches/0/matchValue" }],
+      },
+    });
+  });
+
+  it("accepts a regex the edge can run", async () => {
+    const res = await handler(event("POST", RULES, withRegex("^/old/(.*)$")));
+
+    expect(res.statusCode).toBe(201);
+  });
+
   it("serializes a read route's JSON body", async () => {
     const res = await handler(event("GET", RULES));
 
@@ -122,4 +160,42 @@ describe("handler", () => {
     expect(res.headers).toMatchObject({ "content-type": "application/json" });
     expect(parse(res.body)).toEqual([]);
   });
+
+  /**
+   * That the `Authorization` header actually reaches `principalFrom`.
+   *
+   * Worth its own test because the fallback hides a broken wire: misspell the
+   * header lookup and the authorizer's own claims are still read, so every other
+   * test in the repo passes and only the flattened-string guess ships.
+   *
+   * The two sides deliberately disagree, which cannot happen in production —
+   * they are the same token. Disagreement is simply the only way to observe
+   * which one was used.
+   */
+  it.each(["authorization", "Authorization"])(
+    "reads the groups from the token in the %s header",
+    async (headerName) => {
+      const token = [
+        Buffer.from(JSON.stringify({ alg: "RS256" })).toString("base64url"),
+        Buffer.from(
+          JSON.stringify({ sub: "user-1", "cognito:groups": ["editor"] }),
+        ).toString("base64url"),
+        "signature-checked-by-the-gateway",
+      ].join(".");
+
+      const res = await handler({
+        rawPath: "/targets/prod/hosts",
+        headers: { [headerName]: `Bearer ${token}` },
+        isBase64Encoded: false,
+        requestContext: {
+          http: { method: "POST" },
+          // The context says viewer; the token says editor. A write landing
+          // means the token was read.
+          ...claims(["viewer"]),
+        },
+      } as unknown as APIGatewayProxyEventV2);
+
+      expect(res.statusCode).not.toBe(403);
+    },
+  );
 });

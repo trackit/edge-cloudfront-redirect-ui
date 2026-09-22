@@ -1,31 +1,47 @@
-import type { DistributionDraft } from "../types";
+import { useEffect } from "react";
+import { regionOptions, useRegions } from "../domain/regions";
+import type { DistributionDraft } from "../domain/types";
 
 interface Props {
   /** The draft, not a connected Distribution — these fields exist before the
       API has assigned a target id, and none of them can edit one. */
   value: DistributionDraft;
   onChange: (patch: Partial<DistributionDraft>) => void;
+  /**
+   * True for a draft nobody has connected yet.
+   *
+   * Its region is only a default `emptyDistribution` picked, so it may be
+   * corrected to one this deployment allows. An existing distribution's region
+   * is a fact about a table that exists, and is left alone even when the
+   * deployment no longer allows it — correcting that would rewrite a setting
+   * nobody touched, on a table the console cannot move.
+   */
+  isNew?: boolean;
 }
-
-/**
- * A short list rather than every AWS region: these are the ones the rules table
- * is realistically in. The console API validates `region` against its own
- * curated list, which a deployment can override via `allowed_regions` — when the
- * two are wired together this should come from the API, not from here.
- */
-const REGIONS = [
-  "us-east-1",
-  "us-west-2",
-  "eu-west-1",
-  "eu-west-3",
-  "eu-central-1",
-  "ap-southeast-1",
-  "ap-northeast-1",
-];
 
 /* Form fields for a CloudFront distribution and its DynamoDB rules table.
    Shared by onboarding (first connect / add) and the Settings modal. */
-export default function DistributionFields({ value, onChange }: Props) {
+export default function DistributionFields({
+  value,
+  onChange,
+  isNew = false,
+}: Props) {
+  // From the API, not from a list in here: see `regions.ts` for why a copy in
+  // the front end is wrong in both directions.
+  const regions = useRegions();
+
+  useEffect(() => {
+    if (!isNew || regions.length === 0) return;
+    if (regions.includes(value.region)) return;
+    // The first option as rendered, not `regions[0]`: the list is displayed
+    // sorted, and adopting the API's array order would leave the select showing
+    // a value that is not its first entry.
+    //
+    // Converges after one patch, because the next render finds the region in
+    // the list — so this cannot loop even with a fresh `onChange` each render.
+    onChange({ region: regionOptions(regions, "")[0] });
+  }, [isNew, regions, value.region, onChange]);
+
   return (
     <>
       <div className="field">
@@ -66,12 +82,16 @@ export default function DistributionFields({ value, onChange }: Props) {
           value={value.region}
           onChange={(e) => onChange({ region: e.target.value })}
         >
-          {REGIONS.map((r) => (
+          {regionOptions(regions, value.region).map((r) => (
             <option key={r} value={r}>
               {r}
             </option>
           ))}
         </select>
+        <div className="hint">
+          Where the table above lives. Only the regions this deployment is
+          configured to reach are listed.
+        </div>
       </div>
     </>
   );

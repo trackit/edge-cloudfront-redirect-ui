@@ -1,7 +1,7 @@
 import { expect, test as base, type Page, type Route } from "@playwright/test";
 import type { HostSummary, Rule } from "../src/api";
-import type { Stored } from "../src/distribution";
-import type { Distribution } from "../src/types";
+import type { Stored } from "../src/domain/distribution";
+import type { Distribution } from "../src/domain/types";
 
 /**
  * The two things every spec here needs: a stubbed API, and a browser that
@@ -48,12 +48,67 @@ export interface ApiStub {
   /**
    * What `GET …/hosts/{host}/rules` returns. The host view fetches this on
    * mount, so — like `setHosts` — it is the state the page starts in.
-   *
-   * Writes are deliberately still unstubbed: no spec exercises one yet, and the
-   * 500 fallthrough is what will say so when one does.
    */
   setRules: (rules: Rule[]) => void;
+  /**
+   * Answers every subsequent `POST …/rules` with this instead of the default
+   * 201 that echoes and appends the rule. Non-consuming, like the others — used
+   * to force a 409 and exercise the import's per-row failure path.
+   */
+  createRuleReply: (reply: { status: number; body: unknown }) => void;
+  /**
+   * Who the console is signed in as, or nobody.
+   *
+   * Defaults to an editor, because every spec that is not about permissions
+   * needs to get past the route guard to reach what it is testing. Pass
+   * `"viewer"` to check the read-only console and `undefined` to check what a
+   * signed-out visitor sees.
+   */
+  signedInAs: (role: "editor" | "viewer" | undefined) => void;
+  /**
+   * Who the code exchange issues a session for, when a spec drives a real
+   * sign-in.
+   *
+   * Deliberately separate from `signedInAs`, which answers the boot refresh. A
+   * sign-in is precisely the case where the two differ: there is no cookie yet,
+   * so the refresh 401s, and this is what produces the session.
+   */
+  exchangeAs: (role: "editor" | "viewer") => void;
+  /**
+   * What `GET /meta` reports as this deployment's allowed regions — the set the
+   * distribution form's region options come from.
+   */
+  setRegions: (regions: string[]) => void;
+  /**
+   * Answers `GET /meta` with a 500 instead. For the case the form has to
+   * survive: the console cannot ask what is allowed, and still has to be
+   * completable.
+   */
+  failMeta: () => void;
 }
+
+/**
+ * An id token the console can read.
+ *
+ * Not signed, and nothing checks it: the API Gateway authorizer does the
+ * verifying in production, and these specs never reach it. What the browser does
+ * with it is read the payload for the email and the groups, so that is the part
+ * that has to be real.
+ */
+const fakeIdToken = (role: string): string => {
+  const payload = Buffer.from(
+    JSON.stringify({
+      sub: "e2e-user",
+      email: `${role}@example.com`,
+      "cognito:groups": [role],
+    }),
+  )
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  return `header.${payload}.signature`;
+};
 
 const jsonOf = (route: Route): unknown => {
   const raw = route.request().postData();
@@ -78,6 +133,14 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
   let createHost: { status: number; body: unknown } | null = null;
   let deleteHost: { status: number; body: unknown } | null = null;
   let rules: Rule[] = [];
+  let createRule: { status: number; body: unknown } | null = null;
+  let role: "editor" | "viewer" | undefined = "editor";
+  let exchangeRole: "editor" | "viewer" = "editor";
+  // The default is deliberately not the front end's fallback list: a spec that
+  // asserts on these options would otherwise pass whether the value came from
+  // the API or from the guess the front end keeps for when it cannot ask.
+  let regions = ["eu-west-1", "us-east-1"];
+  let metaFails = false;
 
   // A predicate, not the `**/api/**` glob that looks right: the app's own source
   // lives in `src/api/`, and in dev Vite serves those modules from URLs the glob
@@ -91,6 +154,77 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
       const url = new URL(request.url());
       const body = jsonOf(route);
       calls.push({ method, url: url.pathname, body });
+
+      // Before everything else: the console asks this on every page load, and
+      // an unstubbed answer sends the route guard to /login instead of the page
+      // the spec is about.
+      if (method === "POST" && url.pathname.endsWith("/auth/refresh")) {
+        await route.fulfill(
+          role === undefined
+            ? {
+                status: 401,
+                contentType: "application/json",
+                body: JSON.stringify(
+                  errorBody("UNAUTHORIZED", "Not signed in"),
+                ),
+              }
+            : {
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                  accessToken: "e2e-access",
+                  idToken: fakeIdToken(role),
+                  expiresIn: 3600,
+                }),
+              },
+        );
+        return;
+      }
+
+      // The code exchange, which the callback page makes on its way in. Answered
+      // independently of `role` above: a spec that drives a sign-in starts
+      // signed out, so that refresh 401s and this is the call that succeeds.
+      if (method === "POST" && url.pathname.endsWith("/auth/session")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            accessToken: "e2e-access",
+            idToken: fakeIdToken(exchangeRole),
+            expiresIn: 3600,
+          }),
+        });
+        return;
+      }
+
+      // What the deployment accepts. The distribution form asks for this on
+      // mount, so it is answered before anything else a spec arranges — and a
+      // spec that wants the failure sets `metaFails`.
+      if (method === "GET" && url.pathname.endsWith("/meta")) {
+        await route.fulfill(
+          metaFails
+            ? {
+                status: 500,
+                contentType: "application/json",
+                body: JSON.stringify(errorBody("INTERNAL", "Meta is down")),
+              }
+            : {
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ regions }),
+              },
+        );
+        return;
+      }
+
+      if (method === "POST" && url.pathname.endsWith("/auth/logout")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ logoutUrl: "/login?signed-out=1" }),
+        });
+        return;
+      }
 
       if (method === "POST" && url.pathname.endsWith("/targets")) {
         const reply = create ?? {
@@ -162,6 +296,37 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
         return;
       }
 
+      // Import posts one rule at a time. The default echoes the body with the
+      // key the server would derive and adds it to what the next GET returns, so
+      // a refetch after an import shows the new rules — as the real API would. A
+      // forced reply (a 409, say) skips the append, to test partial failure.
+      if (method === "POST" && RULES_COLLECTION.test(url.pathname)) {
+        if (createRule !== null) {
+          await route.fulfill({
+            status: createRule.status,
+            contentType: "application/json",
+            body: JSON.stringify(createRule.body),
+          });
+          return;
+        }
+        const input = (body ?? {}) as { type?: string; priority?: number };
+        const owner = url.pathname.match(/\/hosts\/([^/]+)\/rules$/);
+        const stored = {
+          pk: owner ? decodeURIComponent(owner[1]) : "",
+          sk: `${input.type === "frMatchRule" ? "REWRITE" : "REDIRECT"}#${String(
+            input.priority ?? 0,
+          ).padStart(5, "0")}`,
+          ...(body as Record<string, unknown>),
+        } as unknown as Rule;
+        rules = [...rules, stored];
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify(stored),
+        });
+        return;
+      }
+
       if (method === "DELETE" && HOSTS_ITEM.test(url.pathname)) {
         const reply = deleteHost ?? { status: 204, body: null };
         await route.fulfill({
@@ -206,8 +371,48 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
     setRules: (next) => {
       rules = next;
     },
+    createRuleReply: (reply) => {
+      createRule = reply;
+    },
+    signedInAs: (next) => {
+      role = next;
+    },
+    exchangeAs: (next) => {
+      exchangeRole = next;
+    },
+    setRegions: (next) => {
+      regions = next;
+    },
+    failMeta: () => {
+      metaFails = true;
+    },
   };
 };
+
+/**
+ * Puts a login round trip in the tab, as `savePendingLogin` would have before
+ * the browser left for Cognito.
+ *
+ * Seeded rather than driven through the hosted UI, which is not ours to
+ * automate: what these specs are about is the return leg — the state check, the
+ * exchange, and where the browser ends up afterwards.
+ */
+export const seedPendingLogin = async (
+  page: Page,
+  pending: { verifier: string; state: string; returnTo: string },
+): Promise<void> => {
+  await page.addInitScript(
+    ([k, json]) => {
+      if (window.sessionStorage.getItem(k) === null) {
+        window.sessionStorage.setItem(k, json);
+      }
+    },
+    [PENDING_LOGIN_KEY, JSON.stringify(pending)] as const,
+  );
+};
+
+/** Matches `PENDING_KEY` in `src/auth/pkce.ts`. */
+const PENDING_LOGIN_KEY = "edgeroute.auth.pending";
 
 /**
  * Opens the console and waits for it to have actually loaded.

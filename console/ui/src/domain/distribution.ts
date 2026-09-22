@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api } from "./api";
-import type { ApiClient } from "./api";
+import { ApiError, api } from "../api";
+import type { ApiClient } from "../api";
 import type { Distribution, DistributionDraft } from "./types";
 
 /**

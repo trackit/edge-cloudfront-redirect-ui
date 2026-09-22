@@ -11,6 +11,13 @@ import type { CloudFrontHeaders } from "aws-lambda";
  *
  * Lowercase because CloudFront event header keys are lowercase; the display
  * casing below is what goes on the wire.
+ *
+ * Surviving the trip is not automatic. CloudFront builds the origin request from
+ * the cache key plus the origin request policy, so a behavior whose policies do
+ * not name this header drops it before origin-request and every rewrite silently
+ * stops matching. The same string is exposed as the edge module's
+ * `viewer_host_header` output (infra/modules/edge/outputs.tf) for consumers to
+ * build that policy from — change one, change the other.
  */
 export const VIEWER_HOST_HEADER = "x-edgeroute-viewer-host";
 

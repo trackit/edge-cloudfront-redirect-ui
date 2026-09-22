@@ -1,13 +1,13 @@
 import Toggle from "./Toggle";
 import { IconInfo } from "./icons";
-import { SSL_PROTOCOLS, pickSslProtocol } from "../ruleDraft";
+import { SSL_PROTOCOLS, pickSslProtocol } from "../domain/ruleDraft";
 import type {
   CustomDraft,
   OriginKind,
   RewriteDraft,
   S3Draft,
   SslProtocol,
-} from "../ruleDraft";
+} from "../domain/ruleDraft";
 
 interface Props {
   draft: RewriteDraft;

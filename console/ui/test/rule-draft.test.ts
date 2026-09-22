@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  canBeRelative,
   convertRedirectUrl,
   draftFromRule,
   labelForPath,
+  originOf,
   pickSslProtocol,
   toRuleInput,
   validateDraft,
-} from "../src/ruleDraft";
-import type { CustomDraft, RewriteDraft } from "../src/ruleDraft";
+} from "../src/domain/ruleDraft";
+import type {
+  CustomDraft,
+  RedirectDraft,
+  RewriteDraft,
+} from "../src/domain/ruleDraft";
 import type { CustomOrigin, Rule, ValidationDetail } from "../src/api";
 
 /**
@@ -260,6 +266,146 @@ describe("validateDraft — regex", () => {
   });
 });
 
+/**
+ * The edge copies `redirectURL` into `Location` as it stands, so a value that is
+ * neither absolute nor root-relative is resolved against the path the request
+ * came in on: `/a/b/` asking for `a/b/` lands on `/a/b/a/b/`. A reinjected
+ * capture is the interesting case, because only the leading `$1` has a shape the
+ * form cannot read on its own — and even then only when the capture is not
+ * anchored to the start of the request.
+ */
+describe("validateDraft — redirect target with a capture", () => {
+  const withRedirect = (
+    redirectURL: string,
+    matches: Rule["matches"] = [match()],
+  ): RedirectDraft => ({
+    ...(draftFromRule(redirectRule({ redirectURL, matches })) as RedirectDraft),
+    priority: "100",
+  });
+
+  const REGEX_FROM_START = match({
+    matchType: "regex",
+    matchOperator: "regex",
+    matchValue: "(.*)\\/([^\\/]+)$",
+  });
+  const REGEX_AFTER_A_LITERAL = match({
+    matchOperator: "regex",
+    matchValue: "^/old/(.*)$",
+  });
+  const REGEX_ON_A_HEADER = match({
+    matchType: "header",
+    headerName: "X-Country",
+    matchOperator: "regex",
+    matchValue: "^(.*)$",
+  });
+
+  it.each([
+    ["an absolute target", "https://h/new", [match()], false],
+    ["a root-relative target", "/new", [match()], false],
+    // The capture is behind a literal, so `$1` never carries the leading "/".
+    [
+      "a leading capture from inside the path",
+      "$1/x",
+      [REGEX_AFTER_A_LITERAL],
+      true,
+    ],
+    // …and behind a header it is not even part of the path.
+    ["a leading capture off a header", "$1/x", [REGEX_ON_A_HEADER], true],
+    // Nothing fills it: the edge leaves the literal `$1` in the Location.
+    ["a leading capture with no regex at all", "$1/x", [match()], true],
+    // Where the group starts is unknowable for anything but $1.
+    ["a leading $2", "$2/x", [REGEX_FROM_START], true],
+    // An unanchored `(.*)` matches from index 0, so `$1` starts with "/".
+    [
+      "a leading capture from the path's start",
+      "$1/x",
+      [REGEX_FROM_START],
+      false,
+    ],
+    // A capture anywhere but in front leaves the target's own shape readable.
+    [
+      "a root-relative target with a capture",
+      "/new/$1",
+      [REGEX_FROM_START],
+      false,
+    ],
+    // The bug this closed: a `$1` further in used to wave the whole check off.
+    [
+      "a path-relative target with a capture",
+      "new/$1",
+      [REGEX_FROM_START],
+      true,
+    ],
+  ] as const)("rejects %s: %s", (_case, redirectURL, matches, rejected) => {
+    const details = validateDraft(withRedirect(redirectURL, [...matches]), []);
+    expect(has(details, "/redirectURL")).toBe(rejected);
+  });
+
+  it("requires a target", () => {
+    expect(has(validateDraft(withRedirect(""), []), "/redirectURL")).toBe(true);
+  });
+});
+
+describe("validateDraft — redirect target", () => {
+  /**
+   * The form is the only place these get a readable message: the API applies
+   * the same rule as a JSON Schema `pattern`, and a client that reaches it
+   * instead is shown the raw regex. So what is pinned here is that the form
+   * refuses everything the schema refuses, not merely the obvious cases.
+   */
+  const withUrl = (redirectURL: string, relative: boolean): RedirectDraft => {
+    const draft = draftFromRule(redirectRule()) as RedirectDraft;
+    return { ...draft, redirectURL, relative };
+  };
+
+  it.each([
+    ["https://www.example.com/new", false],
+    // The scheme is case-insensitive here and in the schema.
+    ["HTTPS://www.example.com/new", false],
+    ["/new", true],
+    // The host root, which is what turning the toggle on gives a bare domain.
+    ["/", true],
+    // A capture reference survives validation; the edge substitutes it later.
+    ["/f/$1", true],
+    // Trimmed on save, so trailing space is not the user's problem.
+    ["/new ", true],
+  ] as const)("accepts %j", (url, relative) => {
+    expect(has(validateDraft(withUrl(url, relative), []), "/redirectURL")).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    ["", true],
+    ["new/landing", true],
+    // Reads as a path, resolves to another host entirely — the case the
+    // schema's first pattern missed.
+    ["//evil.example.com/phish", true],
+    ["/\\evil.example.com", true],
+    // Would split the response if it reached the Location header.
+    ["/new page", true],
+    ["https://www.example.com/a b", false],
+    // A scheme and nothing to send the visitor to.
+    ["https://", false],
+  ] as const)("rejects %j", (url, relative) => {
+    expect(has(validateDraft(withUrl(url, relative), []), "/redirectURL")).toBe(
+      true,
+    );
+  });
+
+  it("names the host, not the regex, when a path points off-host", () => {
+    // The message is the whole point of duplicating the check here.
+    const details = validateDraft(
+      withUrl("//evil.example.com/phish", true),
+      [],
+    );
+
+    expect(details.find((d) => d.path === "/redirectURL")?.message).toMatch(
+      /another host/,
+    );
+  });
+});
+
 describe("validateDraft — custom origin ranges", () => {
   const withCustom = (over: Partial<CustomDraft>): RewriteDraft => {
     const draft = draftFromRule(customRewriteRule()) as RewriteDraft;
@@ -310,6 +456,70 @@ describe("convertRedirectUrl", () => {
 
   it("puts the host back going absolute", () => {
     expect(convertRedirectUrl("/x", false, "h")).toBe("https://h/x");
+  });
+
+  it("restores the remembered origin rather than assuming one", () => {
+    // Without the memory this returns https://www.example.com/x, quietly
+    // changing both the scheme and the port of a URL the user only reformatted.
+    expect(
+      convertRedirectUrl(
+        "/x",
+        false,
+        "www.example.com",
+        "http://www.example.com:8080",
+      ),
+    ).toBe("http://www.example.com:8080/x");
+  });
+
+  it("keeps a hand-edited path when restoring the origin", () => {
+    // Toggled on, then the path edited. The host is the part the user cannot
+    // see, so it is the part worth remembering.
+    expect(
+      convertRedirectUrl(
+        "/y",
+        false,
+        "www.example.com",
+        "https://shop.example.com",
+      ),
+    ).toBe("https://shop.example.com/y");
+  });
+
+  it("falls back to the rule's host when nothing was remembered", () => {
+    // A rule stored as a path does mean "this host", so deriving one is right.
+    expect(convertRedirectUrl("/x", false, "www.example.com")).toBe(
+      "https://www.example.com/x",
+    );
+  });
+});
+
+describe("originOf", () => {
+  it.each([
+    ["https://h/x", "https://h"],
+    ["http://h:8080/x?y=1", "http://h:8080"],
+    ["https://h", "https://h"],
+  ])("reads %s as %s", (url, origin) => {
+    expect(originOf(url)).toBe(origin);
+  });
+
+  it("has nothing to read from a relative URL", () => {
+    expect(originOf("/x")).toBeUndefined();
+  });
+});
+
+describe("canBeRelative", () => {
+  it.each([
+    ["the rule's own host", "https://www.example.com/x", true],
+    ["the same host in another case", "https://WWW.Example.com/x", true],
+    ["the same host on another port", "https://www.example.com:8443/x", true],
+    ["a sibling subdomain", "https://shop.example.com/x", false],
+    ["an unrelated domain", "https://partner.test/x", false],
+  ])("targeting %s", (_case, url, allowed) => {
+    expect(canBeRelative(url, "www.example.com")).toBe(allowed);
+  });
+
+  it("is always available for a path, which names no host", () => {
+    // Switching back off has to stay possible whatever the memory holds.
+    expect(canBeRelative("/x", "www.example.com")).toBe(true);
   });
 });
 

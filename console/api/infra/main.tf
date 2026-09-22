@@ -21,20 +21,38 @@ locals {
     for f in fileset("${local.monorepo_root}/shared", "*.schema.json") :
     filesha256("${local.monorepo_root}/shared/${f}")
   ]))
+
+  # Everything that can change what the bundle contains. This is what a new
+  # function version is keyed on — see `source_code_hash` below. Same shape as
+  # the edge module's `code_hash`, and for the same reason (CF-41).
+  #
+  # try(): a consumer who skips the install (or uses another package manager)
+  # may have no npm lockfile, and a missing file would fail the whole plan.
+  code_hash = base64sha256(join("", [
+    local.handler_hash,
+    local.shared_schema_hash,
+    filesha256("${local.api_source_dir}/build.mjs"),
+    filesha256("${local.api_source_dir}/package.json"),
+    filesha256("${local.api_source_dir}/tsconfig.json"),
+    try(filesha256("${local.monorepo_root}/package-lock.json"), ""),
+  ]))
 }
 
 # esbuild -> dist/. Runs at apply so a bare `terraform apply` produces the zip.
+#
+# On every apply, deliberately — dist/ is a file on disk and state cannot say
+# whether *this* machine has one. Keyed on the sources instead, the build was
+# skipped on any runner that checked out a commit changing none of them, and the
+# plan-time read of `archive_file` below then found no directory (CF-41, where
+# the same construction in infra/modules/edge broke the deploy first; this stack
+# broke on the very next merge, which touched only console/ui).
+#
+# The rebuild costs seconds and does not publish a new version — that is
+# `local.code_hash`'s decision, and it is keyed on the sources this used to be
+# keyed on.
 resource "null_resource" "build" {
   triggers = {
-    handler      = local.handler_hash
-    schemas      = local.shared_schema_hash
-    build_script = filesha256("${local.api_source_dir}/build.mjs")
-    package      = filesha256("${local.api_source_dir}/package.json")
-    # try(): a consumer who skips the install (or uses another package manager)
-    # may have no npm lockfile, and a missing file would fail the whole plan.
-    lockfile = try(filesha256("${local.monorepo_root}/package-lock.json"), "")
-    # esbuild reads tsconfig, so a compiler-option change must repackage too.
-    tsconfig = filesha256("${local.api_source_dir}/tsconfig.json")
+    always = timestamp()
   }
 
   provisioner "local-exec" {
@@ -114,7 +132,7 @@ data "aws_iam_policy_document" "registry" {
   # `roleArn` bridges that gap — the API assumes the role to reach that target's
   # rules table, so no Terraform change is needed per target. Empty by default:
   # with no patterns the API can only reach tables its own policy covers, which
-  # today is none, so rule operations (ER-203) need this set. Keep the patterns
+  # today is none, so rule operations (CF-13) need this set. Keep the patterns
   # as narrow as the naming convention allows.
   dynamic "statement" {
     for_each = length(var.assumable_role_arns) > 0 ? [1] : []
@@ -215,8 +233,13 @@ resource "aws_lambda_function" "this" {
   handler       = "index.handler"
   runtime       = "nodejs22.x"
 
-  filename         = data.archive_file.lambda_zip.output_path
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  filename = data.archive_file.lambda_zip.output_path
+
+  # The sources' hash, not the archive's: the build above runs on every apply,
+  # and two esbuild runs over identical sources need not produce a byte-identical
+  # zip. Taken from the archive, that would redeploy the function on every
+  # deploy that changed nothing.
+  source_code_hash = local.code_hash
 
   timeout     = var.timeout
   memory_size = var.memory_size
@@ -226,6 +249,15 @@ resource "aws_lambda_function" "this" {
       {
         # AWS_REGION is injected by the runtime; only the table name is ours.
         TARGETS_TABLE_NAME = aws_dynamodb_table.targets.name
+
+        # The /auth routes exchange codes and refresh tokens against the pool,
+        # which means holding the client secret. It is an environment variable
+        # rather than a Secrets Manager lookup because it is read on every cold
+        # start and rotating it means recreating the client anyway.
+        COGNITO_USER_POOL_ID  = aws_cognito_user_pool.this.id
+        COGNITO_CLIENT_ID     = aws_cognito_user_pool_client.console.id
+        COGNITO_CLIENT_SECRET = aws_cognito_user_pool_client.console.client_secret
+        COGNITO_DOMAIN        = "https://${aws_cognito_user_pool_domain.this.domain}.auth.${data.aws_region.current.region}.amazoncognito.com"
       },
       # Omitted when empty so the API falls back to its built-in region list.
       length(var.allowed_regions) > 0
@@ -259,10 +291,15 @@ resource "aws_apigatewayv2_integration" "this" {
   payload_format_version = "2.0"
 }
 
+# Everything the public list in cognito.tf does not name. The authorizer 401s a
+# missing or invalid token before the Lambda is invoked; the router 403s a viewer
+# who is authenticated but not allowed to write.
 resource "aws_apigatewayv2_route" "default" {
-  api_id    = aws_apigatewayv2_api.this.id
-  route_key = "$default"
-  target    = "integrations/${aws_apigatewayv2_integration.this.id}"
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "$default"
+  target             = "integrations/${aws_apigatewayv2_integration.this.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
 resource "aws_apigatewayv2_stage" "default" {
