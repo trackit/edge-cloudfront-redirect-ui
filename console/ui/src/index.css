@@ -553,7 +553,10 @@ button {
 }
 .onboard-form .input,
 .onboard-form .select {
-  background: var(--navy-600);
+  /* background-color, never the `background` shorthand: the shorthand resets
+     background-image, and that is where `.select` keeps its chevron — so a
+     select on this form rendered as a plain text box (CF-35). */
+  background-color: var(--navy-600);
   border-color: var(--line);
   color: var(--ink);
 }
