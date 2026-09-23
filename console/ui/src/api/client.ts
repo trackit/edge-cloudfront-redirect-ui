@@ -239,6 +239,30 @@ export function createApiClient(options: ApiClientOptions = {}) {
           input,
         ),
 
+      /**
+       * Puts one kind of a host's rules into `order`, as one atomic write —
+       * what a drag & drop saves with.
+       *
+       * `order` must name exactly the host's rules of that `type`, by sort key,
+       * first to last. The rules keep the priorities they already have: the
+       * server hands them back out in ascending order to this sequence, so the
+       * rules swap numbers and the keys in `order` are also the keys that exist
+       * afterwards. A set that is not the stored one is a 409 `RULES_CHANGED`,
+       * which means the host changed since it was listed.
+       *
+       * Resolves to that kind's rules in their new order.
+       */
+      reorder: (
+        targetId: string,
+        host: string,
+        type: Rule["type"],
+        order: string[],
+      ) =>
+        request<Rule[]>("POST", `${rulesPath(targetId, host)}/reorder`, {
+          type,
+          order,
+        }),
+
       /** Enable or disable in place. The only field this route accepts. */
       toggle: (targetId: string, host: string, sk: string, disabled: boolean) =>
         request<Rule>("PATCH", `${rulesPath(targetId, host)}/${segment(sk)}`, {
