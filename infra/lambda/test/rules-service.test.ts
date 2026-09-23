@@ -330,6 +330,147 @@ describe("match conditions", () => {
     ).toMatchObject({ redirectURL: "/new" });
   });
 
+  /**
+   * CF-43. Whether a pattern "mentions the query string" was decided by
+   * `includes("?")`, but in a regex `?` is also a quantifier and part of group
+   * syntax. So the patterns below were tested against path + query, and — being
+   * anchored — silently stopped matching as soon as a request carried one.
+   */
+  describe("a ? that is regex syntax, not a query string", () => {
+    const serviceFor = (matchValue: string, redirectURL = "/new") =>
+      new RulesService(
+        new FakeRepository([
+          rule({
+            redirectURL,
+            matches: [
+              { matchType: "path", matchOperator: "regex", matchValue },
+            ],
+          }),
+        ]),
+        60_000,
+      );
+
+    it.each([
+      ["an optional trailing slash", "^/products/?$", "/products?utm=x"],
+      ["an optional group", "^/(www-)?promo$", "/promo?utm=x"],
+      ["a lazy quantifier", "^/old/[a-z]+?$", "/old/shoes?utm=x"],
+      ["a non-capturing group", "^/(?:old|legacy)$", "/legacy?utm=x"],
+      ["a lookahead", "^/(?=o)old$", "/old?utm=x"],
+    ])(
+      "still matches past the query string with %s",
+      async (_, pattern, path) => {
+        expect(
+          await serviceFor(pattern).match(params({ path }), "REDIRECT"),
+        ).toMatchObject({ redirectURL: "/new" });
+      },
+    );
+
+    it.each([
+      ["an escaped ?", "^/old\\?debug=1$"],
+      ["a ? in a character class", "^/old[?]debug=1$"],
+    ])("still sees the query string for %s", async (_, pattern) => {
+      expect(
+        await serviceFor(pattern).match(
+          params({ path: "/old?debug=1" }),
+          "REDIRECT",
+        ),
+      ).toMatchObject({ redirectURL: "/new" });
+    });
+  });
+
+  it("still sees the query string for an equals value that contains a ?", async () => {
+    // Outside regex mode a `?` is only ever literal, so it can only mean the
+    // query string — this is the case the old check was right about.
+    const service = new RulesService(
+      new FakeRepository([
+        rule({
+          redirectURL: "/new",
+          matches: [
+            {
+              matchType: "path",
+              matchOperator: "equals",
+              matchValue: "/old?debug=1",
+            },
+          ],
+        }),
+      ]),
+      60_000,
+    );
+
+    expect(
+      await service.match(params({ path: "/old?debug=1" }), "REDIRECT"),
+    ).toMatchObject({ redirectURL: "/new" });
+  });
+
+  /**
+   * CF-43. A regex that names a scheme is tested against the full URL, and that
+   * branch returned early with the query string attached — so it had neither
+   * fix the path branch has. A capture swallowed the query and then
+   * `appendQueryStringIfNeeded` added it again; an anchored pattern stopped
+   * matching once a query was present.
+   */
+  describe("a full-URL regex", () => {
+    const serviceFor = (matchValue: string, over: Partial<RedirectRule> = {}) =>
+      new RulesService(
+        new FakeRepository([
+          rule({
+            redirectURL: "/new",
+            matches: [
+              { matchType: "regex", matchOperator: "regex", matchValue },
+            ],
+            ...over,
+          } as Partial<RedirectRule>),
+        ]),
+        60_000,
+      );
+
+    it("appends the query string once, not inside the capture as well", async () => {
+      const service = serviceFor("^https://www\\.example\\.com/old/(.*)$", {
+        redirectURL: "/new/$1",
+        useIncomingQueryString: true,
+      } as Partial<RedirectRule>);
+
+      expect(
+        await service.match(
+          params({ path: "/old/shoes?color=red" }),
+          "REDIRECT",
+        ),
+      ).toMatchObject({ redirectURL: "/new/shoes?color=red" });
+    });
+
+    it("does not carry the query into the target when the rule drops it", async () => {
+      // Before, `(.*)` smuggled the query into `$1` whatever the flag said.
+      const service = serviceFor("^https://www\\.example\\.com/old/(.*)$", {
+        redirectURL: "/new/$1",
+      });
+
+      expect(
+        await service.match(
+          params({ path: "/old/shoes?color=red" }),
+          "REDIRECT",
+        ),
+      ).toMatchObject({ redirectURL: "/new/shoes" });
+    });
+
+    it("still matches an anchored pattern when a query string is present", async () => {
+      expect(
+        await serviceFor("^https://www\\.example\\.com/old$").match(
+          params({ path: "/old?utm=x" }),
+          "REDIRECT",
+        ),
+      ).toMatchObject({ redirectURL: "/new" });
+    });
+
+    it("still sees the query string when the pattern mentions it", async () => {
+      expect(
+        await serviceFor("^https://www\\.example\\.com/old\\?debug=1$").match(
+          params({ path: "/old?debug=1" }),
+          "REDIRECT",
+        ),
+      ).toMatchObject({ redirectURL: "/new" });
+    });
+  });
+
   it("skips a rule with a malformed regex instead of failing the whole match", async () => {
     const service = new RulesService(
       new FakeRepository([
