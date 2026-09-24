@@ -581,3 +581,40 @@ test("the Formats help closes on the gestures that should close it", async ({
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
+
+/**
+ * A skipped row says why it was skipped (CF-42).
+ *
+ * Every `redirectURL` finding used to be shown as "Missing redirectURL.", so a
+ * row with a perfectly present target — here a capture taken from inside the
+ * path, which would redirect relative to the request — was told to add a field
+ * it already had, and the message that says how to fix it was never shown.
+ */
+test('a skipped row shows the reason, not "Missing redirectURL"', async ({
+  page,
+  api,
+}) => {
+  await openHostWithRules(page, api);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page
+    .getByPlaceholder(/Paste an Edge Redirector/)
+    .fill(
+      [
+        "ruleName,matchURL,redirectURL,result.statusCode",
+        "Capture from inside the path,/legacy/*,\\1/moved,301",
+        "No target at all,/nowhere,,301",
+      ].join("\n"),
+    );
+
+  const skipped = page.locator(".import-row.is-skipped");
+  await expect(skipped).toHaveCount(2);
+
+  // The present-but-unsafe target: the real reason, under the field's name.
+  await expect(skipped.nth(0)).toContainText(
+    "Redirect URL starts with a captured group",
+  );
+  // The genuinely empty one still says it is required.
+  await expect(skipped.nth(1)).toContainText("Redirect URL is required");
+
+  await expect(page.getByText("Missing redirectURL")).toHaveCount(0);
+});

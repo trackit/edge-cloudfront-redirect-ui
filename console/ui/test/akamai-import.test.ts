@@ -353,8 +353,9 @@ describe("parseExport — matchRules JSON", () => {
 
   it("unwraps a policy-metadata envelope and maps the wrapped rule", () => {
     // The real validation-set shape: each rule sits under a `rule` key next to
-    // `policyId` / `policyName` / `why`. Without unwrapping, every row reads as
-    // "Missing redirectURL". The rule is the classic "add trailing slash".
+    // `policyId` / `policyName` / `why`. Without unwrapping, every row is
+    // skipped with an empty redirectURL. The rule is the classic "add trailing
+    // slash".
     const json = JSON.stringify({
       ruleCount: 1,
       rules: [

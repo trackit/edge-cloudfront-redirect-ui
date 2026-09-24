@@ -13,6 +13,7 @@ import type {
   ParsedRow,
   SourceFormat,
 } from "../domain/akamaiImport";
+import { labelForPath } from "../domain/ruleDraft";
 import type { RedirectDraft } from "../domain/ruleDraft";
 import type {
   ImportItem,
@@ -87,12 +88,13 @@ const fromLabel = (draft: RedirectDraft): string => {
 /** The right-aligned note on a row: why it was skipped, or what it lost. */
 const noteFor = (row: ParsedRow): string => {
   if (row.status === "skipped") {
-    if (row.validation.some((detail) => detail.path.includes("redirectURL"))) {
-      return "Missing redirectURL.";
-    }
+    // Each finding as the editor would say it — "Redirect URL is required",
+    // "Redirect URL starts with a captured group…". Not collapsed per field:
+    // `redirectURL` alone can be refused for half a dozen reasons, and the
+    // message is the part that says how to fix the export.
     if (row.validation.length > 0) {
       return row.validation
-        .map((detail) => `${detail.path} ${detail.message}`)
+        .map((detail) => `${labelForPath(detail.path)} ${detail.message}`)
         .join(", ");
     }
     // A row refused for what the source said, not for what the draft is: the
