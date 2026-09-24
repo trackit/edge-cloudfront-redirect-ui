@@ -22,6 +22,23 @@ Extracted from `edge-platform-functions-cdn`'s `src/snippets/dynamodb-redirect/`
 
 A DynamoDB error is logged and the request passes through — rules never fail a request.
 
+### What a condition is tested against
+
+A `path` or `regex` condition using `equals` or a regular expression is tested
+against the **bare path** — `/old/shoes`, not `/old/shoes?utm=x` — unless the
+value mentions the query string. A regex that names a scheme (`^https://…`) is
+tested against the full URL, on the same terms. `contains` always sees path and
+query together.
+
+"Mentions the query string" means a literal `?`. In a regular expression that
+is an escaped `\?` or a `?` inside a character class (`[?]`): a bare `?` there
+is a quantifier or group syntax, so `^/products/?$` still matches
+`/products?utm=x`.
+
+This matters for captures too. A `(.*)` tested against path and query would
+carry the query into `$1`, and `useIncomingQueryString` would then append it a
+second time.
+
 ## The host a rule is keyed on
 
 A rule's `pk` is the hostname the viewer asked for. Only viewer-request sees it:

@@ -46,6 +46,10 @@ export const assertRegexes = (item: unknown): void => {
       return;
     }
 
+    // Cannot throw: safe-regex returns `false` for a pattern it fails to parse.
+    // The cost is the opposite mistake — a pattern valid in JavaScript but
+    // beyond regexp-tree is reported as catastrophic — which is a 400 to revise,
+    // not the 500 this line was once filed as (CF-43).
     if (!safeRegex(match.matchValue)) {
       details.push({
         path,
