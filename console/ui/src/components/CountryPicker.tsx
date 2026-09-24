@@ -5,8 +5,8 @@ import {
   countryLabel,
   groupCountries,
   matchesCountryQuery,
-} from "../countries";
-import { COUNTRY_CODES } from "../countries.gen";
+} from "../domain/countries";
+import { COUNTRY_CODES } from "../domain/countries.gen";
 import { IconCheck, IconPlus, IconSearch } from "./icons";
 import Toggleable from "./Toggleable";
 
