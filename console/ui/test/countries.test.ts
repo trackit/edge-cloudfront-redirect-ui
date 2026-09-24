@@ -9,7 +9,7 @@
  * against the generated codes rather than trusted.
  */
 import { describe, expect, it } from "vitest";
-import { COUNTRY_CODES } from "../src/countries.gen";
+import { COUNTRY_CODES } from "../src/domain/countries.gen";
 import {
   CONTINENT_NAMES,
   OTHER_GROUP,
@@ -18,7 +18,7 @@ import {
   countryLabel,
   groupCountries,
   matchesCountryQuery,
-} from "../src/countries";
+} from "../src/domain/countries";
 
 const flatten = (extra: string[] = []): string[] =>
   groupCountries(extra).flatMap((group) => group.codes);

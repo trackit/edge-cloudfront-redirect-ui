@@ -1,5 +1,5 @@
 /**
- * Regenerates `src/countries.gen.ts` — the country codes the picker offers.
+ * Regenerates `src/domain/countries.gen.ts` — the country codes the picker offers.
  *
  * Run: `npm run generate:countries -w console/ui` (needs AWS credentials; the
  * API itself is public, but the CLI still signs the request).
@@ -12,7 +12,7 @@
  * never what the app accepts. See the header of the generated file.
  *
  * Only the codes are taken. Route 53's own names are not display quality (it
- * calls US "USA"), so `countryName` in src/countries.ts asks
+ * calls US "USA"), so `countryName` in src/domain/countries.ts asks
  * `Intl.DisplayNames` instead — better wording, translated for free, and nothing
  * to maintain here.
  *
@@ -39,6 +39,7 @@ const OUT = join(
   dirname(fileURLToPath(import.meta.url)),
   "..",
   "src",
+  "domain",
   "countries.gen.ts",
 );
 
