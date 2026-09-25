@@ -2538,6 +2538,11 @@ button {
   gap: 10px;
 }
 
+/* Spaced like `.field > label`, which it stands in for. */
+.countries .field-label {
+  margin: 0 0 7px;
+}
+
 /* A read-only summary of the current value. `min-height` so the row does not
    jump between the empty hint and one line of countries. */
 .countries-selected {

@@ -354,3 +354,14 @@ test("a redirect with a country cannot also check a header, cookie or protocol",
   await typeSelect(page).selectOption("cookie");
   await expect(second.locator("option[value='country']")).toBeDisabled();
 });
+
+test("two country conditions each get their own search", async ({ page }) => {
+  // A fixed id made both labels point at the first search box.
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+  await editor(page).getByRole("button", { name: "Add condition" }).click();
+  await typeSelect(page, 1).selectOption("country");
+
+  await expect(editor(page).getByLabel("Search countries")).toHaveCount(2);
+});
