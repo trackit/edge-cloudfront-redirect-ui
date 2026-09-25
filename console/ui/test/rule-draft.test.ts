@@ -9,6 +9,7 @@ import {
   parseCountries,
   pickSslProtocol,
   toRuleInput,
+  unavailableMatchTypes,
   validateDraft,
 } from "../src/domain/ruleDraft";
 import type {
@@ -695,6 +696,44 @@ describe("country conditions", () => {
     });
 
     it.each([
+      ["header", { headerName: "x-env" }],
+      ["cookie", {}],
+      ["protocol", {}],
+    ] as const)(
+      "refuses a %s condition beside a country one on a redirect",
+      (matchType, extra) => {
+        // Same rule as the redirect schema: the redirect is answered at
+        // origin-request, where an unforwarded header or cookie reads as empty
+        // and the protocol falls back to https.
+        const draft = draftFromRule(
+          redirectRule({
+            matches: [
+              countryMatch("FR"),
+              match({ matchType, matchOperator: "contains", ...extra }),
+            ],
+          }),
+        );
+        const details = validateDraft(draft, []);
+
+        // One conflict, one error — on the condition that has to change.
+        expect(has(details, "/matches/1/matchType")).toBe(true);
+        expect(has(details, "/matches/0/matchType")).toBe(false);
+      },
+    );
+
+    it("lets a rewrite combine them", () => {
+      const draft = draftFromRule({
+        ...pathOnlyRewriteRule(),
+        matches: [
+          countryMatch("FR"),
+          match({ matchType: "cookie", matchOperator: "contains" }),
+        ],
+      } as Rule);
+
+      expect(has(validateDraft(draft, []), "/matches/1/matchType")).toBe(false);
+    });
+
+    it.each([
       ["a three-letter code", "FRA"],
       ["digits", "12"],
       ["a name", "france"],
@@ -705,5 +744,36 @@ describe("country conditions", () => {
 
       expect(has(validateDraft(draft, []), "/matches/0/matchValue")).toBe(true);
     });
+  });
+});
+
+describe("unavailableMatchTypes", () => {
+  it("rules out header, cookie and protocol beside a country on a redirect", () => {
+    expect([
+      ...unavailableMatchTypes("redirect", [countryMatch("FR"), match()], 1),
+    ]).toEqual(["header", "cookie", "protocol"]);
+  });
+
+  it("rules out country beside a header or cookie on a redirect", () => {
+    expect([
+      ...unavailableMatchTypes(
+        "redirect",
+        [match({ matchType: "cookie" }), match()],
+        1,
+      ),
+    ]).toEqual(["country"]);
+  });
+
+  it("does not count the condition itself", () => {
+    // A lone country condition must still be switchable to anything.
+    expect(
+      unavailableMatchTypes("redirect", [countryMatch("FR")], 0).size,
+    ).toBe(0);
+  });
+
+  it("restricts nothing on a rewrite", () => {
+    expect(
+      unavailableMatchTypes("rewrite", [countryMatch("FR"), match()], 1).size,
+    ).toBe(0);
   });
 });

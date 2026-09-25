@@ -217,6 +217,65 @@ describe("validateRule", () => {
       ).toThrowError(ApiError);
     });
 
+    it.each([
+      ["header", { headerName: "x-env" }],
+      ["cookie", {}],
+      // Read from X-Forwarded-Proto, not guaranteed at origin-request.
+      ["protocol", {}],
+    ])(
+      "rejects a %s condition next to a country one on a redirect",
+      (matchType, extra) => {
+        // The redirect is evaluated at origin-request, where a header or cookie
+        // the policies do not forward reads as "" — and negated, that matches
+        // everyone.
+        expect(() =>
+          validateRule({
+            ...redirectRule,
+            matches: [
+              {
+                matchType: "country",
+                matchOperator: "equals",
+                matchValue: "FR",
+              },
+              {
+                matchType,
+                matchOperator: "contains",
+                matchValue: "x",
+                negate: true,
+                ...extra,
+              },
+            ],
+          }),
+        ).toThrowError(ApiError);
+      },
+    );
+
+    it("leaves a rewrite free to combine them", () => {
+      // Rewrites always ran at origin-request; the restriction is about the
+      // redirects that moved there.
+      expect(() =>
+        validateRule({
+          ...rewriteRule,
+          matches: [
+            { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+            { matchType: "cookie", matchOperator: "contains", matchValue: "x" },
+          ],
+        }),
+      ).not.toThrow();
+    });
+
+    it("accepts a path condition next to a country one", () => {
+      expect(() =>
+        validateRule({
+          ...redirectRule,
+          matches: [
+            { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
+            { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+          ],
+        }),
+      ).not.toThrow();
+    });
+
     it("still rejects headerName on a country condition", () => {
       // The headerName conditional and the country one now sit side by side in
       // an allOf; this is the guard that adding the second did not loosen the

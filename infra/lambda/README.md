@@ -98,6 +98,26 @@ CloudFront happened to hold the page. `readsCountry` in `rules-service.ts` is
 the whole test, and it reads the rule rather than the request precisely so that
 enabling the header cannot change how any existing rule behaves.
 
+### What a geo redirect cannot read
+
+A redirect carrying a `country` condition is evaluated at origin-request, and
+the request there only holds the headers and cookies the behavior's policies
+forward. A `header` or `cookie` condition would read `""` for anything dropped
+— indistinguishable from a viewer who never sent it — and with `negate` that
+turns into a match for everyone. A `protocol` condition has the same flaw:
+`getParams` reads it from `X-Forwarded-Proto`, which CloudFront does not
+guarantee at origin-request, and falls back to `https` without it — so
+`protocol equals http` never fires and its negation always does. So the
+redirect schema refuses `header`, `cookie` and `protocol` conditions on a
+redirect that also has a `country` one. Rewrites are not restricted: they
+always ran at origin-request, so those conditions already depended on the
+policies there.
+
+The edge enforces the same rule rather than trusting the schema alone: it reads
+DynamoDB directly, so a script or a restored backup can still write such an
+item. One found there is never evaluated, and logged once per execution
+environment with its sort key (`skipping a redirect the schema forbids`).
+
 ### An unknown country skips the rule
 
 When the country is unknown — the wrong event, or a distribution that never asks

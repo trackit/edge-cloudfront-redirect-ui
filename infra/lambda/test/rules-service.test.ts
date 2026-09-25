@@ -501,3 +501,71 @@ describe("country conditions", () => {
     expect(await service([rule()]).match(params(), "REDIRECT")).not.toBeNull();
   });
 });
+
+/**
+ * The schema refuses these, but the edge reads DynamoDB directly: a script or a
+ * restored backup can still put one there.
+ */
+describe("forbidden geo redirects", () => {
+  const forbidden = (matchType: "header" | "cookie" | "protocol") =>
+    rule({
+      sk: "REDIRECT#00007",
+      matches: [
+        { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+        {
+          matchType,
+          matchOperator: "equals",
+          matchValue: "anything",
+          negate: true,
+          ...(matchType === "header" && { headerName: "x-env" }),
+        },
+      ],
+    });
+
+  it.each(["header", "cookie", "protocol"] as const)(
+    "never evaluates a country beside a %s, even where it would match",
+    async (matchType) => {
+      // Known country, negated condition on an empty source: without the guard
+      // this is a match — the redirect-everyone case.
+      const svc = new RulesService(
+        new FakeRepository([forbidden(matchType)]),
+        60_000,
+      );
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      expect(await svc.match(params({ country: "FR" }), "REDIRECT")).toBeNull();
+
+      warn.mockRestore();
+    },
+  );
+
+  it("says so once per rule, not once per request", async () => {
+    const svc = new RulesService(
+      new FakeRepository([forbidden("cookie")]),
+      60_000,
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await svc.match(params({ country: "FR" }), "REDIRECT");
+    await svc.match(params({ country: "DE" }), "REDIRECT");
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[1]).toMatchObject({ sk: "REDIRECT#00007" });
+    warn.mockRestore();
+  });
+
+  it("leaves the same pair alone on a rewrite", async () => {
+    // Rewrites always ran at origin-request; the schema does not restrict them.
+    const rewrite = {
+      ...forbidden("cookie"),
+      sk: "REWRITE#00007",
+      type: "frMatchRule",
+      forwardSettings: { pathAndQS: "/fr" },
+    } as unknown as RedirectRule;
+    const svc = new RulesService(new FakeRepository([rewrite]), 60_000);
+
+    expect(
+      await svc.match(params({ country: "FR" }), "REWRITE"),
+    ).not.toBeNull();
+  });
+});

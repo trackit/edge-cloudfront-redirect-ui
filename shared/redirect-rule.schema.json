@@ -36,6 +36,31 @@
       "$comment": "Optional; absent means enabled. The Lambda@Edge filters out rules where disabled=true (RulesService.loadRules), so a toggle takes effect within the edge cache TTL (~1 min). The console writes it through PATCH."
     }
   },
+  "if": {
+    "$comment": "The if/then: a redirect with a `country` condition may not also have a `header`, `cookie` or `protocol` one. Such a redirect is evaluated at origin-request (the country only exists from there on), where the request holds only the headers and cookies the behavior's policies forward. A dropped one reads as \"\" — indistinguishable from a viewer who never sent it — and a negated condition then matches everyone. `protocol` for the same reason: the edge reads it from `X-Forwarded-Proto`, which CloudFront does not guarantee at origin-request, and falls back to \"https\" without it. Not applied to rewrites: they always ran at origin-request, so their header and cookie conditions already depended on the policies. See infra/lambda/README.md#what-a-geo-redirect-cannot-read.",
+    "required": ["matches"],
+    "properties": {
+      "matches": {
+        "type": "array",
+        "contains": {
+          "type": "object",
+          "required": ["matchType"],
+          "properties": { "matchType": { "const": "country" } }
+        }
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "matches": {
+        "items": {
+          "properties": {
+            "matchType": { "not": { "enum": ["header", "cookie", "protocol"] } }
+          }
+        }
+      }
+    }
+  },
   "definitions": {
     "match": {
       "$comment": "Shared match condition, referenced by rewrite-rule.schema.json. Field names/enums mirror MatchCondition + MatchType/MatchOperator in redirect-rule-types.ts.",

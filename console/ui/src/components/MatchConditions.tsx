@@ -3,6 +3,7 @@ import {
   emptyMatch,
   formatCountries,
   parseCountries,
+  unavailableMatchTypes,
 } from "../domain/ruleDraft";
 import CountryPicker from "./CountryPicker";
 import { IconInfo, IconPlus, IconTrash } from "./icons";
@@ -10,7 +11,10 @@ import Toggleable from "./Toggleable";
 
 interface Props {
   matches: MatchCondition[];
-  /** Only to word the geolocation notice: a redirect also changes event. */
+  /**
+   * A redirect with a geographic condition changes event, which words the
+   * notice below and rules out header, cookie and protocol conditions beside it.
+   */
   kind: "redirect" | "rewrite";
   onChange: (matches: MatchCondition[]) => void;
 }
@@ -140,11 +144,25 @@ export default function MatchConditions({ matches, kind, onChange }: Props) {
                   });
                 }}
               >
-                {TYPES.map((type) => (
-                  <option key={type} value={type}>
-                    {TYPE_LABELS[type] ?? type}
-                  </option>
-                ))}
+                {/* Disabled rather than hidden, with the reason in the label:
+                    an option that vanishes when a second condition is added
+                    reads as a bug. The current type stays selectable, so a
+                    rule loaded in that state still shows what it holds, and
+                    validateDraft reports it. */}
+                {TYPES.map((type) => {
+                  const unavailable =
+                    type !== match.matchType &&
+                    unavailableMatchTypes(kind, matches, at).has(type);
+                  return (
+                    <option key={type} value={type} disabled={unavailable}>
+                      {TYPE_LABELS[type] ?? type}
+                      {unavailable &&
+                        (type === "country"
+                          ? " (not with header, cookie or protocol on a redirect)"
+                          : " (not with a geographic location on a redirect)")}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -257,7 +275,7 @@ export default function MatchConditions({ matches, kind, onChange }: Props) {
             if the distribution puts <code>CloudFront-Viewer-Country</code> in
             its cache key.
             {kind === "redirect" &&
-              " It is also answered at the origin request stage, which means on a cache miss."}
+              " It is also answered at the origin request stage, which means on a cache miss, and so cannot check headers, cookies or the protocol."}
           </span>
         </p>
       )}
