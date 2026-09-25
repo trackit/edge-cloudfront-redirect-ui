@@ -276,8 +276,9 @@ export default function MatchConditions({ matches, kind, onChange }: Props) {
           <IconInfo size={15} />
           <span>
             The viewer's country comes from CloudFront, so this rule only fires
-            if the distribution puts <code>CloudFront-Viewer-Country</code> in
-            its cache key.
+            if the distribution asks for <code>CloudFront-Viewer-Country</code>:
+            in its cache key when the behavior caches, or in its origin request
+            policy when caching is disabled.
             {kind === "redirect" &&
               " It is also answered at the origin request stage, which means on a cache miss, and so cannot check headers, cookies or the protocol."}
           </span>

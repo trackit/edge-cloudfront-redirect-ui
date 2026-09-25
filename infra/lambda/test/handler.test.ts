@@ -975,18 +975,27 @@ describe("geo redirects at origin-request", () => {
     expect((result as CloudFrontRequest).uri).toBe("/api/v1/legacy");
   });
 
-  it("does not look redirects up when there is no country", async () => {
-    // Every geo redirect would be skipped anyway, so only the rewrite lookup
-    // is worth its DynamoDB round trip on a cache miss.
+  it("does not look redirects up on every request without a country", async () => {
+    // Every geo redirect would be skipped anyway. The one lookup left is the
+    // missing-country check, once per host — not once per cache miss. The rule
+    // cache is disabled so every lookup reaches the repository.
+    vi.stubEnv("RULES_CACHE_TTL_MS", "0");
     withRules(countryRedirect("FR"), rewriteRule());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const request = () =>
+      handler(
+        CloudfrontRequestEventMother.originRequest()
+          .withUri("/legacy/thing")
+          .build(),
+      );
 
-    await handler(
-      CloudfrontRequestEventMother.originRequest()
-        .withUri("/legacy/thing")
-        .build(),
-    );
+    await request();
+    await request();
 
-    expect(repo.queryCount).toBe(1);
+    expect(repo.prefixes.filter((p) => p === "REDIRECT#")).toHaveLength(1);
+    // One rewrite lookup per request; the check stopped at the geo redirect.
+    expect(repo.prefixes.filter((p) => p === "REWRITE#")).toHaveLength(2);
+    warn.mockRestore();
   });
 
   it("lets a classic redirect win over a geo one, whatever their priorities", async () => {
@@ -1022,6 +1031,100 @@ describe("geo redirects at origin-request", () => {
     expect(result.headers?.["location"]?.[0]?.value).toBe(
       "https://www.example.com/new-shop",
     );
+  });
+});
+
+/**
+ * A distribution that never asks for the country has geo rules that are all
+ * skipped. This is the only place that can notice.
+ */
+describe("the missing-country warning", () => {
+  const geoRewrite = () =>
+    rewriteRule({
+      matches: [
+        { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+      ],
+    } as Partial<RedirectRule>);
+
+  const originRequest = (country?: string) => {
+    const event = CloudfrontRequestEventMother.originRequest().withUri("/x");
+    return (
+      country === undefined ? event : event.withViewerCountry(country)
+    ).build();
+  };
+
+  const warnings = (warn: ReturnType<typeof vi.spyOn>) =>
+    warn.mock.calls.filter((call) =>
+      String(call[0]).includes("no viewer country"),
+    );
+
+  it("warns when the host has country rules and no country arrives", async () => {
+    withRules(geoRewrite());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await handler(originRequest());
+
+    expect(warnings(warn)).toHaveLength(1);
+    expect(warnings(warn)[0]?.[1]).toMatchObject({ host: HOST });
+    warn.mockRestore();
+  });
+
+  it("warns once per host, not once per request", async () => {
+    withRules(geoRewrite());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await handler(originRequest());
+    await handler(originRequest());
+
+    expect(warnings(warn)).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  it("remembers a bounded number of hosts, however many arrive", async () => {
+    // Behind a wildcard alternate domain every subdomain is a new host. The
+    // record of checked hosts must evict rather than grow; an evicted host is
+    // checked again, which is how this test can see the bound.
+    withRules(geoRewrite());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fromHost = (host: string) =>
+      handler(
+        CloudfrontRequestEventMother.originRequest()
+          .withUri("/x")
+          .withViewerHostHeader(host)
+          .build(),
+      );
+
+    await fromHost(HOST);
+    for (let i = 0; i < 500; i++) await fromHost(`h${i}.example.com`);
+    await fromHost(HOST);
+
+    // Warned for HOST twice: once at first, once after it was evicted.
+    const forHost = warnings(warn).filter(
+      (call) => (call[1] as { host: string }).host === HOST,
+    );
+    expect(forHost).toHaveLength(2);
+    warn.mockRestore();
+  });
+
+  it("stays quiet for a host without country rules", async () => {
+    // A distribution that does not use the feature must not be told to fix it.
+    withRules(rewriteRule());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await handler(originRequest());
+
+    expect(warnings(warn)).toHaveLength(0);
+    warn.mockRestore();
+  });
+
+  it("stays quiet when the country arrives", async () => {
+    withRules(geoRewrite());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await handler(originRequest("FR"));
+
+    expect(warnings(warn)).toHaveLength(0);
+    warn.mockRestore();
   });
 });
 
