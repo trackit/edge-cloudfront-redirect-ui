@@ -54,6 +54,26 @@ const toPrincipal = (event: APIGatewayProxyEventV2): Principal | undefined =>
     event.headers?.authorization ?? event.headers?.Authorization,
   );
 
+/**
+ * The request's headers, with its cookies put back.
+ *
+ * Payload 2.0 strips the `Cookie` header out of `headers` and delivers the
+ * cookies as a separate `cookies` array, so reading `headers` alone loses them —
+ * which is how the refresh route never saw its cookie and every reload of the
+ * deployed console signed the user out (CF-46). Rejoined into the one `cookie`
+ * header the handlers read, keeping any header already there so a direct invoke
+ * that sets it by hand still works.
+ */
+const toHeaders = (event: APIGatewayProxyEventV2): Record<string, string> => {
+  const headers = stringRecord(event.headers, true);
+  if (event.cookies?.length) {
+    headers.cookie = [headers.cookie, ...event.cookies]
+      .filter((part) => part !== undefined && part !== "")
+      .join("; ");
+  }
+  return headers;
+};
+
 const toApiRequest = (event: APIGatewayProxyEventV2): ApiRequest => {
   const principal = toPrincipal(event);
   return {
@@ -61,7 +81,7 @@ const toApiRequest = (event: APIGatewayProxyEventV2): ApiRequest => {
     path: event.rawPath,
     params: {},
     query: stringRecord(event.queryStringParameters),
-    headers: stringRecord(event.headers, true),
+    headers: toHeaders(event),
     body: parseBody(event),
     // Spread rather than set: `principal: undefined` would still be an own
     // property, and the router distinguishes "no principal" from "a principal
