@@ -2,6 +2,7 @@ import type { MatchCondition } from "../api";
 import {
   emptyMatch,
   formatCountries,
+  isExcludingCountries,
   parseCountries,
   unavailableMatchTypes,
 } from "../domain/ruleDraft";
@@ -125,18 +126,20 @@ export default function MatchConditions({ matches, kind, onChange }: Props) {
                   // rejected otherwise, so it is added and dropped with the type
                   // rather than left behind to fail validation on save.
                   //
-                  // A country is pinned to `equals` for the same reason, and the
-                  // value is cleared either way: a path is not a country code,
-                  // and carrying "/old-landing" into a country condition means a
-                  // 400 on a value the editor no longer shows.
+                  // Into or out of a country, the value, operator and negate
+                  // are reset for the same reason: a path is not a country
+                  // code, `notEquals` only exists for a country, and a country
+                  // never carries `negate`. Carrying any of them across means a
+                  // 400 on a field the editor no longer shows.
+                  const crossesCountry =
+                    matchType === "country" || match.matchType === "country";
                   update(at, {
                     matchType,
-                    matchValue:
-                      matchType === "country" || match.matchType === "country"
-                        ? ""
-                        : match.matchValue,
-                    matchOperator:
-                      matchType === "country" ? "equals" : match.matchOperator,
+                    matchValue: crossesCountry ? "" : match.matchValue,
+                    matchOperator: crossesCountry
+                      ? "equals"
+                      : match.matchOperator,
+                    negate: crossesCountry ? false : match.negate,
                     headerName:
                       matchType === "header"
                         ? (match.headerName ?? "")
@@ -169,11 +172,12 @@ export default function MatchConditions({ matches, kind, onChange }: Props) {
             {match.matchType === "country" ? (
               <CountryPicker
                 codes={parseCountries(match.matchValue)}
-                excluded={match.negate === true}
+                excluded={isExcludingCountries(match)}
                 onChange={({ codes, excluded }) =>
                   update(at, {
                     matchValue: formatCountries(codes),
-                    negate: excluded,
+                    matchOperator: excluded ? "notEquals" : "equals",
+                    negate: false,
                   })
                 }
               />

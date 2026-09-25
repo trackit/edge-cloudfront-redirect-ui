@@ -61,8 +61,10 @@ environment.
 ## The country a rule can be keyed on
 
 A `country` match condition tests the viewer's country, as an ISO 3166-1 alpha-2
-code, against a space-separated list — `"BE FR"` means Belgium or France, and
-`negate: true` turns the list into an exclusion.
+code, against a space-separated list — `"BE FR"` means Belgium or France with
+`matchOperator: "equals"`, and anything but them with `"notEquals"`. An
+exclusion is never written with `negate` — see
+[why an exclusion is notEquals](#why-an-exclusion-is-notequals).
 
 The value comes from CloudFront's own `CloudFront-Viewer-Country` header, and
 **two deployment conditions have to hold** before it carries anything:
@@ -141,12 +143,33 @@ environment with its sort key (`skipping a redirect the schema forbids`).
 When the country is unknown — the wrong event, or a distribution that never asks
 for the header — a rule that reads it is **skipped**, not evaluated.
 
-This is not tidiness. Evaluated against an empty country the comparison fails,
-and `negate` then inverts that failure into a match: a rule meaning "redirect
-everyone except France" would fire for every request, France included. One rule
+This is not tidiness. Evaluated against an empty country an exclusion reads as
+"not France", so a rule meaning "redirect everyone except France" would fire for
+every request, France included — and a legacy one written with `negate` fails
+the same way. One rule
 would take the site down. Skipping makes the same rule inert instead, which is
 why `RequestParams.country` is optional rather than defaulting to `""` — absent
 means "unknown", which is not the same as "known, and not France".
+
+### Why an exclusion is notEquals
+
+The schema refuses `negate` on a `country` condition and stores an exclusion as
+`matchOperator: "notEquals"` instead. That protects every reader of the table
+that predates country conditions: an older version of this function still
+running during a deploy, the one a rollback returns to, or another consumer of
+the same items.
+
+Such a reader has no source for a type it does not know, so it tests `""`.
+`"" equals FR` is false, and nothing else can make the condition true — except
+`negate`, which would flip it into a match for every viewer. `notEquals` is an
+operator it does not know either, so it falls back to plain equality: still
+false. The worst an old reader can do with a geo rule is ignore it. Codes are
+two uppercase letters, so a `*` wildcard (which would match `""`) cannot get in
+either.
+
+`validate.test.ts` in `console/api` pins this with a frozen copy of the old
+evaluation: every country condition the schema accepts must stay false for it.
+Any future condition type has to keep that property.
 
 A country condition is also not a security control. IP geolocation is an
 indication, and a VPN defeats it in seconds. For a legal or licensing block, use

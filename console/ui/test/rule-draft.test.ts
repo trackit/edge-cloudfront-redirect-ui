@@ -645,12 +645,32 @@ describe("country conditions", () => {
       });
     });
 
-    it("keeps negate, which is how an exclusion is stored", () => {
+    it("stores an exclusion as notEquals, never negate", () => {
+      // A reader that predates `country` tests "", and `negate` would turn that
+      // into a redirect for every viewer. `notEquals` keeps it inert.
+      const draft = draftFromRule(
+        redirectRule({
+          matches: [countryMatch("US", { matchOperator: "notEquals" })],
+        }),
+      );
+
+      expect(toRuleInput(draft).matches[0]).toMatchObject({
+        matchOperator: "notEquals",
+        negate: false,
+      });
+    });
+
+    it("rewrites a legacy negated exclusion as notEquals on save", () => {
+      // Saved before `negate` was refused on a country: it keeps its meaning,
+      // in the form the schema now accepts.
       const draft = draftFromRule(
         redirectRule({ matches: [countryMatch("US", { negate: true })] }),
       );
 
-      expect(toRuleInput(draft).matches[0]).toMatchObject({ negate: true });
+      expect(toRuleInput(draft).matches[0]).toMatchObject({
+        matchOperator: "notEquals",
+        negate: false,
+      });
     });
   });
 

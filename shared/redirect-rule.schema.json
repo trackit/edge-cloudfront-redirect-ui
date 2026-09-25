@@ -80,7 +80,7 @@
           ]
         },
         "matchOperator": {
-          "enum": ["equals", "contains", "regex"]
+          "enum": ["equals", "contains", "regex", "notEquals"]
         },
         "matchValue": {
           "type": "string",
@@ -105,18 +105,24 @@
           "else": { "not": { "required": ["headerName"] } }
         },
         {
-          "$comment": "A country condition carries ISO 3166-1 alpha-2 codes, space-separated, and is a set membership test — so the operator can only be `equals`, which the space-splitting above turns into \"is one of\". The pattern validates the format and deliberately not the list of countries: CloudFront publishes no such list, its geolocation database changes without notice, and a closed enum here would reject a legitimate new country until the schema shipped again. Same reasoning as getAllowedRegions in console/api/src/lib/aws-regions.ts. `required` so an item missing matchType fails on that alone, without a confusing second error about matchValue's format.",
+          "$comment": "A country condition carries ISO 3166-1 alpha-2 codes, space-separated, and is a set membership test — so the operator can only be `equals` (\"is one of\", which the space-splitting above gives for free) or `notEquals` (\"is none of\"). An exclusion is `notEquals` and never `negate`, and that is a safety property, not a style choice: a reader that predates `country` compares the condition against \"\" and gets false, and `negate` would flip that into a match for every viewer — one excluding rule would redirect the whole site during a deploy or a rollback. `notEquals` is an operator such a reader does not know either, so it falls back to plain equality, still false, and the rule stays inert. `notEquals` is refused on every other type, which have `negate` for that. The pattern validates the format and deliberately not the list of countries: CloudFront publishes no such list, its geolocation database changes without notice, and a closed enum here would reject a legitimate new country until the schema shipped again. Same reasoning as getAllowedRegions in console/api/src/lib/aws-regions.ts. `required` so an item missing matchType fails on that alone, without a confusing second error about matchValue's format.",
           "if": {
             "properties": { "matchType": { "const": "country" } },
             "required": ["matchType"]
           },
           "then": {
             "properties": {
-              "matchOperator": { "const": "equals" },
+              "matchOperator": { "enum": ["equals", "notEquals"] },
+              "negate": { "const": false },
               "matchValue": {
                 "type": "string",
                 "pattern": "^[A-Z]{2}( [A-Z]{2})*$"
               }
+            }
+          },
+          "else": {
+            "properties": {
+              "matchOperator": { "not": { "const": "notEquals" } }
             }
           }
         }

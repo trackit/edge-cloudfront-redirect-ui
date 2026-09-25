@@ -434,7 +434,38 @@ describe("country conditions", () => {
     expect(result !== null).toBe(expected);
   });
 
-  it("excludes the listed countries when negated", async () => {
+  const excludingRule = (matchValue: string): RedirectRule =>
+    rule({
+      matches: [
+        { matchType: "country", matchOperator: "notEquals", matchValue },
+      ],
+    });
+
+  it.each([
+    ["a listed country", "BE FR", "FR", false],
+    ["a country that is not listed", "BE FR", "DE", true],
+    ["a lowercase header value", "FR", "fr", false],
+  ])(
+    "excludes with notEquals: %s",
+    async (_label, matchValue, country, expected) => {
+      const result = await service([excludingRule(matchValue)]).match(
+        params({ country }),
+        "REDIRECT",
+      );
+      expect(result !== null).toBe(expected);
+    },
+  );
+
+  it("skips a notEquals condition when the country is unknown", async () => {
+    // "Everyone but France" must not read an unknown country as "not France".
+    expect(
+      await service([excludingRule("FR")]).match(params(), "REDIRECT"),
+    ).toBeNull();
+  });
+
+  it("still honours negate on a legacy exclusion", async () => {
+    // The schema now refuses `negate` on a country, but an item written before
+    // that must keep meaning what it meant.
     const svc = service([countryRule("FR", true)]);
 
     expect(await svc.match(params({ country: "FR" }), "REDIRECT")).toBeNull();

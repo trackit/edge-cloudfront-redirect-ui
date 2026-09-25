@@ -518,7 +518,7 @@ export interface components {
         | "cookie"
         | "country";
       /** @enum {unknown} */
-      matchOperator: "equals" | "contains" | "regex";
+      matchOperator: "equals" | "contains" | "regex" | "notEquals";
       matchValue: string;
       negate?: boolean;
       caseSensitive?: boolean;

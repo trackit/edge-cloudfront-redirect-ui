@@ -196,9 +196,16 @@ export class RulesService {
         : match.matchValue.toLowerCase();
       // Space-separated alternatives, Akamai-style: any variant may match.
       const variants = matchVal.split(" ").filter((v) => v.length > 0);
-      isMatch = variants.some((v) =>
-        checkAkamaiVariant(testVal, v, match.matchOperator),
-      );
+      if (match.matchOperator === MatchOperator.NOT_EQUALS) {
+        // "None of them": the same comparison as `equals`, inverted as a whole.
+        isMatch = !variants.some((v) =>
+          checkAkamaiVariant(testVal, v, MatchOperator.EQUALS),
+        );
+      } else {
+        isMatch = variants.some((v) =>
+          checkAkamaiVariant(testVal, v, match.matchOperator),
+        );
+      }
     }
 
     return match.negate ? !isMatch : isMatch;
