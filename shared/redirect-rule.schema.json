@@ -53,7 +53,9 @@
   "then": {
     "properties": {
       "matches": {
+        "type": "array",
         "items": {
+          "type": "object",
           "properties": {
             "matchType": { "not": { "enum": ["header", "cookie", "protocol"] } }
           }
