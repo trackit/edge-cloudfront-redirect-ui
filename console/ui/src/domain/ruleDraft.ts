@@ -36,6 +36,44 @@ export const formatCountries = (codes: readonly string[]): string =>
     .sort()
     .join(" ");
 
+/**
+ * The condition types a redirect cannot combine with a `country` one.
+ *
+ * A redirect reading the country is answered at origin-request, where only the
+ * headers and cookies the distribution forwards are left. A dropped one reads
+ * as empty, and negated that matches everyone. The protocol too: the edge reads
+ * it from `X-Forwarded-Proto`, which is not guaranteed there, and assumes
+ * `https` without it. The redirect schema refuses the combination; this is the
+ * same rule, so the editor can say so before saving. See
+ * `shared/redirect-rule.schema.json`.
+ */
+const NOT_BESIDE_COUNTRY: readonly MatchCondition["matchType"][] = [
+  "header",
+  "cookie",
+  "protocol",
+];
+
+/**
+ * The types condition `at` cannot take, given the rule's other conditions.
+ * Always empty for a rewrite: rewrites always ran at origin-request, so the
+ * restriction is only about the redirects that moved there.
+ */
+export const unavailableMatchTypes = (
+  kind: RuleDraft["kind"],
+  matches: readonly MatchCondition[],
+  at: number,
+): ReadonlySet<MatchCondition["matchType"]> => {
+  if (kind !== "redirect") return new Set();
+  const others = matches.filter((_, i) => i !== at);
+  if (others.some((match) => match.matchType === "country")) {
+    return new Set(NOT_BESIDE_COUNTRY);
+  }
+  if (others.some((match) => NOT_BESIDE_COUNTRY.includes(match.matchType))) {
+    return new Set(["country"]);
+  }
+  return new Set();
+};
+
 /** A blank condition, as both the editor's "add" button and a new draft need one. */
 export const emptyMatch = (): MatchCondition => ({
   matchType: "path",
@@ -484,6 +522,17 @@ export const validateDraft = (
         });
       }
     }
+    // Reported on the non-country side only, so one conflict is one
+    // error rather than one per condition involved.
+    if (
+      match.matchType !== "country" &&
+      unavailableMatchTypes(draft.kind, draft.matches, at).has(match.matchType)
+    ) {
+      details.push({
+        path: `/matches/${at}/matchType`,
+        message: `cannot be ${match.matchType} on a redirect that also checks the geographic location`,
+      });
+    }
     if (
       match.matchType === "header" &&
       (match.headerName ?? "").trim() === ""
@@ -702,6 +751,7 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 const MATCH_FIELD_LABELS: Record<string, string> = {
+  matchType: "type",
   matchValue: "value",
   headerName: "header name",
 };

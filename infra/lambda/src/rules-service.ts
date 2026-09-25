@@ -6,7 +6,7 @@ import type {
   RequestParams,
   RuleKind,
 } from "./rule-types.js";
-import { MatchType, MatchOperator } from "./rule-types.js";
+import { MatchType, MatchOperator, NOT_BESIDE_COUNTRY } from "./rule-types.js";
 import { TtlCache } from "./ttl-cache.js";
 import { appendQueryStringIfNeeded } from "./lib/append-query-string.js";
 import { buildFullUrl } from "./lib/build-full-url.js";
@@ -37,8 +37,21 @@ const splitPath = (path: string): { pathname: string; search: string } => {
   };
 };
 
+/**
+ * A redirect the schema would refuse: a `country` condition beside a header,
+ * cookie or protocol one. The API never writes one, but this reads items
+ * straight out of DynamoDB, and a script or a restored backup can.
+ */
+const isForbiddenGeoRedirect = (rule: RedirectRule): boolean =>
+  rule.type === "erMatchRule" &&
+  readsCountry(rule) &&
+  rule.matches.some((m) => NOT_BESIDE_COUNTRY.includes(m.matchType));
+
 export class RulesService {
   private readonly cache: TtlCache<RedirectRule[]>;
+
+  /** Rules already reported as forbidden, so each is logged once per instance. */
+  private readonly reported = new Set<string>();
 
   constructor(
     private readonly repo: RuleRepository,
@@ -77,7 +90,8 @@ export class RulesService {
   }
 
   /**
-   * Whether every condition on the rule has something to be tested against.
+   * Whether every condition on the rule has something to be tested against —
+   * and, first, whether the rule is one the schema allows at all.
    *
    * Only the country can be *unknown* rather than merely different: CloudFront
    * adds `CloudFront-Viewer-Country` after the viewer-request event, and a
@@ -92,7 +106,25 @@ export class RulesService {
    * and kind alone, and holds the same rules for every request.
    */
   private isEvaluable(rule: RedirectRule, params: RequestParams): boolean {
+    // Never evaluated, at either event: its header, cookie or protocol can read
+    // "" at origin-request, and negated that is a match for every viewer.
+    if (isForbiddenGeoRedirect(rule)) {
+      this.reportForbidden(rule);
+      return false;
+    }
     return Boolean(params.country) || !readsCountry(rule);
+  }
+
+  private reportForbidden(rule: RedirectRule): void {
+    const key = `${rule.pk}:${rule.sk}`;
+    if (this.reported.has(key)) return;
+    this.reported.add(key);
+    console.warn("redirect-rules: skipping a redirect the schema forbids", {
+      host: rule.pk,
+      sk: rule.sk,
+      reason: "a country condition beside a header, cookie or protocol one",
+      fix: "remove one of the two conditions, or save the rule through the console",
+    });
   }
 
   private async loadRules(

@@ -35,6 +35,18 @@ export const MatchOperator = {
 } as const;
 
 export type MatchType = (typeof MatchType)[keyof typeof MatchType];
+
+/**
+ * The condition types a redirect cannot carry beside a `country` one. Such a
+ * redirect runs at origin-request, where these can read "" for reasons that
+ * have nothing to do with the viewer — see "What a geo redirect cannot read"
+ * in ../README.md. Mirrors the redirect schema's top-level if/then.
+ */
+export const NOT_BESIDE_COUNTRY: readonly MatchType[] = [
+  MatchType.HEADER,
+  MatchType.COOKIE,
+  MatchType.PROTOCOL,
+];
 export type MatchOperator = (typeof MatchOperator)[keyof typeof MatchOperator];
 
 export interface MatchCondition {

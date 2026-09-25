@@ -331,3 +331,26 @@ test("switching away from a country clears the value", async ({ page }) => {
 
   await expect(editor(page).getByLabel("Value")).toHaveValue("");
 });
+
+test("a redirect with a country cannot also check a header, cookie or protocol", async ({
+  page,
+}) => {
+  // The redirect is answered at origin-request, where only forwarded headers
+  // and cookies are left, so the schema refuses the pair. The option says so
+  // before the save does.
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+  await editor(page).getByRole("button", { name: "Add condition" }).click();
+
+  const second = typeSelect(page, 1);
+  await expect(second.locator("option[value='header']")).toBeDisabled();
+  await expect(second.locator("option[value='cookie']")).toBeDisabled();
+  await expect(second.locator("option[value='protocol']")).toBeDisabled();
+  await expect(second.locator("option[value='path']")).toBeEnabled();
+
+  // And the other way round, from the first condition's side.
+  await second.selectOption("path");
+  await typeSelect(page).selectOption("cookie");
+  await expect(second.locator("option[value='country']")).toBeDisabled();
+});
