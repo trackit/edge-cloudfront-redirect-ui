@@ -41,18 +41,29 @@ const respondWith = (status: number, payload: unknown): void => {
   }) as unknown as typeof globalThis.fetch);
 };
 
+/**
+ * An event in the shape API Gateway's payload 2.0 actually delivers. The one
+ * difference that matters here: the `Cookie` header never arrives in `headers`
+ * — the gateway strips it and passes the cookies as a `cookies` array instead.
+ * This builder used to leave it in `headers`, a request the gateway cannot
+ * produce, and the refresh tests passed against it while every reload of the
+ * deployed console signed the user out (CF-46).
+ */
 const event = (
   path: string,
   body?: unknown,
   headers: Record<string, string> = {},
-): APIGatewayProxyEventV2 =>
-  ({
+): APIGatewayProxyEventV2 => {
+  const { cookie, ...rest } = headers;
+  return {
     rawPath: path,
-    headers: { host: "console.example.com", ...headers },
+    headers: { host: "console.example.com", ...rest },
+    ...(cookie === undefined ? {} : { cookies: cookie.split(/;\s*/) }),
     body: body === undefined ? undefined : JSON.stringify(body),
     isBase64Encoded: false,
     requestContext: { http: { method: "POST" } },
-  }) as unknown as APIGatewayProxyEventV2;
+  } as unknown as APIGatewayProxyEventV2;
+};
 
 const parse = (body: string | undefined): Record<string, unknown> =>
   JSON.parse(body ?? "null") as Record<string, unknown>;
@@ -205,6 +216,40 @@ describe("POST /auth/refresh", () => {
     expect(res.statusCode).toBe(200);
     expect(parse(res.body).accessToken).toBe("access-2");
     expect(calls[0].body).toContain("grant_type=refresh_token");
+  });
+
+  it("finds the refresh cookie among others the browser sends", async () => {
+    // A real browser sends every cookie for the path, and the gateway hands
+    // them over as separate array entries — in no promised order.
+    respondWith(200, { ...TOKENS, access_token: "access-3" });
+
+    const res = await handler(
+      event("/auth/refresh", undefined, {
+        cookie: `theme=dark; ${REFRESH_COOKIE}=refresh-1; other=1`,
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(calls[0].body).toContain("refresh_token=refresh-1");
+  });
+
+  it("still reads a cookie header on a direct invoke", async () => {
+    // A Lambda invoked directly, or by a harness that builds its own event,
+    // may put the cookie in `headers` rather than `cookies`.
+    respondWith(200, { ...TOKENS, access_token: "access-4" });
+
+    const res = await handler({
+      rawPath: "/auth/refresh",
+      headers: {
+        host: "console.example.com",
+        cookie: `${REFRESH_COOKIE}=refresh-1`,
+      },
+      isBase64Encoded: false,
+      requestContext: { http: { method: "POST" } },
+    } as unknown as APIGatewayProxyEventV2);
+
+    expect(res.statusCode).toBe(200);
+    expect(calls[0].body).toContain("refresh_token=refresh-1");
   });
 
   it("clears a refresh token the provider rejected", async () => {

@@ -69,11 +69,19 @@ const toEvent = (
     if (typeof value === "string") headers[key] = value;
   }
 
+  // And, like API Gateway v2, the Cookie header does not stay in `headers`: it
+  // arrives as a separate `cookies` array. Passing it through as a header let
+  // local dev work while the deployed console lost every cookie (CF-46), so the
+  // local server now hands the handler what the gateway does.
+  const { cookie, ...rest } = headers;
+  const cookies = cookie === undefined ? undefined : cookie.split(/;\s*/);
+
   // Only the fields the handler reads; the rest of the event is not needed locally.
   return {
     rawPath,
     rawQueryString,
-    headers,
+    headers: rest,
+    ...(cookies === undefined ? {} : { cookies }),
     queryStringParameters: query,
     body: body || undefined,
     isBase64Encoded: false,
