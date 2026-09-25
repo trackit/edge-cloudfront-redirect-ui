@@ -78,7 +78,16 @@ describe("describeMatch", () => {
       "country in BE, FR",
     ],
     [
-      "a negated country condition, as an exclusion",
+      "an excluding country condition",
+      match({
+        matchType: "country",
+        matchOperator: "notEquals",
+        matchValue: "BE FR",
+      }),
+      "country not in BE, FR",
+    ],
+    [
+      "a legacy negated country condition, as an exclusion",
       match({ matchType: "country", matchValue: "US", negate: true }),
       "country not in US",
     ],

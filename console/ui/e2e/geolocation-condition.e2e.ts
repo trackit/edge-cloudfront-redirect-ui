@@ -35,7 +35,7 @@ const HOST = "www.example.com";
  */
 const UNKNOWN = "QQ";
 
-const geoRedirect = (matchValue: string, negate = false): Rule =>
+const geoRedirect = (matchValue: string, excluded = false): Rule =>
   ({
     pk: HOST,
     sk: "REDIRECT#00100",
@@ -44,7 +44,11 @@ const geoRedirect = (matchValue: string, negate = false): Rule =>
     redirectURL: "https://www.example.fr/boutique",
     matches: [
       { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
-      { matchType: "country", matchOperator: "equals", matchValue, negate },
+      {
+        matchType: "country",
+        matchOperator: excluded ? "notEquals" : "equals",
+        matchValue,
+      },
     ],
   }) as Rule;
 
@@ -231,6 +235,50 @@ test("editing an excluding rule opens with Exclude already on", async ({
   await expect(
     editor(page).getByRole("button", { name: "Exclude these countries" }),
   ).toHaveAttribute("aria-pressed", "true");
+});
+
+test("a legacy negated rule also opens with Exclude on", async ({
+  page,
+  api,
+}) => {
+  // Saved before `negate` was refused on a country. It still means "exclude".
+  const legacy = geoRedirect("US");
+  api.setRules([
+    {
+      ...legacy,
+      matches: legacy.matches.map((match) =>
+        match.matchType === "country" ? { ...match, negate: true } : match,
+      ),
+    } as Rule,
+  ]);
+  await open(page);
+  await editFirst(page);
+
+  await expect(
+    editor(page).getByRole("button", { name: "Exclude these countries" }),
+  ).toHaveAttribute("aria-pressed", "true");
+});
+
+test("Exclude is saved as notEquals, never negate", async ({ page, api }) => {
+  // A reader that predates `country` would turn `negate` into a redirect for
+  // every viewer. What reaches the API is what that reader will see.
+  api.setRules([geoRedirect("US")]);
+  await open(page);
+  await editFirst(page);
+
+  await editor(page)
+    .getByRole("button", { name: "Exclude these countries" })
+    .click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  await expect
+    .poll(() => api.calls.filter((call) => call.method === "PUT").length)
+    .toBe(1);
+  const put = api.calls.find((call) => call.method === "PUT");
+  const country = (put?.body as Rule).matches.find(
+    (match) => match.matchType === "country",
+  );
+  expect(country).toMatchObject({ matchOperator: "notEquals", negate: false });
 });
 
 test("a code our list has never heard of is offered, kept and flagged", async ({

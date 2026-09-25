@@ -190,8 +190,8 @@ resource "aws_cloudfront_distribution" "existing" {
 
   Nothing breaks if you skip it. The header is absent, the function cannot tell
   which country the viewer is in, and it **skips** those rules rather than
-  guessing — so they simply never fire, including the negated ones, which is the
-  case that would otherwise redirect your whole site. See
+  guessing — so they simply never fire, including the excluding ones, which is
+  the case that would otherwise redirect your whole site. See
   [the country a rule can be keyed on](../../lambda/README.md#the-country-a-rule-can-be-keyed-on).
 
   These redirects are answered at **origin-request**, because CloudFront works

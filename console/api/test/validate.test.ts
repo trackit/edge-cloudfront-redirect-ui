@@ -187,10 +187,107 @@ describe("validateRule", () => {
       expect(() => validateRule(withCountry({ matchValue }))).not.toThrow();
     });
 
-    it("accepts negate, which is how an exclude list is expressed", () => {
+    it("accepts notEquals, which is how an exclude list is expressed", () => {
+      expect(() =>
+        validateRule(
+          withCountry({ matchValue: "FR", matchOperator: "notEquals" }),
+        ),
+      ).not.toThrow();
+    });
+
+    it("rejects negate on a country condition", () => {
+      // An exclusion is `notEquals`. `negate` is what would turn a reader that
+      // predates `country` into a redirect for every viewer — see below.
       expect(() =>
         validateRule(withCountry({ matchValue: "FR", negate: true })),
-      ).not.toThrow();
+      ).toThrowError(ApiError);
+    });
+
+    it("rejects notEquals on any other type", () => {
+      // They have `negate`; a second way to say "not" would only be a way for
+      // two identical rules to look different.
+      expect(() =>
+        validateRule({
+          ...redirectRule,
+          matches: [
+            {
+              matchType: "path",
+              matchOperator: "notEquals",
+              matchValue: "/old",
+            },
+          ],
+        }),
+      ).toThrowError(ApiError);
+    });
+
+    describe("inert for a reader that predates country conditions", () => {
+      // A frozen copy of how the edge evaluated a condition before `country`
+      // existed (infra/lambda at `dev`: getMatchSource + checkAkamaiVariant).
+      // Such a reader still runs during a deploy, after a rollback, and in any
+      // other consumer of the table. It finds no source for an unknown type and
+      // tests "" — so the only thing that can make it match is `negate`, or a
+      // `*` wildcard matching the empty string. Deliberately not imported from
+      // the lambda: the point is to keep testing the OLD behaviour.
+      const legacyMatches = (match: {
+        matchOperator: string;
+        matchValue: string;
+        negate?: boolean;
+      }): boolean => {
+        const variants = match.matchValue
+          .toLowerCase()
+          .split(" ")
+          .filter((v) => v.length > 0);
+        const isMatch = variants.some((variant) => {
+          if (!variant.includes("*")) {
+            return match.matchOperator === "contains"
+              ? "".includes(variant)
+              : "" === variant;
+          }
+          const pattern = variant
+            .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+            .replace(/\*/g, ".*");
+          return new RegExp(
+            match.matchOperator === "contains" ? pattern : `^${pattern}$`,
+          ).test("");
+        });
+        return match.negate === true ? !isMatch : isMatch;
+      };
+
+      const candidates = ["equals", "notEquals", "contains", "regex"].flatMap(
+        (matchOperator) =>
+          ["FR", "BE FR", "*", "F*", ""].flatMap((matchValue) =>
+            [false, true, undefined].map((negate) => ({
+              matchOperator,
+              matchValue,
+              ...(negate !== undefined && { negate }),
+            })),
+          ),
+      );
+
+      it.each(candidates)(
+        "a country condition the schema accepts never matches: %o",
+        (match) => {
+          let accepted = true;
+          try {
+            validateRule(withCountry(match));
+          } catch {
+            accepted = false;
+          }
+          if (accepted) expect(legacyMatches(match)).toBe(false);
+        },
+      );
+
+      it("still has candidates the schema accepts, so it tests something", () => {
+        const accepted = candidates.filter((match) => {
+          try {
+            validateRule(withCountry(match));
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        expect(accepted.length).toBeGreaterThan(0);
+      });
     });
 
     it.each([
@@ -206,7 +303,7 @@ describe("validateRule", () => {
       );
     });
 
-    it("rejects any operator but equals", () => {
+    it("rejects any operator but equals and notEquals", () => {
       // A country condition is a set membership test. `contains` would silently
       // match FRA against FR, and `regex` would let a rule ReDoS the edge on a
       // value that is always two letters.

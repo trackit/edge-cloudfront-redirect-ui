@@ -868,7 +868,39 @@ describe("geo redirects at origin-request", () => {
     );
   });
 
-  it("excludes the listed countries when negated", async () => {
+  it("excludes the listed countries with notEquals", async () => {
+    withRules(
+      redirectRule({
+        statusCode: 302,
+        redirectURL: "https://www.example.fr/boutique",
+        matches: [
+          {
+            matchType: "country",
+            matchOperator: "notEquals",
+            matchValue: "US",
+          },
+        ],
+      } as Partial<RedirectRule>),
+    );
+
+    const excluded = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("US")
+        .build(),
+    )) as CloudFrontResultResponse;
+    expect(excluded.status).toBeUndefined();
+
+    const redirected = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("FR")
+        .build(),
+    )) as CloudFrontResultResponse;
+    expect(redirected.status).toBe("302");
+  });
+
+  it("still excludes on a legacy negated condition", async () => {
     withRules(countryRedirect("US", true));
 
     const excluded = (await handler(

@@ -32,6 +32,12 @@ export const MatchOperator = {
   EQUALS: "equals",
   CONTAINS: "contains",
   REGEX: "regex",
+  /**
+   * "Is none of", for a `country` condition only — how an exclusion is stored.
+   * Deliberately not `negate`: see the country conditional in
+   * shared/redirect-rule.schema.json for why that is a safety property.
+   */
+  NOT_EQUALS: "notEquals",
 } as const;
 
 export type MatchType = (typeof MatchType)[keyof typeof MatchType];

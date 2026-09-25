@@ -74,6 +74,16 @@ export const unavailableMatchTypes = (
   return new Set();
 };
 
+/**
+ * Whether a `country` condition excludes its countries rather than matching
+ * them. Stored as `notEquals`, never `negate` — see the country conditional in
+ * `shared/redirect-rule.schema.json` for why that is a safety property. A
+ * `negate` is still read, because a rule saved before that rule existed has
+ * one; the next save rewrites it as `notEquals` (see `cleanMatch`).
+ */
+export const isExcludingCountries = (match: MatchCondition): boolean =>
+  match.matchOperator === "notEquals" || match.negate === true;
+
 /** A blank condition, as both the editor's "add" button and a new draft need one. */
 export const emptyMatch = (): MatchCondition => ({
   matchType: "path",
@@ -889,12 +899,12 @@ const cleanMatch = (match: MatchCondition): MatchCondition => {
   if (match.matchType === "country") {
     return {
       matchType: "country",
-      // Pinned rather than carried over: the schema allows nothing else for a
-      // country, and the editor hides the operator, so whatever the condition
-      // held before the type was switched would be a 400.
-      matchOperator: "equals",
+      // Derived rather than carried over: the editor hides the operator, so
+      // whatever the condition held before the type was switched would be a
+      // 400. `negate` is always false — an exclusion is `notEquals`.
+      matchOperator: isExcludingCountries(match) ? "notEquals" : "equals",
       matchValue: formatCountries(parseCountries(match.matchValue)),
-      negate: match.negate === true,
+      negate: false,
       // Meaningless on two uppercase letters, and the editor offers no way to
       // set it. Sent as false rather than dropped because the schema has no
       // conditional forbidding it, and a rule that once had it set should not
