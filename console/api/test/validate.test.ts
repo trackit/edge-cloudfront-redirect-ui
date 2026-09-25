@@ -220,6 +220,88 @@ describe("validateRule", () => {
       ).toThrowError(ApiError);
     });
 
+    describe("readable errors", () => {
+      // Ajv words these by mechanism ("must NOT be valid", "must match \"then\"
+      // schema"). What an API caller needs is the reason and the fix.
+      const detailsOf = (body: unknown) => {
+        try {
+          validateRule(body);
+        } catch (e) {
+          return (e as ApiError).details as { path: string; message: string }[];
+        }
+        throw new Error("expected a validation error");
+      };
+
+      it("explains a cookie beside a country, and only once", () => {
+        const details = detailsOf({
+          ...redirectRule,
+          matches: [
+            { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+            { matchType: "cookie", matchOperator: "contains", matchValue: "x" },
+          ],
+        });
+
+        expect(details).toEqual([
+          expect.objectContaining({
+            path: "/matches/1/matchType",
+            message: expect.stringContaining("origin-request"),
+          }),
+        ]);
+      });
+
+      it("points a negated country at notEquals", () => {
+        const details = detailsOf(
+          withCountry({ matchValue: "FR", negate: true }),
+        );
+
+        expect(details).toEqual([
+          expect.objectContaining({
+            path: "/matches/0/negate",
+            message: expect.stringContaining("notEquals"),
+          }),
+        ]);
+      });
+
+      it("points notEquals on a path at negate", () => {
+        const details = detailsOf({
+          ...redirectRule,
+          matches: [
+            {
+              matchType: "path",
+              matchOperator: "notEquals",
+              matchValue: "/old",
+            },
+          ],
+        });
+
+        expect(details).toEqual([
+          expect.objectContaining({
+            path: "/matches/0/matchOperator",
+            message: expect.stringContaining("negate"),
+          }),
+        ]);
+      });
+
+      it("leaves every other error as Ajv wrote it", () => {
+        // headerName uses an if/then too; its errors are not ours to reword.
+        const details = detailsOf({
+          ...redirectRule,
+          matches: [
+            {
+              matchType: "path",
+              matchOperator: "equals",
+              matchValue: "/old",
+              headerName: "x-env",
+            },
+          ],
+        });
+
+        expect(details.map((d) => d.message)).toContain(
+          'must match "else" schema',
+        );
+      });
+    });
+
     describe("inert for a reader that predates country conditions", () => {
       // A frozen copy of how the edge evaluated a condition before `country`
       // existed (infra/lambda at `dev`: getMatchSource + checkAkamaiVariant).
