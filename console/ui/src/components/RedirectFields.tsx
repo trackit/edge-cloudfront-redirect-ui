@@ -54,6 +54,11 @@ export default function RedirectFields({ draft, host, onChange }: Props) {
           kind="redirect"
           value={draft.priority}
           onChange={(priority) => onChange({ priority })}
+          note={
+            draft.matches.some((match) => match.matchType === "country")
+              ? "Runs after every classic redirect of this host: the priority only orders it among the geo redirects."
+              : undefined
+          }
         />
       </div>
 

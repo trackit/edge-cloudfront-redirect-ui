@@ -5,6 +5,8 @@ interface Props {
   kind: "redirect" | "rewrite";
   value: string;
   onChange: (priority: string) => void;
+  /** A caveat on what the priority means for this rule, shown under the hint. */
+  note?: string;
 }
 
 /**
@@ -15,7 +17,7 @@ interface Props {
  * place. The key appears only once the value is one the server would accept —
  * echoing `REDIRECT#0NaN` back at someone mid-keystroke helps nobody.
  */
-export default function PriorityField({ kind, value, onChange }: Props) {
+export default function PriorityField({ kind, value, onChange, note }: Props) {
   const parsed = Number(value);
   const usable =
     value.trim() !== "" &&
@@ -45,6 +47,7 @@ export default function PriorityField({ kind, value, onChange }: Props) {
           </>
         )}
       </p>
+      {note !== undefined && <p className="hint">{note}</p>}
     </div>
   );
 }
