@@ -942,6 +942,20 @@ describe("geo redirects at origin-request", () => {
     expect((result as CloudFrontResultResponse).status).toBeUndefined();
     expect((result as CloudFrontRequest).uri).toBe("/api/v1/legacy");
   });
+
+  it("does not look redirects up when there is no country", async () => {
+    // Every geo redirect would be skipped anyway, so only the rewrite lookup
+    // is worth its DynamoDB round trip on a cache miss.
+    withRules(countryRedirect("FR"), rewriteRule());
+
+    await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .build(),
+    );
+
+    expect(repo.queryCount).toBe(1);
+  });
 });
 
 describe("resilience", () => {

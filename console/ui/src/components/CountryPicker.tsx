@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import {
   OTHER_GROUP,
   codeFromQuery,
@@ -40,6 +40,9 @@ const isKnown = (code: string): boolean =>
  */
 export default function CountryPicker({ codes, excluded, onChange }: Props) {
   const [query, setQuery] = useState("");
+  // A rule can hold several country conditions, so one picker per condition,
+  // and a fixed id would make every label point at the first one's search.
+  const searchId = useId();
 
   const selected = useMemo(() => new Set(codes), [codes]);
 
@@ -83,7 +86,8 @@ export default function CountryPicker({ codes, excluded, onChange }: Props) {
   return (
     <div className="countries">
       <div className="field">
-        <label htmlFor="country-search">Selected</label>
+        {/* A heading, not a <label>: the summary below is not a control. */}
+        <p className="field-label">Selected</p>
         {/* Read-only summary rather than a list of removable chips: the grid
             below is where a country is added and removed, and two places to
             deselect from is two places to get wrong. */}
@@ -98,8 +102,11 @@ export default function CountryPicker({ codes, excluded, onChange }: Props) {
 
       <div className="input-icon">
         <IconSearch size={15} />
+        <label htmlFor={searchId} className="sr-only">
+          Search countries
+        </label>
         <input
-          id="country-search"
+          id={searchId}
           className="input"
           type="search"
           placeholder="Search countries..."

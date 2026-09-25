@@ -1,5 +1,6 @@
 import { isRedirect, narrowForwardSettings } from "../api";
 import type { MatchCondition, Rule } from "../api";
+import { parseCountries } from "./ruleDraft";
 
 /**
  * The one-line renderings a rule list needs. Kept out of the components so the
@@ -16,8 +17,7 @@ export const describeMatch = (match: MatchCondition): string => {
   // spaces and matches any variant. Rendering the stored form
   // (`country equals BE FR`) would describe the encoding rather than the rule.
   if (match.matchType === "country") {
-    const codes = match.matchValue.split(" ").filter((code) => code !== "");
-    return `country ${negated}in ${codes.join(", ")}`;
+    return `country ${negated}in ${parseCountries(match.matchValue).join(", ")}`;
   }
 
   const subject =

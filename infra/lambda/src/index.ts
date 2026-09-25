@@ -244,7 +244,12 @@ const handleOriginRequest = async (
   // Tried before the rewrite for the same reason viewer-request runs first: a
   // redirect answers the viewer, and forwarding to an origin instead would make
   // a rule's priority depend on which event happened to evaluate it.
-  const redirect = await service.match(params, "REDIRECT", readsCountry);
+  //
+  // Skipped without a country: every geo redirect would be skipped anyway, and
+  // the lookup is not worth a DynamoDB round trip on each cache miss.
+  const redirect = params.country
+    ? await service.match(params, "REDIRECT", readsCountry)
+    : null;
   if (redirect?.type === "redirect") {
     return redirectResponse(redirect.statusCode, redirect.redirectURL);
   }
