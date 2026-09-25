@@ -90,6 +90,18 @@ export class RulesService {
   }
 
   /**
+   * Whether any enabled rule of the host, of either kind, reads the country.
+   * For diagnostics only: the rules come from the same TTL cache as `match`.
+   */
+  async hasRulesReadingCountry(hostname: string): Promise<boolean> {
+    for (const kind of ["REDIRECT", "REWRITE"] as const) {
+      const rules = await this.loadRules(hostname, kind);
+      if (rules.some(readsCountry)) return true;
+    }
+    return false;
+  }
+
+  /**
    * Whether every condition on the rule has something to be tested against —
    * and, first, whether the rule is one the schema allows at all.
    *

@@ -70,17 +70,18 @@ The value comes from CloudFront's own `CloudFront-Viewer-Country` header, and
 **two deployment conditions have to hold** before it carries anything:
 
 **1. The distribution must ask for the header**, in a cache policy or an origin
-request policy. CloudFront does not add it otherwise. Prefer a **cache policy**:
-the header then belongs to the cache key, so a response that varies by country
-cannot be served to the wrong country. An origin request policy forwards the
-value without splitting the cache, which is fine for logging and wrong for
-routing.
+request policy. CloudFront does not add it otherwise. On a behavior that caches,
+use a **cache policy**: the header then belongs to the cache key, so a response
+that varies by country cannot be served to the wrong country. An origin request
+policy forwards the value without splitting the cache, which is fine for logging
+and wrong for routing.
 
 This module publishes the function; it does not own your distribution, so this
 is yours to configure. Note the cost: a country in the cache key means up to one
 cached copy per country per URL, so a lower hit ratio and more origin traffic.
-`examples/infra` uses `Managed-CachingDisabled`, where nothing is cached and the
-question does not arise.
+`examples/infra` uses `Managed-CachingDisabled`, which cannot hold headers, so
+it names `CloudFront-Viewer-Country` in its origin request policy instead —
+correct there only because nothing is cached.
 
 **2. The rule must be evaluated at origin-request.** CloudFront works the
 country out _after_ the viewer-request event, so at viewer-request the header is
@@ -99,6 +100,27 @@ only, so a rule firing there would redirect or not depending on whether
 CloudFront happened to hold the page. `readsCountry` in `rules-service.ts` is
 the whole test, and it reads the rule rather than the request precisely so that
 enabling the header cannot change how any existing rule behaves.
+
+### The query string of a geo redirect
+
+A geo redirect is built at origin-request, from the request CloudFront hands to
+that event — so from the query string the behavior's policies forward, not the
+one the viewer sent. With query strings not forwarded, `useIncomingQueryString`
+carries nothing and a path condition containing `?` never matches. Forward them
+in the origin request policy (`examples/infra` forwards all of them) if geo
+redirects are to keep campaign parameters such as `utm_*`.
+
+### When the country never arrives
+
+At origin-request, a request without a country to a host that has country rules
+is logged at most once an hour per host and execution environment
+(`country rules, but no viewer country at origin-request`). A single one can be
+legitimate — CloudFront cannot place every address — but if it repeats, the
+behavior's policies do not ask for `CloudFront-Viewer-Country`, and every geo
+rule of that host is being skipped. Checking costs one lookup of the host's
+redirects once an hour, not one per cache miss. The record of checked hosts is
+capped at 500, like the rule cache, because hosts come from the viewer's `Host`
+header — behind a wildcard domain, any number of them.
 
 ### Classic redirects first
 

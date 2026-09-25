@@ -14,6 +14,7 @@ import type {
   CloudFrontOriginWithExtendedProtocol,
   RequestParams,
 } from "./rule-types.js";
+import { TtlCache } from "./ttl-cache.js";
 import { VIEWER_COUNTRY_HEADER } from "./lib/viewer-country.js";
 import { VIEWER_HOST_HEADER, stampViewerHost } from "./lib/viewer-host.js";
 
@@ -60,10 +61,50 @@ const getService = (): Promise<RulesService> => {
  */
 let warnedMissingViewerHost = false;
 
+/**
+ * Hosts recently checked for country rules while the country was missing, so
+ * the lookup it costs is paid once an hour per host rather than on every cache
+ * miss.
+ *
+ * Bounded like the rule cache, not a plain Set: the key comes from the viewer's
+ * Host header, and behind a wildcard alternate domain every subdomain is a new
+ * one — an unbounded set would grow until the execution environment ran out of
+ * memory. An evicted host is simply checked again.
+ */
+const checkedForCountry = new TtlCache<true>(60 * 60_000, 500);
+
 /** Test seam: drops the memoized service so the next call rebuilds it. */
 export const resetService = (): void => {
   servicePromise = undefined;
   warnedMissingViewerHost = false;
+  checkedForCountry.clear();
+};
+
+/**
+ * Says so when a host has country rules and the country did not arrive.
+ *
+ * Without it, a distribution whose policies never ask for
+ * `CloudFront-Viewer-Country` has geo rules that are all skipped and nothing
+ * anywhere to say why. Worded as "if this repeats" because a single viewer can
+ * legitimately come without one — CloudFront cannot place every address.
+ */
+const warnIfCountryMissing = async (
+  service: RulesService,
+  hostname: string,
+): Promise<void> => {
+  const key = hostname.toLowerCase();
+  if (checkedForCountry.get(key) !== undefined) return;
+  checkedForCountry.set(key, true);
+  if (!(await service.hasRulesReadingCountry(hostname))) return;
+
+  console.warn(
+    "redirect-rules: country rules, but no viewer country at origin-request",
+    {
+      host: hostname,
+      header: VIEWER_COUNTRY_HEADER,
+      fix: "if this repeats, the behavior never asks for the header: add it to the cache policy (or to the origin request policy when caching is disabled)",
+    },
+  );
 };
 
 const getParams = (
@@ -233,6 +274,8 @@ const handleOriginRequest = async (
   delete request.headers[VIEWER_HOST_HEADER];
 
   const service = await getService();
+
+  if (!params.country) await warnIfCountryMissing(service, params.hostname);
 
   // Redirects are viewer-request's job, and every one that could fire there
   // already has. What is left is the ones it had to defer: CloudFront works the
