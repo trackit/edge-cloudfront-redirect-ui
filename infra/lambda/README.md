@@ -17,7 +17,7 @@ Extracted from `edge-platform-functions-cdn`'s `src/snippets/dynamodb-redirect/`
    — see [the host a rule is keyed on](#the-host-a-rule-is-keyed-on).
 2. Rules with `disabled: true` are dropped, and so are rules the current event
    cannot evaluate — see [the country a rule can be keyed on](#the-country-a-rule-can-be-keyed-on).
-3. Remaining rules are evaluated in ascending sort-key order (`REDIRECT#00010` before `REDIRECT#00100`) — lower priority number wins.
+3. Remaining rules are evaluated in ascending sort-key order (`REDIRECT#00010` before `REDIRECT#00100`) — lower priority number wins. One exception: redirects with a `country` condition always come **after** the other redirects — see [classic redirects first](#classic-redirects-first).
 4. The **first** rule whose `matches` **all** pass is applied; the rest are ignored.
 5. No match → the request passes through unmodified.
 
@@ -97,6 +97,24 @@ only, so a rule firing there would redirect or not depending on whether
 CloudFront happened to hold the page. `readsCountry` in `rules-service.ts` is
 the whole test, and it reads the rule rather than the request precisely so that
 enabling the header cannot change how any existing rule behaves.
+
+### Classic redirects first
+
+Because the two kinds of redirect run at two events, a **classic redirect
+always wins over a geo one** when both match, whatever their priorities: the
+classic one has already answered at viewer-request before the country exists.
+A geo redirect's priority only orders it among the other geo redirects.
+
+This is deliberate. Honouring priority across the two events would mean
+viewer-request deferring a classic redirect it has already matched, and carrying
+it to origin-request in a header every distribution would have to forward — a
+redirect that silently stops firing whenever that header is not forwarded. A
+fixed order cannot fail that way, and the console shows it: a `geo` badge on the
+card and a note next to the priority.
+
+To make a geo redirect win over a classic one for the same URL, give the
+classic one a country condition too — for instance one excluding France — so
+that both are geo redirects and their priorities decide.
 
 ### What a geo redirect cannot read
 

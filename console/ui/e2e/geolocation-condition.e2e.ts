@@ -365,3 +365,20 @@ test("two country conditions each get their own search", async ({ page }) => {
 
   await expect(editor(page).getByLabel("Search countries")).toHaveCount(2);
 });
+
+test("a geo redirect says it runs after the classic ones", async ({
+  page,
+  api,
+}) => {
+  // The order is fixed at the edge, not by priority, so the console has to
+  // say so where the priority is shown: on the card and next to the field.
+  api.setRules([geoRedirect("FR")]);
+  await open(page);
+
+  await expect(page.locator(".badge-geo")).toHaveText("geo");
+
+  await editFirst(page);
+  await expect(
+    editor(page).getByText(/Runs after every classic redirect/),
+  ).toBeVisible();
+});

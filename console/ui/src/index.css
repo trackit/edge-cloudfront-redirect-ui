@@ -178,6 +178,12 @@ button {
   background: var(--blue-glow);
   color: var(--blue-600);
 }
+/* Neutral rather than a third kind colour: it qualifies a redirect, it is not
+   a kind of its own. */
+.badge-geo {
+  background: var(--surface-2);
+  color: var(--text-dim);
+}
 .badge-on {
   background: var(--green-glow);
   color: #1f9c72;

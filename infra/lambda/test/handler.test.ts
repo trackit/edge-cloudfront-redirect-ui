@@ -956,6 +956,41 @@ describe("geo redirects at origin-request", () => {
 
     expect(repo.queryCount).toBe(1);
   });
+
+  it("lets a classic redirect win over a geo one, whatever their priorities", async () => {
+    // The documented order, pinned: classic redirects are decided at
+    // viewer-request, before the country exists, so a geo redirect only gets a
+    // turn when none of them matched. Its priority only orders it among the
+    // other geo redirects. Changing this changes what every host with both
+    // kinds of rule does.
+    withRules(
+      redirectRule({
+        sk: "REDIRECT#00010",
+        statusCode: 302,
+        redirectURL: "https://www.example.fr/boutique",
+        matches: [
+          { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
+          { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+        ],
+      } as Partial<RedirectRule>),
+      redirectRule({
+        sk: "REDIRECT#00100",
+        redirectURL: "https://www.example.com/new-shop",
+        matches: [
+          { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
+        ],
+      }),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.viewerRequest().withUri("/shop").build(),
+    )) as CloudFrontResultResponse;
+
+    expect(result.status).toBe("301");
+    expect(result.headers?.["location"]?.[0]?.value).toBe(
+      "https://www.example.com/new-shop",
+    );
+  });
 });
 
 describe("resilience", () => {

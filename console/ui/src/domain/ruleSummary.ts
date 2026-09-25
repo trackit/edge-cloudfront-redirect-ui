@@ -69,6 +69,15 @@ export const ruleTo = (rule: Rule): string => {
     : `${target}${pathAndQS}`;
 };
 
+/**
+ * A redirect that reads the viewer's country. The edge answers these at
+ * origin-request, after every classic redirect of the host had its turn at
+ * viewer-request — so a classic redirect always wins over a geo one, whatever
+ * their priorities. See `infra/lambda/README.md`.
+ */
+export const isGeoRedirect = (rule: Rule): boolean =>
+  isRedirect(rule) && rule.matches.some((m) => m.matchType === "country");
+
 /** The badge text for a rule's kind, including the status code for a redirect. */
 export const ruleKindLabel = (rule: Rule): string =>
   isRedirect(rule) ? `${rule.statusCode} redirect` : "rewrite";
