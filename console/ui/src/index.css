@@ -2443,7 +2443,15 @@ button {
 }
 
 /* One card per source rule. The status tints the whole card so a scan of the
-   list reads as green / amber / red without parsing the dot. */
+   list reads as green / amber / red without parsing the dot.
+
+   A grid rather than a flex row: source paths are long, mono, and often have no
+   break point, and a flex item will not shrink below its longest word — so the
+   URLs ran out of the card and pushed the note off its right edge. Here each URL
+   column takes its own width and gives it up only when the row is full
+   (`minmax(0, auto)`), so a short source never squeezes a long target; they wrap
+   at `/`, `?`, `&` and `=` (`breakable` in ImportModal) and anywhere as a last
+   resort, and the note takes a line of its own under them. */
 .import-rows {
   list-style: none;
   margin: 0;
@@ -2453,9 +2461,12 @@ button {
   gap: 8px;
 }
 .import-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto auto minmax(0, auto) auto minmax(0, auto);
+  justify-content: start;
   align-items: center;
-  gap: 10px;
+  column-gap: 10px;
+  row-gap: 6px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -2472,13 +2483,14 @@ button {
 }
 /* The "and N more" line: a note about the list, not a row of it. */
 .import-row.is-more {
+  display: block;
   border-style: dashed;
   background: none;
   color: var(--text-muted);
-  justify-content: center;
+  text-align: center;
 }
 .import-dot {
-  flex: none;
+  grid-column: 1;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -2493,7 +2505,7 @@ button {
   background: var(--red);
 }
 .import-code {
-  flex: none;
+  grid-column: 2;
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--orange-glow);
@@ -2502,28 +2514,45 @@ button {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+/* Capped and ellipsed: it repeats on every card, so at full width a long host
+   would take the room the URLs need. The full name is in its title. */
 .import-host {
-  flex: none;
+  grid-column: 3;
+  width: max-content;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 2px 8px;
   border-radius: 6px;
   background: var(--surface-3);
   color: var(--text-soft);
   font-size: 12px;
 }
+.import-from,
+.import-to {
+  overflow-wrap: anywhere;
+}
 .import-from {
+  grid-column: 4;
   color: var(--text-soft);
 }
 .import-arrow {
+  grid-column: 5;
   display: inline-flex;
   color: var(--text-dim);
 }
 .import-to {
+  grid-column: 6;
   color: var(--blue-600);
 }
+/* Under the rule it is about, starting where the rule's text starts. Zero width
+   with a full-width minimum so it fills its area without sizing it: as a normal
+   item, a long note widened the URL columns it spans and squeezed the rest. */
 .import-note {
-  margin-left: auto;
-  padding-left: 10px;
-  text-align: right;
+  grid-column: 4 / -1;
+  width: 0;
+  min-width: 100%;
   font-size: 12px;
   color: var(--text-dim);
 }
