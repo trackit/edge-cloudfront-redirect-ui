@@ -3,6 +3,7 @@ import { health } from "./handlers/health.js";
 import {
   createTarget,
   deleteTarget,
+  getGeoReadiness,
   getTarget,
   listTargets,
   updateTarget,
@@ -78,6 +79,13 @@ export const routes: Route[] = [
     pattern: "/targets/:id",
     handler: deleteTarget,
     write: true,
+  },
+
+  // Read-only, and so open to a viewer: it only says what the console warns about.
+  {
+    method: "GET",
+    pattern: "/targets/:id/geo-readiness",
+    handler: getGeoReadiness,
   },
 
   { method: "GET", pattern: HOSTS, handler: listHosts },
