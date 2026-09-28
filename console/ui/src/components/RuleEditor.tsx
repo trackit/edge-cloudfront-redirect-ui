@@ -9,7 +9,10 @@ import Toggle from "./Toggle";
 import { ApiError } from "../api";
 import type { MatchCondition, Rule, RuleInput, ValidationDetail } from "../api";
 import { asApiError } from "../domain/rules";
-import { useGeoReadiness } from "../domain/geoReadiness";
+import {
+  unsafeForCountryRewrite,
+  useGeoReadiness,
+} from "../domain/geoReadiness";
 import {
   draftFromRule,
   emptyRedirect,
@@ -70,10 +73,10 @@ export default function RuleEditor({
   const [details, setDetails] = useState<ValidationDetail[]>([]);
   const [failure, setFailure] = useState<ApiError | null>(null);
   const [saving, setSaving] = useState(false);
-  const readiness = useGeoReadiness(
-    targetId,
-    draft.matches.some((match) => match.matchType === "country"),
+  const readsCountry = draft.matches.some(
+    (match) => match.matchType === "country",
   );
+  const readiness = useGeoReadiness(targetId, readsCountry);
 
   const patch = (next: Partial<RuleDraft>): void => {
     // The cast is safe by construction: each field editor only ever patches its
@@ -89,6 +92,18 @@ export default function RuleEditor({
     if (saving) return;
 
     const found = validateDraft(draft, taken);
+    // Checked here rather than in validateDraft, which knows nothing of the
+    // distribution. See unsafeForCountryRewrite for why only a rewrite blocks.
+    const unsafe =
+      draft.kind === "rewrite" && readsCountry
+        ? unsafeForCountryRewrite(readiness)
+        : [];
+    if (unsafe.length > 0) {
+      found.push({
+        path: "/forwardSettings",
+        message: `cannot read the country here yet: ${unsafe.map((p) => (p === "*" ? "the default behavior" : p)).join(", ")} caches without CloudFront-Viewer-Country in its cache key, so the page rewritten for one country would be served to everyone. Fix the distribution's cache settings first.`,
+      });
+    }
     setDetails(found);
     setFailure(null);
     if (found.length > 0) return;
@@ -194,7 +209,7 @@ export default function RuleEditor({
             kind={draft.kind}
             onChange={setMatches}
           />
-          <GeoReadinessNotice readiness={readiness} />
+          <GeoReadinessNotice readiness={readiness} kind={draft.kind} />
         </fieldset>
 
         {/* A redirect carries its priority next to its status code, where the
