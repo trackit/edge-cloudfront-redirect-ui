@@ -60,3 +60,22 @@ export function useGeoReadiness(
 export const resetGeoReadiness = (): void => {
   requests.clear();
 };
+
+/**
+ * The behaviors that make a country rewrite unsafe to save: they cache without
+ * the country in the cache key, so the page rewritten for one viewer's country
+ * is cached and served to everyone. A redirect is only warned about — it is
+ * `no-store`, so the same setup makes it miss viewers, never misdirect them.
+ * The other failing verdicts leave a rule inert, which is safe too.
+ *
+ * Empty while the check has not answered or could not read the distribution:
+ * the console blocks only what it knows is wrong.
+ */
+export const unsafeForCountryRewrite = (
+  readiness: GeoReadiness | null,
+): string[] =>
+  readiness?.status === "misconfigured"
+    ? readiness.behaviors
+        .filter((behavior) => behavior.verdict === "cachedWithoutCountry")
+        .map((behavior) => behavior.pathPattern)
+    : [];

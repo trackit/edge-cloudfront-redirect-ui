@@ -7,7 +7,7 @@ import {
   test,
 } from "./fixtures";
 import type { Page } from "@playwright/test";
-import type { Rule } from "../src/api";
+import type { GeoReadiness, Rule } from "../src/api";
 
 /**
  * The geolocation condition in the rule editor.
@@ -547,4 +547,90 @@ test("a distribution the API cannot read says it was not checked", async ({
     editor(page).getByText(/Could not check this distribution.*AccessDenied/),
   ).toBeVisible();
   await expect(readinessNotice(page)).toHaveCount(0);
+});
+
+const geoRewrite = {
+  pk: HOST,
+  sk: "REWRITE#00100",
+  type: "frMatchRule",
+  matches: [
+    { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
+    { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+  ],
+  forwardSettings: { pathAndQS: "/fr/shop", useIncomingQueryString: true },
+} as unknown as Rule;
+
+const cachedWithoutCountry: GeoReadiness = {
+  status: "misconfigured",
+  distributionId: "E2EXAMPLE12345",
+  behaviors: [{ pathPattern: "*", verdict: "cachedWithoutCountry" }],
+};
+
+const saves = (api: { calls: { method: string; url: string }[] }) =>
+  api.calls.filter(
+    (call) => call.method === "PUT" && call.url.includes("/rules/"),
+  );
+
+const saveChanges = async (page: Page): Promise<void> => {
+  // The notice arrives with the check; saving before it would test nothing.
+  await expect(readinessNotice(page)).toBeVisible();
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+};
+
+test("a country rewrite cannot be saved where the page would be cached for everyone", async ({
+  page,
+  api,
+}) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  api.setGeoReadiness(cachedWithoutCountry);
+  await open(page);
+  await editFirst(page);
+
+  await expect(
+    editor(page).getByText(/This rewrite cannot be saved until that is fixed/),
+  ).toBeVisible();
+  await saveChanges(page);
+
+  await expect(
+    editor(page)
+      .getByText(/would be served to everyone/)
+      .last(),
+  ).toBeVisible();
+  expect(saves(api)).toHaveLength(0);
+});
+
+test("a country redirect on the same distribution is warned, and still saves", async ({
+  page,
+  api,
+}) => {
+  // A redirect is no-store: the same setup makes it miss viewers, never
+  // misdirect them.
+  api.setRules([geoRedirect("FR")]);
+  api.setGeoReadiness(cachedWithoutCountry);
+  await open(page);
+  await editFirst(page);
+
+  await expect(editor(page).getByText(/cannot be saved/)).toHaveCount(0);
+  await saveChanges(page);
+
+  await expect.poll(() => saves(api).length).toBe(1);
+});
+
+test("a country rewrite saves when the distribution could not be checked", async ({
+  page,
+  api,
+}) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  api.setGeoReadiness({ status: "unknown", reason: "AccessDenied" });
+  await open(page);
+  await editFirst(page);
+  await expect(
+    editor(page).getByText(/Could not check this distribution/),
+  ).toBeVisible();
+
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+
+  await expect.poll(() => saves(api).length).toBe(1);
 });
