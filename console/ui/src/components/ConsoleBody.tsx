@@ -447,6 +447,7 @@ function HostWorkspace({
 
       {editing !== null && (
         <RuleEditor
+          targetId={distribution.targetId}
           host={host}
           target={editing}
           taken={editorTaken}

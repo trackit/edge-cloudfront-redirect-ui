@@ -2671,6 +2671,15 @@ button {
 .field > .callout.is-warn {
   margin-top: 8px;
 }
+/* Under a rule's conditions: which behaviors of the distribution let a country
+   condition down, one per line. */
+.callout.geo-readiness {
+  margin-top: 12px;
+}
+.geo-readiness ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
 
 /* A country condition replaces the Operator and Value columns with the picker,
    so the row stacks instead of sitting in three columns. */

@@ -1,5 +1,5 @@
 import { expect, test as base, type Page, type Route } from "@playwright/test";
-import type { HostSummary, Rule } from "../src/api";
+import type { GeoReadiness, HostSummary, Rule } from "../src/api";
 import type { Stored } from "../src/domain/distribution";
 import type { Distribution } from "../src/domain/types";
 
@@ -50,6 +50,11 @@ export interface ApiStub {
    * mount, so — like `setHosts` — it is the state the page starts in.
    */
   setRules: (rules: Rule[]) => void;
+  /**
+   * What `GET /targets/{id}/geo-readiness` returns. Defaults to a distribution
+   * that passes, so a spec about something else sees no warning.
+   */
+  setGeoReadiness: (readiness: GeoReadiness) => void;
   /**
    * Answers every subsequent `POST …/rules` with this instead of the default
    * 201 that echoes and appends the rule. Non-consuming, like the others — used
@@ -138,6 +143,11 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
   let createHost: { status: number; body: unknown } | null = null;
   let deleteHost: { status: number; body: unknown } | null = null;
   let rules: Rule[] = [];
+  let geoReadiness: GeoReadiness = {
+    status: "ok",
+    distributionId: "E2EXAMPLE12345",
+    behaviors: [{ pathPattern: "*", verdict: "ok" }],
+  };
   let createRule: { status: number; body: unknown } | null = null;
   let reorder: { status: number; body: unknown } | null = null;
   let role: "editor" | "viewer" | undefined = "editor";
@@ -241,6 +251,15 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
           status: reply.status,
           contentType: "application/json",
           body: JSON.stringify(reply.body),
+        });
+        return;
+      }
+
+      if (method === "GET" && url.pathname.endsWith("/geo-readiness")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(geoReadiness),
         });
         return;
       }
@@ -415,6 +434,9 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
     },
     setRules: (next) => {
       rules = next;
+    },
+    setGeoReadiness: (next) => {
+      geoReadiness = next;
     },
     createRuleReply: (reply) => {
       createRule = reply;

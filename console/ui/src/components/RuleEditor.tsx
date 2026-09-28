@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Drawer from "./Drawer";
+import GeoReadinessNotice from "./GeoReadinessNotice";
 import MatchConditions from "./MatchConditions";
 import PriorityField from "./PriorityField";
 import RedirectFields from "./RedirectFields";
@@ -8,6 +9,7 @@ import Toggle from "./Toggle";
 import { ApiError } from "../api";
 import type { MatchCondition, Rule, RuleInput, ValidationDetail } from "../api";
 import { asApiError } from "../domain/rules";
+import { useGeoReadiness } from "../domain/geoReadiness";
 import {
   draftFromRule,
   emptyRedirect,
@@ -23,6 +25,8 @@ import type {
 } from "../domain/ruleDraft";
 
 interface Props {
+  /** The rule's target, whose distribution a country condition is checked against. */
+  targetId: string;
   host: string;
   /** The rule being edited, or the kind of rule being created. */
   target: Rule | "redirect" | "rewrite";
@@ -54,6 +58,7 @@ const initialDraft = (target: Props["target"]): RuleDraft =>
  * and it is the one that can 409 on a race.
  */
 export default function RuleEditor({
+  targetId,
   host,
   target,
   taken,
@@ -65,6 +70,10 @@ export default function RuleEditor({
   const [details, setDetails] = useState<ValidationDetail[]>([]);
   const [failure, setFailure] = useState<ApiError | null>(null);
   const [saving, setSaving] = useState(false);
+  const readiness = useGeoReadiness(
+    targetId,
+    draft.matches.some((match) => match.matchType === "country"),
+  );
 
   const patch = (next: Partial<RuleDraft>): void => {
     // The cast is safe by construction: each field editor only ever patches its
@@ -185,6 +194,7 @@ export default function RuleEditor({
             kind={draft.kind}
             onChange={setMatches}
           />
+          <GeoReadinessNotice readiness={readiness} />
         </fieldset>
 
         {/* A redirect carries its priority next to its status code, where the
