@@ -8,6 +8,7 @@ import {
   type Target,
 } from "../lib/targets-repository.js";
 import { getTableVerifier } from "../lib/verify-table.js";
+import { getGeoReadinessChecker } from "../lib/geo-readiness.js";
 
 const notFound = (id: string): ApiError =>
   ApiError.notFound(`No target with id "${id}"`);
@@ -138,6 +139,27 @@ export const getTarget = async (req: ApiRequest): Promise<ApiResponse> => {
   const target = await getTargetsRepository().get(id);
   if (!target) throw notFound(id);
   return json(200, target);
+};
+
+/**
+ * Whether the target's distribution can serve country conditions reliably —
+ * what the console warns about when a rule reads the country. Always 200 for a
+ * known target: a distribution the API cannot read is `status: "unknown"` with
+ * the reason, not an error, because it must never stop anyone writing a rule.
+ */
+export const getGeoReadiness = async (
+  req: ApiRequest,
+): Promise<ApiResponse> => {
+  const { id } = req.params;
+  const target = await getTargetsRepository().get(id);
+  if (!target) throw notFound(id);
+  return json(
+    200,
+    await getGeoReadinessChecker()({
+      name: target.name,
+      ...(target.roleArn ? { roleArn: target.roleArn } : {}),
+    }),
+  );
 };
 
 /**

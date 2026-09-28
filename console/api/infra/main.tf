@@ -190,6 +190,23 @@ data "aws_iam_policy_document" "registry" {
     actions   = ["dynamodb:DescribeTable"]
     resources = ["arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/*"]
   }
+
+  # The console warns when a rule reads the country on a distribution that caches
+  # without the country in its cache key (see src/lib/geo-readiness.ts). Read-only
+  # configuration, no content. `*` because a distribution is named at runtime by
+  # the target and cache policies include AWS-managed ones. Missing grants only
+  # turn the warning into "could not check"; they never block a write. A target
+  # reached by assuming a role is read under that role, so its policy needs the
+  # same three actions.
+  statement {
+    sid = "ReadDistributionCacheSettings"
+    actions = [
+      "cloudfront:GetDistributionConfig",
+      "cloudfront:GetCachePolicy",
+      "cloudfront:GetOriginRequestPolicy",
+    ]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "registry" {
