@@ -430,3 +430,45 @@ test("a geo redirect says it runs after the classic ones", async ({
     editor(page).getByText(/Runs after every classic redirect/),
   ).toBeVisible();
 });
+
+const warning301 = (page: Page) =>
+  editor(page).getByText(/A 301 tells search engines the move is permanent/);
+
+test("a geo redirect in 301 is warned about, and left in 301", async ({
+  page,
+}) => {
+  await open(page);
+  await newRedirect(page);
+  const status = editor(page).getByLabel("Status code");
+  await expect(status).toHaveValue("301");
+  await expect(warning301(page)).toHaveCount(0);
+
+  await typeSelect(page).selectOption("country");
+
+  // Warned, not switched: the code stays the user's choice.
+  await expect(status).toHaveValue("301");
+  await expect(warning301(page)).toBeVisible();
+
+  await status.selectOption("302");
+  await expect(warning301(page)).toHaveCount(0);
+});
+
+test("a stored geo redirect in 301 opens in 301, with the warning", async ({
+  page,
+  api,
+}) => {
+  api.setRules([{ ...geoRedirect("FR"), statusCode: 301 } as Rule]);
+  await open(page);
+  await editFirst(page);
+
+  await expect(editor(page).getByLabel("Status code")).toHaveValue("301");
+  await expect(warning301(page)).toBeVisible();
+});
+
+test("a classic redirect in 301 is not warned about", async ({ page }) => {
+  await open(page);
+  await newRedirect(page);
+
+  await expect(editor(page).getByLabel("Status code")).toHaveValue("301");
+  await expect(warning301(page)).toHaveCount(0);
+});

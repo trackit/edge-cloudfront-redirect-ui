@@ -2667,6 +2667,10 @@ button {
   border-color: rgba(255, 207, 92, 0.5);
   background: rgba(255, 207, 92, 0.12);
 }
+/* Under a field's control, like `.field .hint`, rather than touching it. */
+.field > .callout.is-warn {
+  margin-top: 8px;
+}
 
 /* A country condition replaces the Operator and Value columns with the picker,
    so the row stacks instead of sitting in three columns. */
