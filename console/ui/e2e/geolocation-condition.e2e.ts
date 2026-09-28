@@ -125,7 +125,7 @@ test("choosing the type swaps the value field for the picker", async ({
   ).toHaveCount(0);
 });
 
-test("the dropdown names it Geographic location, not country", async ({
+test("the dropdown names it geographic location, not country", async ({
   page,
 }) => {
   // The stored value is `country`, so `city` and `region` can join it later.
@@ -134,7 +134,10 @@ test("the dropdown names it Geographic location, not country", async ({
   await newRedirect(page);
 
   await expect(
-    typeSelect(page).getByRole("option", { name: "Geographic location" }),
+    typeSelect(page).getByRole("option", {
+      name: "geographic location",
+      exact: true,
+    }),
   ).toHaveAttribute("value", "country");
 });
 

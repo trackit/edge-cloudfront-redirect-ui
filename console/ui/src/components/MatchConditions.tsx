@@ -39,10 +39,11 @@ const TYPES: MatchCondition["matchType"][] = [
 /**
  * Only where the stored value is not what to show. `country` is stored as
  * `country` so `city` and `region` can be added beside it later — CloudFront
- * reports those too — but "Geographic location" is what it does.
+ * reports those too — but "geographic location" is what it does. Lowercase
+ * like its neighbours in the list, which show the stored type as is.
  */
 const TYPE_LABELS: Partial<Record<MatchCondition["matchType"], string>> = {
-  country: "Geographic location",
+  country: "geographic location",
 };
 
 const OPERATORS: MatchCondition["matchOperator"][] = [
