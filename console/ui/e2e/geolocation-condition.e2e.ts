@@ -472,3 +472,79 @@ test("a classic redirect in 301 is not warned about", async ({ page }) => {
   await expect(editor(page).getByLabel("Status code")).toHaveValue("301");
   await expect(warning301(page)).toHaveCount(0);
 });
+
+const readinessNotice = (page: Page) =>
+  editor(page).getByText(/is not set up for country conditions/);
+
+test("a country condition warns when the distribution caches without the country", async ({
+  page,
+  api,
+}) => {
+  api.setGeoReadiness({
+    status: "misconfigured",
+    distributionId: "E2EXAMPLE12345",
+    behaviors: [
+      { pathPattern: "*", verdict: "ok" },
+      { pathPattern: "/campaign/*", verdict: "cachedWithoutCountry" },
+    ],
+  });
+  await open(page);
+  await newRedirect(page);
+  await expect(readinessNotice(page)).toHaveCount(0);
+
+  await typeSelect(page).selectOption("country");
+
+  await expect(readinessNotice(page)).toBeVisible();
+  await expect(
+    editor(page).getByText(/Behavior \/campaign\/\* caches/),
+  ).toBeVisible();
+  // Only the failing behavior is named.
+  await expect(editor(page).getByText(/The default behavior/)).toHaveCount(0);
+});
+
+test("a classic rule does not ask about the distribution", async ({
+  page,
+  api,
+}) => {
+  await open(page);
+  await newRedirect(page);
+
+  await expect(readinessNotice(page)).toHaveCount(0);
+  expect(api.calls.some((call) => call.url.endsWith("/geo-readiness"))).toBe(
+    false,
+  );
+});
+
+test("a distribution that passes shows no warning", async ({ page, api }) => {
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  // Absence only means something once the check has answered.
+  await expect
+    .poll(() => api.calls.some((call) => call.url.endsWith("/geo-readiness")))
+    .toBe(true);
+  await expect(readinessNotice(page)).toHaveCount(0);
+  await expect(
+    editor(page).getByText(/Could not check this distribution/),
+  ).toHaveCount(0);
+});
+
+test("a distribution the API cannot read says it was not checked", async ({
+  page,
+  api,
+}) => {
+  api.setGeoReadiness({
+    status: "unknown",
+    reason:
+      "The console could not read distribution E2EXAMPLE12345 (AccessDenied)",
+  });
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  await expect(
+    editor(page).getByText(/Could not check this distribution.*AccessDenied/),
+  ).toBeVisible();
+  await expect(readinessNotice(page)).toHaveCount(0);
+});

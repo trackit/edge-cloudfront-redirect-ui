@@ -150,6 +150,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/targets/{id}/geo-readiness": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target id. */
+        id: components["parameters"]["TargetPathId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Whether the target's distribution can serve country conditions reliably.
+     * @description Reads the CloudFront distribution the target is named after and gives a verdict for each behavior that runs a Lambda@Edge function. A country condition is evaluated at origin-request, so a behavior that caches without `CloudFront-Viewer-Country` in its cache key serves one viewer's copy to the next and the rule silently misses. Answers 200 for a known target even when the distribution cannot be read: that is `status: unknown` with the reason, never an error, because the check only decides what the console warns about.
+     */
+    get: operations["getGeoReadiness"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/targets/{targetId}/hosts": {
     parameters: {
       query?: never;
@@ -391,6 +414,32 @@ export interface components {
       region: string;
       tableName: string;
       roleArn?: string;
+    };
+    /** @description `ok`: every behavior running the function receives the country, and caches per country or not at all. `misconfigured`: at least one does not. `unknown`: the distribution could not be read, see `reason`. */
+    GeoReadiness:
+      | {
+          /** @enum {string} */
+          status: "ok" | "misconfigured";
+          distributionId: string;
+          behaviors: components["schemas"]["BehaviorReadiness"][];
+        }
+      | {
+          /** @enum {string} */
+          status: "unknown";
+          reason: string;
+        };
+    BehaviorReadiness: {
+      /** @description The behavior's path pattern; `*` for the default behavior. */
+      pathPattern: string;
+      /**
+       * @description `cachedWithoutCountry`: caches, and the country is not in the cache key. `countryNotForwarded`: no policy asks for the country, so country rules are skipped. `noOriginRequest`: the function is not associated at origin-request, where country rules run.
+       * @enum {string}
+       */
+      verdict:
+        | "ok"
+        | "cachedWithoutCountry"
+        | "countryNotForwarded"
+        | "noOriginRequest";
     };
     /** @description A host to create, before it has any rules. */
     HostInput: {
@@ -986,6 +1035,34 @@ export interface operations {
       400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      405: components["responses"]["MethodNotAllowed"];
+      500: components["responses"]["InternalError"];
+    };
+  };
+  getGeoReadiness: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target id. */
+        id: components["parameters"]["TargetPathId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The verdict. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GeoReadiness"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       500: components["responses"]["InternalError"];

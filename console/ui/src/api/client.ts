@@ -1,5 +1,6 @@
 import { ApiError, toApiError } from "./error";
 import type {
+  GeoReadiness,
   HostSummary,
   Meta,
   Session,
@@ -188,6 +189,13 @@ export function createApiClient(options: ApiClientOptions = {}) {
         request<Target>("PUT", `/targets/${segment(id)}`, input),
       remove: (id: string) =>
         request<void>("DELETE", `/targets/${segment(id)}`),
+      /**
+       * Whether the target's distribution caches in a way country conditions
+       * survive. Always 200 for a known target: one the API cannot read is
+       * `status: "unknown"` with a reason, not an error.
+       */
+      geoReadiness: (id: string) =>
+        request<GeoReadiness>("GET", `/targets/${segment(id)}/geo-readiness`),
     },
 
     hosts: {
