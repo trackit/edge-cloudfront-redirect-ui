@@ -25,15 +25,34 @@ export const MatchType = {
   REGEX: "regex",
   HEADER: "header",
   COOKIE: "cookie",
+  COUNTRY: "country",
 } as const;
 
 export const MatchOperator = {
   EQUALS: "equals",
   CONTAINS: "contains",
   REGEX: "regex",
+  /**
+   * "Is none of", for a `country` condition only — how an exclusion is stored.
+   * Deliberately not `negate`: see the country conditional in
+   * shared/redirect-rule.schema.json for why that is a safety property.
+   */
+  NOT_EQUALS: "notEquals",
 } as const;
 
 export type MatchType = (typeof MatchType)[keyof typeof MatchType];
+
+/**
+ * The condition types a redirect cannot carry beside a `country` one. Such a
+ * redirect runs at origin-request, where these can read "" for reasons that
+ * have nothing to do with the viewer — see "What a geo redirect cannot read"
+ * in ../README.md. Mirrors the redirect schema's top-level if/then.
+ */
+export const NOT_BESIDE_COUNTRY: readonly MatchType[] = [
+  MatchType.HEADER,
+  MatchType.COOKIE,
+  MatchType.PROTOCOL,
+];
 export type MatchOperator = (typeof MatchOperator)[keyof typeof MatchOperator];
 
 export interface MatchCondition {
@@ -97,6 +116,19 @@ export type RequestParams = {
   protocol: string;
   headers?: Record<string, string>;
   cookies?: string;
+  /**
+   * The viewer's country, as CloudFront determined it. Its own field rather than
+   * a read of `headers["cloudfront-viewer-country"]` because *when* it may be
+   * read is the whole subtlety: CloudFront adds that header after the
+   * viewer-request event, so at viewer-request the name carries either nothing
+   * or whatever the viewer chose to send. `getParams` fills this in for
+   * origin-request only, and everything downstream reads the field, so no
+   * caller has to remember the distinction.
+   *
+   * Absent means "unknown", not "nowhere" — a rule that needs it is skipped
+   * rather than evaluated. See `RulesService.match`.
+   */
+  country?: string;
 };
 
 /** Sort-key prefix. Also the DynamoDB `begins_with` operand. */

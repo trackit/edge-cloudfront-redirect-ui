@@ -4,7 +4,7 @@ import type {
   CloudFrontRequestEvent,
   CloudFrontResultResponse,
 } from "aws-lambda";
-import type { RedirectRule } from "../src/rule-types.js";
+import type { MatchCondition, RedirectRule } from "../src/rule-types.js";
 import { CloudfrontRequestEventMother } from "./cloudfront-request-event.mother.js";
 import { FakeRepository } from "./fake-repository.js";
 import { VIEWER_HOST_HEADER } from "../src/lib/viewer-host.js";
@@ -707,6 +707,424 @@ describe("host scoping", () => {
     );
 
     expect((result as CloudFrontResultResponse).status).toBeUndefined();
+  });
+});
+
+describe("the viewer's country", () => {
+  const countryMatch = (
+    matchValue: string,
+    negate = false,
+  ): MatchCondition => ({
+    matchType: "country",
+    matchOperator: "equals",
+    matchValue,
+    negate,
+  });
+
+  it("matches a rewrite on the country CloudFront reported", async () => {
+    withRules(
+      rewriteRule({
+        matches: [countryMatch("BE FR")],
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/anything")
+        .withViewerCountry("FR")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/api/v1/legacy");
+  });
+
+  it("leaves the request alone when the country is not listed", async () => {
+    withRules(
+      rewriteRule({
+        matches: [countryMatch("BE FR")],
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/anything")
+        .withViewerCountry("DE")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/anything");
+  });
+
+  it("ignores the header a viewer sent itself at viewer-request", async () => {
+    // CloudFront only works the country out after this event, so anything under
+    // that name here came from the client. Trusting it would let a visitor pick
+    // which country's rules apply to them by setting one header.
+    withRules(redirectRule({ matches: [countryMatch("FR")] }));
+
+    const result = await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("/old-landing")
+        .withViewerCountry("FR")
+        .build(),
+    );
+
+    expect((result as CloudFrontResultResponse).status).toBeUndefined();
+  });
+
+  it("does not fire a NEGATED country rule at viewer-request", async () => {
+    // The failure mode the skip in RulesService exists for. Evaluated with an
+    // empty country, "everyone except France" inverts into "everyone", so this
+    // one rule would redirect the entire site.
+    withRules(redirectRule({ matches: [countryMatch("FR", true)] }));
+
+    const result = await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("/old-landing")
+        .build(),
+    );
+
+    expect((result as CloudFrontResultResponse).status).toBeUndefined();
+  });
+
+  it("does not fire a NEGATED country rewrite when the header is missing", async () => {
+    // Same inversion, this time from a distribution whose cache and origin
+    // request policies never ask for the header. Nothing is wrong with the
+    // rule, so the only signal is that it does nothing.
+    withRules(
+      rewriteRule({
+        matches: [countryMatch("FR", true)],
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest().withUri("/anything").build(),
+    )) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/anything");
+  });
+
+  it("still redirects on a rule with no country condition", async () => {
+    // The country is absent at viewer-request for every request, so an ordinary
+    // redirect must be untouched by all of the above.
+    withRules(redirectRule());
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("/old-landing")
+        .build(),
+    )) as CloudFrontResultResponse;
+
+    expect(result.status).toBe("301");
+  });
+});
+
+/**
+ * A redirect that reads the country cannot be evaluated at viewer-request, so
+ * origin-request picks it up -- the one place the country exists. What these
+ * tests pin down is the boundary: exactly those redirects and no others, or an
+ * ordinary redirect would start firing on cache misses only.
+ */
+describe("geo redirects at origin-request", () => {
+  const countryRedirect = (matchValue: string, negate = false) =>
+    redirectRule({
+      statusCode: 302,
+      redirectURL: "https://www.example.fr/boutique",
+      matches: [
+        { matchType: "country", matchOperator: "equals", matchValue, negate },
+      ],
+    } as Partial<RedirectRule>);
+
+  it("answers with the redirect when the country matches", async () => {
+    withRules(countryRedirect("BE FR"));
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("FR")
+        .build(),
+    )) as CloudFrontResultResponse;
+
+    expect(result.status).toBe("302");
+    expect(result.statusDescription).toBe("Found");
+    expect(result.headers?.["location"]?.[0]?.value).toBe(
+      "https://www.example.fr/boutique",
+    );
+  });
+
+  it("marks the redirect no-store, so no other country is served it", async () => {
+    // The response is decided per viewer. Cached, it would be handed to the
+    // next viewer from anywhere, and a French redirect would answer a German.
+    withRules(countryRedirect("FR"));
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("FR")
+        .build(),
+    )) as CloudFrontResultResponse;
+
+    expect(result.headers?.["cache-control"]?.[0]?.value).toBe(
+      "max-age=0, no-cache, no-store",
+    );
+  });
+
+  it("excludes the listed countries with notEquals", async () => {
+    withRules(
+      redirectRule({
+        statusCode: 302,
+        redirectURL: "https://www.example.fr/boutique",
+        matches: [
+          {
+            matchType: "country",
+            matchOperator: "notEquals",
+            matchValue: "US",
+          },
+        ],
+      } as Partial<RedirectRule>),
+    );
+
+    const excluded = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("US")
+        .build(),
+    )) as CloudFrontResultResponse;
+    expect(excluded.status).toBeUndefined();
+
+    const redirected = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("FR")
+        .build(),
+    )) as CloudFrontResultResponse;
+    expect(redirected.status).toBe("302");
+  });
+
+  it("still excludes on a legacy negated condition", async () => {
+    withRules(countryRedirect("US", true));
+
+    const excluded = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("US")
+        .build(),
+    )) as CloudFrontResultResponse;
+    expect(excluded.status).toBeUndefined();
+
+    const redirected = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("FR")
+        .build(),
+    )) as CloudFrontResultResponse;
+    expect(redirected.status).toBe("302");
+  });
+
+  it("does NOT re-evaluate an ordinary redirect at origin-request", async () => {
+    // The boundary this whole split rests on. viewer-request already had its
+    // chance at this rule; running it again here would make it fire on cache
+    // misses only, so the same URL would redirect or not depending on whether
+    // CloudFront happened to hold the page.
+    withRules(redirectRule());
+
+    const result = await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/old-landing")
+        .withViewerCountry("FR")
+        .build(),
+    );
+
+    expect((result as CloudFrontResultResponse).status).toBeUndefined();
+    expect((result as CloudFrontRequest).uri).toBe("/old-landing");
+  });
+
+  it("takes the redirect over a rewrite that also matches", async () => {
+    // Priority must not depend on which event evaluated the rule. At
+    // viewer-request a redirect always wins by running first; that has to hold
+    // here too.
+    withRules(
+      countryRedirect("FR"),
+      rewriteRule({
+        matches: [
+          { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+        ],
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/shop")
+        .withViewerCountry("FR")
+        .build(),
+    )) as CloudFrontResultResponse;
+
+    expect(result.status).toBe("302");
+  });
+
+  it("falls through to the rewrite when no geo redirect matches", async () => {
+    withRules(countryRedirect("US"), rewriteRule());
+
+    const result = await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .withViewerCountry("FR")
+        .build(),
+    );
+
+    expect((result as CloudFrontResultResponse).status).toBeUndefined();
+    expect((result as CloudFrontRequest).uri).toBe("/api/v1/legacy");
+  });
+
+  it("does not look redirects up on every request without a country", async () => {
+    // Every geo redirect would be skipped anyway. The one lookup left is the
+    // missing-country check, once per host — not once per cache miss. The rule
+    // cache is disabled so every lookup reaches the repository.
+    vi.stubEnv("RULES_CACHE_TTL_MS", "0");
+    withRules(countryRedirect("FR"), rewriteRule());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const request = () =>
+      handler(
+        CloudfrontRequestEventMother.originRequest()
+          .withUri("/legacy/thing")
+          .build(),
+      );
+
+    await request();
+    await request();
+
+    expect(repo.prefixes.filter((p) => p === "REDIRECT#")).toHaveLength(1);
+    // One rewrite lookup per request; the check stopped at the geo redirect.
+    expect(repo.prefixes.filter((p) => p === "REWRITE#")).toHaveLength(2);
+    warn.mockRestore();
+  });
+
+  it("lets a classic redirect win over a geo one, whatever their priorities", async () => {
+    // The documented order, pinned: classic redirects are decided at
+    // viewer-request, before the country exists, so a geo redirect only gets a
+    // turn when none of them matched. Its priority only orders it among the
+    // other geo redirects. Changing this changes what every host with both
+    // kinds of rule does.
+    withRules(
+      redirectRule({
+        sk: "REDIRECT#00010",
+        statusCode: 302,
+        redirectURL: "https://www.example.fr/boutique",
+        matches: [
+          { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
+          { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+        ],
+      } as Partial<RedirectRule>),
+      redirectRule({
+        sk: "REDIRECT#00100",
+        redirectURL: "https://www.example.com/new-shop",
+        matches: [
+          { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
+        ],
+      }),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.viewerRequest().withUri("/shop").build(),
+    )) as CloudFrontResultResponse;
+
+    expect(result.status).toBe("301");
+    expect(result.headers?.["location"]?.[0]?.value).toBe(
+      "https://www.example.com/new-shop",
+    );
+  });
+});
+
+/**
+ * A distribution that never asks for the country has geo rules that are all
+ * skipped. This is the only place that can notice.
+ */
+describe("the missing-country warning", () => {
+  const geoRewrite = () =>
+    rewriteRule({
+      matches: [
+        { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+      ],
+    } as Partial<RedirectRule>);
+
+  const originRequest = (country?: string) => {
+    const event = CloudfrontRequestEventMother.originRequest().withUri("/x");
+    return (
+      country === undefined ? event : event.withViewerCountry(country)
+    ).build();
+  };
+
+  const warnings = (warn: ReturnType<typeof vi.spyOn>) =>
+    warn.mock.calls.filter((call) =>
+      String(call[0]).includes("no viewer country"),
+    );
+
+  it("warns when the host has country rules and no country arrives", async () => {
+    withRules(geoRewrite());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await handler(originRequest());
+
+    expect(warnings(warn)).toHaveLength(1);
+    expect(warnings(warn)[0]?.[1]).toMatchObject({ host: HOST });
+    warn.mockRestore();
+  });
+
+  it("warns once per host, not once per request", async () => {
+    withRules(geoRewrite());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await handler(originRequest());
+    await handler(originRequest());
+
+    expect(warnings(warn)).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  it("remembers a bounded number of hosts, however many arrive", async () => {
+    // Behind a wildcard alternate domain every subdomain is a new host. The
+    // record of checked hosts must evict rather than grow; an evicted host is
+    // checked again, which is how this test can see the bound.
+    withRules(geoRewrite());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fromHost = (host: string) =>
+      handler(
+        CloudfrontRequestEventMother.originRequest()
+          .withUri("/x")
+          .withViewerHostHeader(host)
+          .build(),
+      );
+
+    await fromHost(HOST);
+    for (let i = 0; i < 500; i++) await fromHost(`h${i}.example.com`);
+    await fromHost(HOST);
+
+    // Warned for HOST twice: once at first, once after it was evicted.
+    const forHost = warnings(warn).filter(
+      (call) => (call[1] as { host: string }).host === HOST,
+    );
+    expect(forHost).toHaveLength(2);
+    warn.mockRestore();
+  });
+
+  it("stays quiet for a host without country rules", async () => {
+    // A distribution that does not use the feature must not be told to fix it.
+    withRules(rewriteRule());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await handler(originRequest());
+
+    expect(warnings(warn)).toHaveLength(0);
+    warn.mockRestore();
+  });
+
+  it("stays quiet when the country arrives", async () => {
+    withRules(geoRewrite());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await handler(originRequest("FR"));
+
+    expect(warnings(warn)).toHaveLength(0);
+    warn.mockRestore();
   });
 });
 

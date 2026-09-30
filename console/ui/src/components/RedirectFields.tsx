@@ -26,6 +26,9 @@ export default function RedirectFields({ draft, host, onChange }: Props) {
   // is disabled and says which host it would have moved it to.
   const canGoRelative = canBeRelative(draft.redirectURL, host);
   const target = originOf(draft.redirectURL);
+  const readsCountry = draft.matches.some(
+    (match) => match.matchType === "country",
+  );
 
   return (
     <fieldset className="editor-section">
@@ -48,12 +51,25 @@ export default function RedirectFields({ draft, host, onChange }: Props) {
               </option>
             ))}
           </select>
+          {/* Warned, never switched: the code is the user's choice, and a
+              stored rule must not change behind a field they may not see. */}
+          {readsCountry && draft.statusCode === 301 && (
+            <p className="callout is-warn" role="status">
+              A 301 tells search engines the move is permanent, whatever the
+              viewer&apos;s country. Use 302 for a geo redirect.
+            </p>
+          )}
         </div>
 
         <PriorityField
           kind="redirect"
           value={draft.priority}
           onChange={(priority) => onChange({ priority })}
+          note={
+            readsCountry
+              ? "Runs after every classic redirect of this host: the priority only orders it among the geo redirects."
+              : undefined
+          }
         />
       </div>
 

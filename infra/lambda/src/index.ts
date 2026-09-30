@@ -9,11 +9,13 @@ import type {
 import type { EdgeConfig } from "./config.js";
 import { resolveConfig } from "./config.js";
 import { DynamoDBRuleRepository } from "./dynamodb-repository.js";
-import { RulesService } from "./rules-service.js";
+import { RulesService, readsCountry } from "./rules-service.js";
 import type {
   CloudFrontOriginWithExtendedProtocol,
   RequestParams,
 } from "./rule-types.js";
+import { TtlCache } from "./ttl-cache.js";
+import { VIEWER_COUNTRY_HEADER } from "./lib/viewer-country.js";
 import { VIEWER_HOST_HEADER, stampViewerHost } from "./lib/viewer-host.js";
 
 /**
@@ -59,10 +61,50 @@ const getService = (): Promise<RulesService> => {
  */
 let warnedMissingViewerHost = false;
 
+/**
+ * Hosts recently checked for country rules while the country was missing, so
+ * the lookup it costs is paid once an hour per host rather than on every cache
+ * miss.
+ *
+ * Bounded like the rule cache, not a plain Set: the key comes from the viewer's
+ * Host header, and behind a wildcard alternate domain every subdomain is a new
+ * one — an unbounded set would grow until the execution environment ran out of
+ * memory. An evicted host is simply checked again.
+ */
+const checkedForCountry = new TtlCache<true>(60 * 60_000, 500);
+
 /** Test seam: drops the memoized service so the next call rebuilds it. */
 export const resetService = (): void => {
   servicePromise = undefined;
   warnedMissingViewerHost = false;
+  checkedForCountry.clear();
+};
+
+/**
+ * Says so when a host has country rules and the country did not arrive.
+ *
+ * Without it, a distribution whose policies never ask for
+ * `CloudFront-Viewer-Country` has geo rules that are all skipped and nothing
+ * anywhere to say why. Worded as "if this repeats" because a single viewer can
+ * legitimately come without one — CloudFront cannot place every address.
+ */
+const warnIfCountryMissing = async (
+  service: RulesService,
+  hostname: string,
+): Promise<void> => {
+  const key = hostname.toLowerCase();
+  if (checkedForCountry.get(key) !== undefined) return;
+  checkedForCountry.set(key, true);
+  if (!(await service.hasRulesReadingCountry(hostname))) return;
+
+  console.warn(
+    "redirect-rules: country rules, but no viewer country at origin-request",
+    {
+      host: hostname,
+      header: VIEWER_COUNTRY_HEADER,
+      fix: "if this repeats, the behavior never asks for the header: add it to the cache policy (or to the origin request policy when caching is disabled)",
+    },
+  );
 };
 
 const getParams = (
@@ -96,12 +138,24 @@ const getParams = (
   const protocol = headers["x-forwarded-proto"] || "https";
   const search = request.querystring ? `?${request.querystring}` : "";
 
+  // origin-request only, for the same reason the viewer host is: the value is
+  // only CloudFront's at that event. CloudFront adds this header *after*
+  // viewer-request, so there it is either absent or something the viewer sent
+  // itself, and honoring it would let a client pick which country's rules to be
+  // matched by. Left undefined rather than "" so `RulesService` can tell
+  // "unknown" from "known and different" and skip the rule instead of inverting
+  // it. Absent at origin-request too when the distribution's cache or origin
+  // request policy does not ask for the header.
+  const country =
+    eventType === "origin-request" ? headers[VIEWER_COUNTRY_HEADER] : undefined;
+
   return {
     hostname,
     path: `${request.uri}${search}`,
     protocol,
     headers,
     cookies: headers["cookie"] || "",
+    ...(country && { country }),
   };
 };
 
@@ -145,6 +199,33 @@ const normalizeOriginProtocol = (
   } as CloudFrontOrigin;
 };
 
+/**
+ * The 301/302 a matched redirect answers with, at either event.
+ *
+ * `no-store` because the response is per-viewer: a redirect decided from the
+ * country must never be handed to the next viewer from somewhere else. It also
+ * means the cache key does not have to carry everything a rule reads for the
+ * *redirect* to stay correct, which is what makes evaluating one at
+ * origin-request safe at all.
+ */
+const redirectResponse = (
+  statusCode: 301 | 302,
+  redirectURL: string,
+): CloudFrontRequestResult => {
+  const headers: CloudFrontHeaders = {
+    location: [{ key: "Location", value: redirectURL }],
+    "cache-control": [
+      { key: "Cache-Control", value: "max-age=0, no-cache, no-store" },
+    ],
+  };
+
+  return {
+    status: statusCode.toString(),
+    statusDescription: statusDescription(statusCode),
+    headers,
+  };
+};
+
 const handleViewerRequest = async (
   request: CloudFrontRequest,
   params: RequestParams,
@@ -159,18 +240,7 @@ const handleViewerRequest = async (
 
   if (result?.type !== "redirect") return request;
 
-  const headers: CloudFrontHeaders = {
-    location: [{ key: "Location", value: result.redirectURL }],
-    "cache-control": [
-      { key: "Cache-Control", value: "max-age=0, no-cache, no-store" },
-    ],
-  };
-
-  return {
-    status: result.statusCode.toString(),
-    statusDescription: statusDescription(result.statusCode),
-    headers,
-  };
+  return redirectResponse(result.statusCode, result.redirectURL);
 };
 
 const handleOriginRequest = async (
@@ -204,6 +274,29 @@ const handleOriginRequest = async (
   delete request.headers[VIEWER_HOST_HEADER];
 
   const service = await getService();
+
+  if (!params.country) await warnIfCountryMissing(service, params.hostname);
+
+  // Redirects are viewer-request's job, and every one that could fire there
+  // already has. What is left is the ones it had to defer: CloudFront works the
+  // viewer's country out after that event, so a redirect reading the country is
+  // skipped there and only becomes evaluable here. `readsCountry` is the whole
+  // condition -- an ordinary redirect must not be re-evaluated here, where it
+  // would run on cache misses only and so fire unpredictably.
+  //
+  // Tried before the rewrite for the same reason viewer-request runs first: a
+  // redirect answers the viewer, and forwarding to an origin instead would make
+  // a rule's priority depend on which event happened to evaluate it.
+  //
+  // Skipped without a country: every geo redirect would be skipped anyway, and
+  // the lookup is not worth a DynamoDB round trip on each cache miss.
+  const redirect = params.country
+    ? await service.match(params, "REDIRECT", readsCountry)
+    : null;
+  if (redirect?.type === "redirect") {
+    return redirectResponse(redirect.statusCode, redirect.redirectURL);
+  }
+
   const result = await service.match(params, "REWRITE");
 
   if (result?.type !== "rewrite") return request;

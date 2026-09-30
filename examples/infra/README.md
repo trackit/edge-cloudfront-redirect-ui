@@ -130,6 +130,23 @@ during it.
 > query string. Both are covered by unit tests; observing them live needs an
 > origin that echoes its request.
 
+## Smoke-test country conditions
+
+`./smoke-geo.sh` checks the geolocation feature against this distribution, from
+the machine you run it on. Tell it where that machine is — CloudFront places it
+by IP, so a VPN changes the answer:
+
+```bash
+MY_COUNTRY=FR ./smoke-geo.sh
+```
+
+It writes a few rules under `/geo-smoke/`, waits for the rule cache, and checks
+that a redirect for your country fires, that an exclusion of it does not, that a
+classic redirect answers before a geo one, and that claiming another country in
+a `CloudFront-Viewer-Country` request header changes nothing. The rules are
+deleted on exit (`KEEP=1` keeps them). It exits non-zero on any failure, and
+says what usually causes each one.
+
 ## 5. Tear down
 
 ```bash

@@ -1,0 +1,639 @@
+import {
+  distribution,
+  expect,
+  gotoConsole,
+  host,
+  seedStorage,
+  test,
+} from "./fixtures";
+import type { Page } from "@playwright/test";
+import type { GeoReadiness, Rule } from "../src/api";
+
+/**
+ * The geolocation condition in the rule editor.
+ *
+ * `countries.test.ts` already proves the grouping and the search are right, and
+ * `rule-draft.test.ts` proves a stored rule survives the trip to the form and
+ * back. What only a browser shows is that they are wired to each other: that
+ * choosing the type swaps three columns for the picker, that clicking a chip
+ * reaches `matchValue`, that a stored rule opens with the right chips lit, and
+ * that a code our list has never heard of is offered, kept, and flagged rather
+ * than silently swallowed.
+ */
+
+const prod = distribution();
+const HOST = "www.example.com";
+
+/**
+ * A code the picker's generated list does not contain, and that matches nothing
+ * by name either — so a search for it finds no country and the escape hatch is
+ * offered.
+ *
+ * Not "ZZ", which looks like the obvious choice and is not: "Congo -
+ * Brazzaville" contains "zz", so the search does find a country. Check any
+ * replacement against both the codes and the names in `countries.gen.ts`.
+ */
+const UNKNOWN = "QQ";
+
+const geoRedirect = (matchValue: string, excluded = false): Rule =>
+  ({
+    pk: HOST,
+    sk: "REDIRECT#00100",
+    type: "erMatchRule",
+    statusCode: 302,
+    redirectURL: "https://www.example.fr/boutique",
+    matches: [
+      { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
+      {
+        matchType: "country",
+        matchOperator: excluded ? "notEquals" : "equals",
+        matchValue,
+      },
+    ],
+  }) as Rule;
+
+const open = async (page: Page, rules: Rule[] = []): Promise<void> => {
+  await seedStorage(page, {
+    distributions: [prod],
+    current: prod.distributionId,
+  });
+  await gotoConsole(page);
+  await page.getByRole("link").filter({ hasText: HOST }).click();
+  void rules;
+};
+
+const editor = (page: Page) => page.getByRole("dialog");
+/**
+ * Indexed and scoped to the drawer. `getByLabel` matches an accessible name by
+ * substring, so unscoped this also caught the list's "Filter by rule type"
+ * group, and a rule with two conditions has two of these.
+ */
+const typeSelect = (page: Page, at = 0) =>
+  editor(page).getByLabel("Type").nth(at);
+const search = (page: Page) => page.getByPlaceholder("Search countries...");
+const chipFor = (page: Page, code: string) =>
+  editor(page).getByRole("button", { name: new RegExp(`\\b${code}\\b`) });
+const selectedBox = (page: Page) => editor(page).locator(".countries-selected");
+
+/** Every chip currently pressed, which is the picker's whole visible state. */
+const pressed = (page: Page) =>
+  editor(page).locator(".country-chip[aria-pressed='true']");
+
+const newRedirect = async (page: Page): Promise<void> => {
+  await page.getByRole("button", { name: "New redirect" }).click();
+  await expect(editor(page)).toBeVisible();
+};
+
+const editFirst = async (page: Page): Promise<void> => {
+  await page
+    .getByRole("button", { name: /^Edit / })
+    .first()
+    .click();
+  await expect(editor(page)).toBeVisible();
+};
+
+test.beforeEach(async ({ api }) => {
+  api.setHosts([host(HOST, { redirects: 1 })]);
+});
+
+test("choosing the type swaps the value field for the picker", async ({
+  page,
+}) => {
+  await open(page);
+  await newRedirect(page);
+
+  // The three columns a condition normally has.
+  await expect(editor(page).getByLabel("Operator")).toBeVisible();
+  await expect(editor(page).getByLabel("Value")).toBeVisible();
+
+  await typeSelect(page).selectOption("country");
+
+  // Operator and Value are gone rather than disabled: a country condition can
+  // only be `equals`, and a visible control with no effect is a trap.
+  await expect(editor(page).getByLabel("Operator")).toHaveCount(0);
+  await expect(editor(page).getByLabel("Value")).toHaveCount(0);
+  await expect(search(page)).toBeVisible();
+
+  // So are the two chips a condition normally carries: `negate` is the
+  // picker's own Exclude button, and case cannot mean anything on two
+  // uppercase letters.
+  await expect(
+    editor(page).getByRole("button", { name: "Negate" }),
+  ).toHaveCount(0);
+  await expect(
+    editor(page).getByRole("button", { name: "Case sensitive" }),
+  ).toHaveCount(0);
+});
+
+test("the dropdown names it geographic location, not country", async ({
+  page,
+}) => {
+  // The stored value is `country`, so `city` and `region` can join it later.
+  // What the user reads is the mockup's wording.
+  await open(page);
+  await newRedirect(page);
+
+  await expect(
+    typeSelect(page).getByRole("option", {
+      name: "geographic location",
+      exact: true,
+    }),
+  ).toHaveAttribute("value", "country");
+});
+
+test("clicking a country selects it, and clicking it again does not", async ({
+  page,
+}) => {
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  await expect(selectedBox(page)).toContainText("No country selected yet");
+
+  await chipFor(page, "FR").click();
+  await expect(selectedBox(page)).toContainText("France");
+  await expect(pressed(page)).toHaveCount(1);
+
+  await chipFor(page, "DE").click();
+  await expect(pressed(page)).toHaveCount(2);
+  await expect(selectedBox(page)).toContainText("Germany");
+
+  await chipFor(page, "FR").click();
+  await expect(pressed(page)).toHaveCount(1);
+  await expect(selectedBox(page)).not.toContainText("France");
+});
+
+test("the search filters the list, by name and by code", async ({ page }) => {
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  await search(page).fill("germ");
+  await expect(chipFor(page, "DE")).toBeVisible();
+  await expect(chipFor(page, "FR")).toHaveCount(0);
+
+  await search(page).fill("FR");
+  await expect(chipFor(page, "FR")).toBeVisible();
+  await expect(chipFor(page, "DE")).toHaveCount(0);
+});
+
+test("a selected country stays visible while the search excludes it", async ({
+  page,
+}) => {
+  // Hiding the current value makes the row look empty, and the user cannot
+  // deselect what they cannot see.
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  await chipFor(page, "FR").click();
+  await search(page).fill("germ");
+
+  await expect(chipFor(page, "FR")).toBeVisible();
+  await expect(pressed(page)).toHaveCount(1);
+});
+
+test("Exclude these countries toggles, and says which state it is in", async ({
+  page,
+}) => {
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  const exclude = editor(page).getByRole("button", {
+    name: "Exclude these countries",
+  });
+
+  // `aria-pressed` rather than a label that changes: a button that only says
+  // what it does cannot say whether it is already doing it.
+  await expect(exclude).toHaveAttribute("aria-pressed", "false");
+  await exclude.click();
+  await expect(exclude).toHaveAttribute("aria-pressed", "true");
+  await exclude.click();
+  await expect(exclude).toHaveAttribute("aria-pressed", "false");
+});
+
+test("editing a stored rule opens with its countries already selected", async ({
+  page,
+  api,
+}) => {
+  api.setRules([geoRedirect("BE FR")]);
+  await open(page);
+  await editFirst(page);
+
+  await expect(typeSelect(page, 1)).toHaveValue("country");
+  await expect(pressed(page)).toHaveCount(2);
+  await expect(selectedBox(page)).toContainText("Belgium");
+  await expect(selectedBox(page)).toContainText("France");
+});
+
+test("editing an excluding rule opens with Exclude already on", async ({
+  page,
+  api,
+}) => {
+  api.setRules([geoRedirect("US", true)]);
+  await open(page);
+  await editFirst(page);
+
+  await expect(
+    editor(page).getByRole("button", { name: "Exclude these countries" }),
+  ).toHaveAttribute("aria-pressed", "true");
+});
+
+test("a legacy negated rule also opens with Exclude on", async ({
+  page,
+  api,
+}) => {
+  // Saved before `negate` was refused on a country. It still means "exclude".
+  const legacy = geoRedirect("US");
+  api.setRules([
+    {
+      ...legacy,
+      matches: legacy.matches.map((match) =>
+        match.matchType === "country" ? { ...match, negate: true } : match,
+      ),
+    } as Rule,
+  ]);
+  await open(page);
+  await editFirst(page);
+
+  await expect(
+    editor(page).getByRole("button", { name: "Exclude these countries" }),
+  ).toHaveAttribute("aria-pressed", "true");
+});
+
+test("Exclude is saved as notEquals, never negate", async ({ page, api }) => {
+  // A reader that predates `country` would turn `negate` into a redirect for
+  // every viewer. What reaches the API is what that reader will see.
+  api.setRules([geoRedirect("US")]);
+  await open(page);
+  await editFirst(page);
+
+  await editor(page)
+    .getByRole("button", { name: "Exclude these countries" })
+    .click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  await expect
+    .poll(() => api.calls.filter((call) => call.method === "PUT").length)
+    .toBe(1);
+  const put = api.calls.find((call) => call.method === "PUT");
+  const country = (put?.body as Rule).matches.find(
+    (match) => match.matchType === "country",
+  );
+  expect(country).toMatchObject({ matchOperator: "notEquals", negate: false });
+});
+
+test("a code our list has never heard of is offered, kept and flagged", async ({
+  page,
+}) => {
+  // The resilience story, end to end in a browser. The code stands in for both
+  // a typo and a country CloudFront started reporting after our list was last
+  // generated — indistinguishable from here, which is why the answer is a
+  // warning and not a refusal.
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  await search(page).fill(UNKNOWN);
+  await expect(editor(page).getByText(/No country matches/)).toBeVisible();
+
+  const offer = editor(page).getByRole("button", {
+    name: `Use code ${UNKNOWN}`,
+  });
+  await expect(offer).toBeVisible();
+  await offer.click();
+
+  // Kept, under its own heading, and selected.
+  await expect(selectedBox(page)).toContainText(UNKNOWN);
+  await expect(editor(page).getByText("Not in our list")).toBeVisible();
+  await expect(pressed(page)).toHaveCount(1);
+
+  // Flagged, but the rule is still saveable: the save button stays enabled.
+  await expect(editor(page).getByText(/not in our country list/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create rule" })).toBeEnabled();
+});
+
+test("a search that cannot be a country code offers nothing", async ({
+  page,
+}) => {
+  // Three letters is not an ISO 3166-1 alpha-2 code, so the schema would reject
+  // it. Offering a value that cannot be saved is worse than offering none.
+  // "FRA" would be the tempting example and is the wrong one: it matches France
+  // by name, so the search does find something.
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  await search(page).fill("zzz");
+
+  await expect(editor(page).getByText(/No country matches/)).toBeVisible();
+  await expect(
+    editor(page).getByRole("button", { name: /^Use code/ }),
+  ).toHaveCount(0);
+});
+
+test("a stored unknown code opens visible and selected", async ({
+  page,
+  api,
+}) => {
+  // The half of the round trip only a browser proves: a save replaces the whole
+  // rule, so a code the picker declines to render is a code the next save
+  // deletes. `rule-draft.test.ts` pins the conversion; this pins the screen.
+  api.setRules([geoRedirect(`FR ${UNKNOWN}`)]);
+  await open(page);
+  await editFirst(page);
+
+  await expect(selectedBox(page)).toContainText(UNKNOWN);
+  await expect(selectedBox(page)).toContainText("France");
+  await expect(pressed(page)).toHaveCount(2);
+  await expect(editor(page).getByText(/not in our country list/)).toBeVisible();
+});
+
+test("the editor says the distribution has to report the country", async ({
+  page,
+}) => {
+  // Without this, a user creates a rule that quietly never fires and has no way
+  // to find out why: the cache policy is not something the console can see.
+  await open(page);
+  await newRedirect(page);
+
+  await expect(editor(page).getByText(/CloudFront-Viewer-Country/)).toHaveCount(
+    0,
+  );
+
+  await typeSelect(page).selectOption("country");
+
+  await expect(
+    editor(page).getByText(/CloudFront-Viewer-Country/),
+  ).toBeVisible();
+  await expect(editor(page).getByText(/origin request stage/)).toBeVisible();
+});
+
+test("switching away from a country clears the value", async ({ page }) => {
+  // A country code is not a path. Carrying "FR" into a path condition would
+  // save a rule matching the literal path "FR".
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+  await chipFor(page, "FR").click();
+
+  await typeSelect(page).selectOption("path");
+
+  await expect(editor(page).getByLabel("Value")).toHaveValue("");
+});
+
+test("a redirect with a country cannot also check a header, cookie or protocol", async ({
+  page,
+}) => {
+  // The redirect is answered at origin-request, where only forwarded headers
+  // and cookies are left, so the schema refuses the pair. The option says so
+  // before the save does.
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+  await editor(page).getByRole("button", { name: "Add condition" }).click();
+
+  const second = typeSelect(page, 1);
+  await expect(second.locator("option[value='header']")).toBeDisabled();
+  await expect(second.locator("option[value='cookie']")).toBeDisabled();
+  await expect(second.locator("option[value='protocol']")).toBeDisabled();
+  await expect(second.locator("option[value='path']")).toBeEnabled();
+
+  // And the other way round, from the first condition's side.
+  await second.selectOption("path");
+  await typeSelect(page).selectOption("cookie");
+  await expect(second.locator("option[value='country']")).toBeDisabled();
+});
+
+test("two country conditions each get their own search", async ({ page }) => {
+  // A fixed id made both labels point at the first search box.
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+  await editor(page).getByRole("button", { name: "Add condition" }).click();
+  await typeSelect(page, 1).selectOption("country");
+
+  await expect(editor(page).getByLabel("Search countries")).toHaveCount(2);
+});
+
+test("a geo redirect says it runs after the classic ones", async ({
+  page,
+  api,
+}) => {
+  // The order is fixed at the edge, not by priority, so the console has to
+  // say so where the priority is shown: on the card and next to the field.
+  api.setRules([geoRedirect("FR")]);
+  await open(page);
+
+  await expect(page.locator(".badge-geo")).toHaveText("geo");
+
+  await editFirst(page);
+  await expect(
+    editor(page).getByText(/Runs after every classic redirect/),
+  ).toBeVisible();
+});
+
+const warning301 = (page: Page) =>
+  editor(page).getByText(/A 301 tells search engines the move is permanent/);
+
+test("a geo redirect in 301 is warned about, and left in 301", async ({
+  page,
+}) => {
+  await open(page);
+  await newRedirect(page);
+  const status = editor(page).getByLabel("Status code");
+  await expect(status).toHaveValue("301");
+  await expect(warning301(page)).toHaveCount(0);
+
+  await typeSelect(page).selectOption("country");
+
+  // Warned, not switched: the code stays the user's choice.
+  await expect(status).toHaveValue("301");
+  await expect(warning301(page)).toBeVisible();
+
+  await status.selectOption("302");
+  await expect(warning301(page)).toHaveCount(0);
+});
+
+test("a stored geo redirect in 301 opens in 301, with the warning", async ({
+  page,
+  api,
+}) => {
+  api.setRules([{ ...geoRedirect("FR"), statusCode: 301 } as Rule]);
+  await open(page);
+  await editFirst(page);
+
+  await expect(editor(page).getByLabel("Status code")).toHaveValue("301");
+  await expect(warning301(page)).toBeVisible();
+});
+
+test("a classic redirect in 301 is not warned about", async ({ page }) => {
+  await open(page);
+  await newRedirect(page);
+
+  await expect(editor(page).getByLabel("Status code")).toHaveValue("301");
+  await expect(warning301(page)).toHaveCount(0);
+});
+
+const readinessNotice = (page: Page) =>
+  editor(page).getByText(/is not set up for country conditions/);
+
+test("a country condition warns when the distribution caches without the country", async ({
+  page,
+  api,
+}) => {
+  api.setGeoReadiness({
+    status: "misconfigured",
+    distributionId: "E2EXAMPLE12345",
+    behaviors: [
+      { pathPattern: "*", verdict: "ok" },
+      { pathPattern: "/campaign/*", verdict: "cachedWithoutCountry" },
+    ],
+  });
+  await open(page);
+  await newRedirect(page);
+  await expect(readinessNotice(page)).toHaveCount(0);
+
+  await typeSelect(page).selectOption("country");
+
+  await expect(readinessNotice(page)).toBeVisible();
+  await expect(
+    editor(page).getByText(/Behavior \/campaign\/\* caches/),
+  ).toBeVisible();
+  // Only the failing behavior is named.
+  await expect(editor(page).getByText(/The default behavior/)).toHaveCount(0);
+});
+
+test("a classic rule does not ask about the distribution", async ({
+  page,
+  api,
+}) => {
+  await open(page);
+  await newRedirect(page);
+
+  await expect(readinessNotice(page)).toHaveCount(0);
+  expect(api.calls.some((call) => call.url.endsWith("/geo-readiness"))).toBe(
+    false,
+  );
+});
+
+test("a distribution that passes shows no warning", async ({ page, api }) => {
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  // Absence only means something once the check has answered.
+  await expect
+    .poll(() => api.calls.some((call) => call.url.endsWith("/geo-readiness")))
+    .toBe(true);
+  await expect(readinessNotice(page)).toHaveCount(0);
+  await expect(
+    editor(page).getByText(/Could not check this distribution/),
+  ).toHaveCount(0);
+});
+
+test("a distribution the API cannot read says it was not checked", async ({
+  page,
+  api,
+}) => {
+  api.setGeoReadiness({
+    status: "unknown",
+    reason:
+      "The console could not read distribution E2EXAMPLE12345 (AccessDenied)",
+  });
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  await expect(
+    editor(page).getByText(/Could not check this distribution.*AccessDenied/),
+  ).toBeVisible();
+  await expect(readinessNotice(page)).toHaveCount(0);
+});
+
+const geoRewrite = {
+  pk: HOST,
+  sk: "REWRITE#00100",
+  type: "frMatchRule",
+  matches: [
+    { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
+    { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+  ],
+  forwardSettings: { pathAndQS: "/fr/shop", useIncomingQueryString: true },
+} as unknown as Rule;
+
+const cachedWithoutCountry: GeoReadiness = {
+  status: "misconfigured",
+  distributionId: "E2EXAMPLE12345",
+  behaviors: [{ pathPattern: "*", verdict: "cachedWithoutCountry" }],
+};
+
+const saves = (api: { calls: { method: string; url: string }[] }) =>
+  api.calls.filter(
+    (call) => call.method === "PUT" && call.url.includes("/rules/"),
+  );
+
+const saveChanges = async (page: Page): Promise<void> => {
+  // The notice arrives with the check; saving before it would test nothing.
+  await expect(readinessNotice(page)).toBeVisible();
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+};
+
+test("a country rewrite cannot be saved where the page would be cached for everyone", async ({
+  page,
+  api,
+}) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  api.setGeoReadiness(cachedWithoutCountry);
+  await open(page);
+  await editFirst(page);
+
+  await expect(
+    editor(page).getByText(/This rewrite cannot be saved until that is fixed/),
+  ).toBeVisible();
+  await saveChanges(page);
+
+  await expect(
+    editor(page)
+      .getByText(/would be served to everyone/)
+      .last(),
+  ).toBeVisible();
+  expect(saves(api)).toHaveLength(0);
+});
+
+test("a country redirect on the same distribution is warned, and still saves", async ({
+  page,
+  api,
+}) => {
+  // A redirect is no-store: the same setup makes it miss viewers, never
+  // misdirect them.
+  api.setRules([geoRedirect("FR")]);
+  api.setGeoReadiness(cachedWithoutCountry);
+  await open(page);
+  await editFirst(page);
+
+  await expect(editor(page).getByText(/cannot be saved/)).toHaveCount(0);
+  await saveChanges(page);
+
+  await expect.poll(() => saves(api).length).toBe(1);
+});
+
+test("a country rewrite saves when the distribution could not be checked", async ({
+  page,
+  api,
+}) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  api.setGeoReadiness({ status: "unknown", reason: "AccessDenied" });
+  await open(page);
+  await editFirst(page);
+  await expect(
+    editor(page).getByText(/Could not check this distribution/),
+  ).toBeVisible();
+
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+
+  await expect.poll(() => saves(api).length).toBe(1);
+});

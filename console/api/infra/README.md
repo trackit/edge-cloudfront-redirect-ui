@@ -14,7 +14,9 @@ Node 22 Lambda that runs the request router in `console/api/src`.
   [Checking a table exists](#checking-a-table-exists)), and — both off by
   default — `sts:AssumeRole` on `assumable_role_arns` plus item-level DynamoDB
   access on `target_table_arns`
-  (see [Reaching a target's table](#reaching-a-targets-table)).
+  (see [Reaching a target's table](#reaching-a-targets-table)), and read-only
+  CloudFront configuration access, scoped to this account's distributions (see
+  [Checking a distribution's cache settings](#checking-a-distributions-cache-settings)).
 - **`aws_cloudwatch_log_group`** — `/aws/lambda/<function_name>`.
 - **`aws_dynamodb_table` (targets registry)** — the control-plane's own state
   (`pk=id`, `PAY_PER_REQUEST`, PITR on). Named `<function_name>-targets` unless
@@ -65,6 +67,11 @@ execution role gets on `target_table_arns` — in particular
 That permissions policy should also include **`dynamodb:DescribeTable`**, for the
 reason in the next section — and on a resource pattern wide enough to cover a
 name that was typed wrong, not just the one table that should exist.
+
+For the country-condition warning, it should also allow
+**`cloudfront:GetDistributionConfig`**, **`cloudfront:GetCachePolicy`** and
+**`cloudfront:GetOriginRequestPolicy`** — see
+[Checking a distribution's cache settings](#checking-a-distributions-cache-settings).
 
 Both variables are validated, and the rules are the same for each: the **account
 must be literal**, and the role or table name must be literal apart from an
@@ -122,6 +129,40 @@ there to get it back.
 When the check cannot run, the Lambda logs
 `console-api: could not verify table … — registering it unchecked`. A steady
 stream of those in CloudWatch means the typo check is not doing anything.
+
+## Checking a distribution's cache settings
+
+A country condition is evaluated at origin-request, so the edge only sees cache
+misses. On a behavior that caches without `CloudFront-Viewer-Country` in its
+cache key, one viewer's copy is served to the next: a geo redirect silently
+misses most viewers, and a geo rewrite serves one country's page to everyone.
+The edge cannot log what never reaches it, so `GET /targets/{id}/geo-readiness`
+reads the distribution instead, and the console warns in the rule editor.
+
+The distribution is the one the target is **named** after: the console registers
+a target under the distribution ID (or ARN) it was connected with. A target with
+another name answers `unknown`.
+
+The execution role gets two read-only statements:
+
+- **`cloudfront:GetDistributionConfig`** on this account's distributions
+  (`arn:<partition>:cloudfront::<account>:distribution/*`), or on
+  `readable_distribution_arns` when set. Scoped because a distribution's config
+  includes its **origin custom headers**, which sometimes carry a shared secret
+  for the origin. The API extracts the policy IDs and function associations and
+  returns only a verdict; nothing else is kept, logged or sent to the browser.
+- **`cloudfront:GetCachePolicy`** and **`cloudfront:GetOriginRequestPolicy`** on
+  `*`. They hold TTLs and header, cookie and query string names, no values, and
+  the managed policies behaviors usually point at are AWS's, not this account's.
+
+A target with a `roleArn` is read under that role, so its policy needs the same
+actions. The target's distribution is known there, so scope
+`GetDistributionConfig` to it:
+`arn:aws:cloudfront::<account>:distribution/<ID>`.
+
+A missing grant never blocks anything: the answer is `unknown` with the reason,
+the console says it could not check, and the Lambda logs
+`console-api: could not read distribution …`.
 
 ## Region validation
 

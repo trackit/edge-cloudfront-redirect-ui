@@ -3,10 +3,13 @@ import {
   canBeRelative,
   convertRedirectUrl,
   draftFromRule,
+  formatCountries,
   labelForPath,
   originOf,
+  parseCountries,
   pickSslProtocol,
   toRuleInput,
+  unavailableMatchTypes,
   validateDraft,
 } from "../src/domain/ruleDraft";
 import type {
@@ -33,6 +36,12 @@ const match = (over: Partial<Rule["matches"][number]> = {}) => ({
   caseSensitive: false,
   ...over,
 });
+
+/** A country condition, as one is stored: codes in one space-separated value. */
+const countryMatch = (
+  matchValue: string,
+  over: Partial<Rule["matches"][number]> = {},
+) => match({ matchType: "country" as const, matchValue, ...over });
 
 const redirectRule = (over: Partial<Rule> = {}): Rule =>
   ({
@@ -543,5 +552,248 @@ describe("labelForPath", () => {
     ["/something/else", "/something/else"],
   ])("maps %s to %s", (path, label) => {
     expect(labelForPath(path)).toBe(label);
+  });
+
+  it("names a country condition's value after what the editor calls it", () => {
+    // The picker has no "value" field, it has countries. "Condition 1 value" as
+    // a heading would point at something the user cannot see.
+    expect(labelForPath("/matches/0/matchValue", [countryMatch("FR")])).toBe(
+      "Condition 1 countries",
+    );
+  });
+
+  it("falls back to the generic label when the condition is unknown", () => {
+    // Reachable: the API can name a condition index the draft no longer has.
+    expect(labelForPath("/matches/9/matchValue", [countryMatch("FR")])).toBe(
+      "Condition 10 value",
+    );
+  });
+});
+
+/**
+ * A set of countries is stored in one string, space-separated, because that is
+ * what the edge already splits and ORs. Everything here guards the two
+ * conversions either side of that: the picker must never see the encoding, and
+ * the encoding must never see a half-normalised list.
+ */
+describe("country conditions", () => {
+  describe("parseCountries / formatCountries", () => {
+    it.each([
+      ["one country", "FR", ["FR"]],
+      ["several", "BE FR NL", ["BE", "FR", "NL"]],
+      ["an empty value, for a fresh condition", "", []],
+      ["lowercase, as a stored rule may hold", "fr de", ["FR", "DE"]],
+      ["stray whitespace", "  FR   DE ", ["FR", "DE"]],
+    ])("parses %s", (_label, stored, expected) => {
+      expect(parseCountries(stored)).toEqual(expected);
+    });
+
+    it.each([
+      [
+        "sorts, so the same set is always the same string",
+        ["NL", "BE", "FR"],
+        "BE FR NL",
+      ],
+      ["de-duplicates", ["FR", "FR"], "FR"],
+      ["uppercases", ["fr", "de"], "DE FR"],
+      ["drops blanks", ["FR", "", " "], "FR"],
+      ["renders an empty set as an empty value", [], ""],
+    ])("%s", (_label, codes, expected) => {
+      expect(formatCountries(codes)).toBe(expected);
+    });
+
+    it("round-trips any order to the same string", () => {
+      // Without this, adding FR then DE and adding DE then FR would be two
+      // different stored rules, and every reorder would look like an edit in a
+      // diff or an audit log.
+      expect(formatCountries(["FR", "DE"])).toBe(formatCountries(["DE", "FR"]));
+    });
+  });
+
+  describe("toRuleInput", () => {
+    it("pins the operator and drops case sensitivity", () => {
+      // Both are hidden in the editor, and the schema only accepts `equals`
+      // here. A condition switched over from `path contains` would otherwise
+      // carry `contains` into a 400.
+      const draft = draftFromRule(
+        redirectRule({
+          matches: [
+            countryMatch("FR", {
+              matchOperator: "contains",
+              caseSensitive: true,
+            }),
+          ],
+        }),
+      );
+
+      expect(toRuleInput(draft).matches[0]).toEqual({
+        matchType: "country",
+        matchOperator: "equals",
+        matchValue: "FR",
+        negate: false,
+        caseSensitive: false,
+      });
+    });
+
+    it("normalises the countries on the way out", () => {
+      const draft = draftFromRule(
+        redirectRule({ matches: [countryMatch("nl be nl")] }),
+      );
+
+      expect(toRuleInput(draft).matches[0]).toMatchObject({
+        matchValue: "BE NL",
+      });
+    });
+
+    it("stores an exclusion as notEquals, never negate", () => {
+      // A reader that predates `country` tests "", and `negate` would turn that
+      // into a redirect for every viewer. `notEquals` keeps it inert.
+      const draft = draftFromRule(
+        redirectRule({
+          matches: [countryMatch("US", { matchOperator: "notEquals" })],
+        }),
+      );
+
+      expect(toRuleInput(draft).matches[0]).toMatchObject({
+        matchOperator: "notEquals",
+        negate: false,
+      });
+    });
+
+    it("rewrites a legacy negated exclusion as notEquals on save", () => {
+      // Saved before `negate` was refused on a country: it keeps its meaning,
+      // in the form the schema now accepts.
+      const draft = draftFromRule(
+        redirectRule({ matches: [countryMatch("US", { negate: true })] }),
+      );
+
+      expect(toRuleInput(draft).matches[0]).toMatchObject({
+        matchOperator: "notEquals",
+        negate: false,
+      });
+    });
+  });
+
+  describe("round-trip (draftFromRule → toRuleInput)", () => {
+    it("preserves a code the picker's list does not contain", () => {
+      // The guard that matters most in this file. The picker offers a generated
+      // list of countries; a rule may hold a code that list has never had — a
+      // country CloudFront added since, or a typo. A `PUT` replaces the whole
+      // item, so a code that survives the trip is a code the user keeps, and
+      // one that does not is silent data loss on the next save.
+      const rule = redirectRule({ matches: [countryMatch("FR FF")] });
+
+      expect(toRuleInput(draftFromRule(rule)).matches[0]).toMatchObject({
+        matchValue: "FF FR",
+      });
+    });
+
+    it("accepts that code rather than rejecting it", () => {
+      // Deliberate: we cannot tell a typo from a country we have not heard of,
+      // and blocking would make a real new country unusable until the next
+      // release. The picker warns instead. Never validate against the list.
+      const draft = draftFromRule(
+        redirectRule({ matches: [countryMatch("FR FF")] }),
+      );
+
+      expect(has(validateDraft(draft, []), "/matches/0/matchValue")).toBe(
+        false,
+      );
+    });
+  });
+
+  describe("validateDraft", () => {
+    it("asks for at least one country", () => {
+      const draft = draftFromRule(
+        redirectRule({ matches: [countryMatch("")] }),
+      );
+      const details = validateDraft(draft, []);
+
+      expect(has(details, "/matches/0/matchValue")).toBe(true);
+      expect(
+        details.find((d) => d.path === "/matches/0/matchValue")?.message,
+      ).toContain("country");
+    });
+
+    it.each([
+      ["header", { headerName: "x-env" }],
+      ["cookie", {}],
+      ["protocol", {}],
+    ] as const)(
+      "refuses a %s condition beside a country one on a redirect",
+      (matchType, extra) => {
+        // Same rule as the redirect schema: the redirect is answered at
+        // origin-request, where an unforwarded header or cookie reads as empty
+        // and the protocol falls back to https.
+        const draft = draftFromRule(
+          redirectRule({
+            matches: [
+              countryMatch("FR"),
+              match({ matchType, matchOperator: "contains", ...extra }),
+            ],
+          }),
+        );
+        const details = validateDraft(draft, []);
+
+        // One conflict, one error — on the condition that has to change.
+        expect(has(details, "/matches/1/matchType")).toBe(true);
+        expect(has(details, "/matches/0/matchType")).toBe(false);
+      },
+    );
+
+    it("lets a rewrite combine them", () => {
+      const draft = draftFromRule({
+        ...pathOnlyRewriteRule(),
+        matches: [
+          countryMatch("FR"),
+          match({ matchType: "cookie", matchOperator: "contains" }),
+        ],
+      } as Rule);
+
+      expect(has(validateDraft(draft, []), "/matches/1/matchType")).toBe(false);
+    });
+
+    it.each([
+      ["a three-letter code", "FRA"],
+      ["digits", "12"],
+      ["a name", "france"],
+    ])("rejects %s, which the schema's pattern would too", (_label, value) => {
+      const draft = draftFromRule(
+        redirectRule({ matches: [countryMatch(value)] }),
+      );
+
+      expect(has(validateDraft(draft, []), "/matches/0/matchValue")).toBe(true);
+    });
+  });
+});
+
+describe("unavailableMatchTypes", () => {
+  it("rules out header, cookie and protocol beside a country on a redirect", () => {
+    expect([
+      ...unavailableMatchTypes("redirect", [countryMatch("FR"), match()], 1),
+    ]).toEqual(["header", "cookie", "protocol"]);
+  });
+
+  it("rules out country beside a header or cookie on a redirect", () => {
+    expect([
+      ...unavailableMatchTypes(
+        "redirect",
+        [match({ matchType: "cookie" }), match()],
+        1,
+      ),
+    ]).toEqual(["country"]);
+  });
+
+  it("does not count the condition itself", () => {
+    // A lone country condition must still be switchable to anything.
+    expect(
+      unavailableMatchTypes("redirect", [countryMatch("FR")], 0).size,
+    ).toBe(0);
+  });
+
+  it("restricts nothing on a rewrite", () => {
+    expect(
+      unavailableMatchTypes("rewrite", [countryMatch("FR"), match()], 1).size,
+    ).toBe(0);
   });
 });

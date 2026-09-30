@@ -190,6 +190,36 @@ data "aws_iam_policy_document" "registry" {
     actions   = ["dynamodb:DescribeTable"]
     resources = ["arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/*"]
   }
+
+  # The console warns when a rule reads the country on a distribution that caches
+  # without the country in its cache key (see src/lib/geo-readiness.ts). Missing
+  # grants only turn the warning into "could not check"; they never block a
+  # write. A target reached by assuming a role is read under that role, so its
+  # policy needs the same actions.
+  #
+  # Two statements because the two halves differ. A distribution's config carries
+  # its origin custom headers, which sometimes hold a shared secret, so it is
+  # this account's distributions at most — `readable_distribution_arns` narrows
+  # it further. The API keeps and returns only a verdict.
+  statement {
+    sid     = "ReadDistributionConfig"
+    actions = ["cloudfront:GetDistributionConfig"]
+    resources = length(var.readable_distribution_arns) > 0 ? var.readable_distribution_arns : [
+      "arn:${data.aws_partition.current.partition}:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/*",
+    ]
+  }
+
+  # Cache and origin request policies hold TTLs and header, cookie and query
+  # string names, no values. `*` because the managed ones a behavior usually
+  # points at (Managed-CachingOptimized…) belong to AWS, not to this account.
+  statement {
+    sid = "ReadCachePolicies"
+    actions = [
+      "cloudfront:GetCachePolicy",
+      "cloudfront:GetOriginRequestPolicy",
+    ]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "registry" {
