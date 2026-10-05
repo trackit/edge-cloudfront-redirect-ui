@@ -64,16 +64,16 @@ export default function ConsolePage() {
     <div className="console">
       <header className="console-bar">
         <Brand />
-        {/* Grouped so the two controls read as one cluster on the right rather
-            than as the chip plus something unrelated after it. */}
+        <DistributionChip
+          distributions={distributions}
+          current={current}
+          onSelect={select}
+          onAddDistribution={() => setFlow("add")}
+          onOpenSettings={() => setFlow("settings")}
+        />
+        {/* The account belongs to the page, not to the connection, so it sits
+            at the far end of the bar rather than beside the chip. */}
         <div className="console-bar-end">
-          <DistributionChip
-            distributions={distributions}
-            current={current}
-            onSelect={select}
-            onAddDistribution={() => setFlow("add")}
-            onOpenSettings={() => setFlow("settings")}
-          />
           <ProfileMenu />
         </div>
       </header>
