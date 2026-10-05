@@ -603,15 +603,29 @@ button {
      `margin-left: auto`. */
   justify-content: flex-start;
   gap: 16px;
-  flex-wrap: wrap;
+  /* One line at every width: on a narrow screen the chip gives up room (its two
+     lines ellipsize) rather than the account menu wrapping onto a row of its
+     own under the bar. */
+  flex-wrap: nowrap;
   padding: 18px 28px;
   border-bottom: 1px solid var(--line);
 }
+@media (max-width: 560px) {
+  .console-bar {
+    gap: 10px;
+    padding: 14px 16px;
+  }
+}
 /* ---------- connected environment chip + its panel ---------- */
 
-/* Anchor for the absolutely positioned panel below. */
+/* Anchor for the absolutely positioned panel below. Flex with min-width:0 so it
+   can shrink in the bar and take the chip with it — a button does not shrink to
+   its container as a block child, only as a flex item — and the chip's own
+   ellipsis then takes effect on a narrow screen. */
 .dist-switch {
   position: relative;
+  display: flex;
+  min-width: 0;
 }
 
 .dist-chip {
@@ -2239,6 +2253,11 @@ button {
   align-items: center;
   gap: 10px;
 }
+/* Pushed to the far end of the console bar — the pattern .console-bar's own
+   comment describes for anything that belongs to the page. */
+.console-bar-end {
+  margin-left: auto;
+}
 
 .profile {
   position: relative;
@@ -2288,6 +2307,9 @@ button {
 }
 .profile-who strong {
   font-size: 13px;
+  /* Set, not inherited: inside the console the inherited colour is the dark
+     bar's near-white --ink, which all but vanishes on this white panel. */
+  color: var(--text-soft);
   overflow-wrap: anywhere;
 }
 .profile-who span {
