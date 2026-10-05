@@ -196,7 +196,10 @@ logo between 1:1 and 4:1 wide. Cognito scales the logo to a fixed height, so the
 SVG's own padding sets its size on the page. The page's text cannot be changed.
 
 The deploying role needs `cognito-idp:Create`, `Describe`, `DescribeByClient`,
-`Update` and `DeleteManagedLoginBranding` beside the user pool actions.
+`Update` and `DeleteManagedLoginBranding` beside the user pool actions, and
+`cognito-idp:ListUserPoolClients`: the provider reads the style back by listing
+the pool's clients, so without it the first apply succeeds and every later plan
+fails.
 
 ### Single sign-on
 
