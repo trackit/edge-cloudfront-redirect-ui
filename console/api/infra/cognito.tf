@@ -13,6 +13,13 @@ data "aws_region" "current" {}
 resource "aws_cognito_user_pool" "this" {
   name = var.function_name
 
+  # Managed login (the branded sign-in page below) needs Essentials or Plus.
+  # Essentials is also what AWS gives a new pool by default, so this pins the
+  # existing plan rather than changing it — explicit so it cannot drift to Lite
+  # and take the branding with it. Its free tier covers 10,000 monthly active
+  # users with no expiry, far past a team console.
+  user_pool_tier = "ESSENTIALS"
+
   # Admin-created only. This is a control plane that can repoint production
   # traffic, so an open sign-up form is not a default anyone should have to
   # remember to turn off.
@@ -56,6 +63,48 @@ resource "aws_cognito_user_pool" "this" {
 resource "aws_cognito_user_pool_domain" "this" {
   domain       = var.cognito_domain_prefix
   user_pool_id = aws_cognito_user_pool.this.id
+
+  # 2 is managed login, the hosted page that can carry the console's branding;
+  # 1 is the classic hosted UI, which can recolour its form but not the page
+  # around it. Same endpoints either way (/oauth2/authorize, /logout), so the
+  # console's sign-in and sign-out are unchanged.
+  managed_login_version = 2
+}
+
+# The sign-in page in the console's colours, with its logo (CF-50).
+#
+# branding/settings.json is AWS's default style as DescribeManagedLoginBranding
+# returns it, recoloured: dark mode only, the console's navy for the page and
+# form, orange for the primary button and focus, blue for links. Whole numbers
+# stay integers there — AWS stores `8`, and an `8.0` would read as a change on
+# every plan.
+#
+# No SSO button is configured here: the pool's own accounts sign in on this
+# page, and a provider set through `identity_provider` gets its button from
+# Cognito automatically.
+resource "aws_cognito_managed_login_branding" "console" {
+  user_pool_id = aws_cognito_user_pool.this.id
+  client_id    = aws_cognito_user_pool_client.console.id
+  settings     = file("${path.module}/branding/settings.json")
+
+  # Cognito refuses a logo wider than 4:1 and scales it to a fixed height, so the
+  # SVG's own padding is what sets its size on the page.
+  asset {
+    category   = "FORM_LOGO"
+    color_mode = "DARK"
+    extension  = "SVG"
+    bytes      = filebase64("${path.module}/branding/logo.svg")
+  }
+
+  asset {
+    category   = "FAVICON_SVG"
+    color_mode = "DARK"
+    extension  = "SVG"
+    bytes      = filebase64("${path.module}/branding/favicon.svg")
+  }
+
+  # The style can only be attached once the domain serves managed login.
+  depends_on = [aws_cognito_user_pool_domain.this]
 }
 
 # A confidential client: the authorization code is exchanged by the API, not the
