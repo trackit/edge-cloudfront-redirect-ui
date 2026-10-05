@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="152" height="56" viewBox="0 0 152 56">
+  <!-- 56 tall around 32 of artwork: Cognito scales a logo to a fixed height and
+       refuses one wider than 4:1, so the padding is what sets its size on the page. -->
+  <g transform="translate(0 12)">
+  <rect width="32" height="32" rx="8" fill="#0b1524" stroke="#23344f" />
+  <path d="M8 16c0-3.3 2.7-6 6-6h6" fill="none" stroke="#ff9900" stroke-width="2.5" stroke-linecap="round" />
+  <path d="M17 7l4 3-4 3" fill="none" stroke="#ff9900" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M24 16c0 3.3-2.7 6-6 6h-6" fill="none" stroke="#4da8ff" stroke-width="2.5" stroke-linecap="round" />
+  <path d="M15 25l-4-3 4-3" fill="none" stroke="#4da8ff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+  <text x="42" y="22" fill="#e8eefb" font-family="Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="18" font-weight="800" letter-spacing="-0.2">EdgeRoute</text>
+  </g>
+</svg>

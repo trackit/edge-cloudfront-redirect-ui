@@ -179,6 +179,25 @@ to apply this.
 After `terraform apply`, `./seed-users.sh` creates `viewer@example.com` and
 `editor@example.com` with generated passwords, printed once.
 
+### The sign-in page
+
+The domain serves Cognito's **managed login** (`managed_login_version = 2`),
+styled to match the console by `aws_cognito_managed_login_branding` from the
+files in [`branding/`](branding/): `settings.json` (colours, dark mode only),
+`logo.svg` and `favicon.svg`. Managed login needs the pool on the **Essentials**
+plan, which is what AWS defaults a new pool to and what `user_pool_tier` pins;
+its free tier covers 10,000 monthly active users with no expiry.
+
+To change the look, edit `settings.json` — it is AWS's default style
+(`DescribeManagedLoginBrandingByClient`) with the console's colours swapped in,
+so its keys are the ones AWS accepts. Two things AWS enforces: keep whole
+numbers as integers (`8`, not `8.0`, or every plan shows a change), and keep a
+logo between 1:1 and 4:1 wide. Cognito scales the logo to a fixed height, so the
+SVG's own padding sets its size on the page. The page's text cannot be changed.
+
+The deploying role needs `cognito-idp:Create`, `Describe`, `DescribeByClient`,
+`Update` and `DeleteManagedLoginBranding` beside the user pool actions.
+
 ### Single sign-on
 
 Off by default, and that default is deliberate. This is deployed into other

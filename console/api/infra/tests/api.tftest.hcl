@@ -574,6 +574,30 @@ run "pool_is_admin_create_only" {
   }
 }
 
+run "sign_in_page_is_branded_managed_login" {
+  command = plan
+
+  assert {
+    condition     = aws_cognito_user_pool_domain.this.managed_login_version == 2
+    error_message = "the domain must serve managed login (2): the classic hosted UI (1) cannot carry the console's branding"
+  }
+
+  assert {
+    condition     = aws_cognito_user_pool.this.user_pool_tier == "ESSENTIALS"
+    error_message = "managed login branding needs the Essentials plan or above"
+  }
+
+  assert {
+    condition     = jsondecode(aws_cognito_managed_login_branding.console.settings).categories.global.colorSchemeMode == "DARK"
+    error_message = "the sign-in page is styled for dark mode only, like the console"
+  }
+
+  assert {
+    condition     = toset([for a in aws_cognito_managed_login_branding.console.asset : a.category]) == toset(["FORM_LOGO", "FAVICON_SVG"])
+    error_message = "the branding must carry the EdgeRoute logo and favicon"
+  }
+}
+
 run "client_is_confidential_and_code_only" {
   command = plan
 
