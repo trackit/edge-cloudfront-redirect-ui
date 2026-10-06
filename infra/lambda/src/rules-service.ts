@@ -93,6 +93,30 @@ export class RulesService {
    * Whether any enabled rule of the host, of either kind, reads the country.
    * For diagnostics only: the rules come from the same TTL cache as `match`.
    */
+  /**
+   * Whether a country rule could apply to this request: an enabled rule, of
+   * either kind, that reads the country and whose other conditions all match.
+   * The country itself is left out — the point is to know whether its absence
+   * costs anything. For the skipped-country metric only, so that a path no geo
+   * rule covers (static assets on a behavior that never asks for the country)
+   * does not count as a skipped geo request.
+   */
+  async countryRuleInScope(params: RequestParams): Promise<boolean> {
+    for (const kind of ["REDIRECT", "REWRITE"] as const) {
+      const rules = await this.loadRules(params.hostname, kind);
+      const applies = rules.some(
+        (rule) =>
+          readsCountry(rule) &&
+          !isForbiddenGeoRedirect(rule) &&
+          rule.matches
+            .filter((m) => m.matchType !== MatchType.COUNTRY)
+            .every((m) => this.evaluateMatch(m, params)),
+      );
+      if (applies) return true;
+    }
+    return false;
+  }
+
   async hasRulesReadingCountry(hostname: string): Promise<boolean> {
     for (const kind of ["REDIRECT", "REWRITE"] as const) {
       const rules = await this.loadRules(hostname, kind);

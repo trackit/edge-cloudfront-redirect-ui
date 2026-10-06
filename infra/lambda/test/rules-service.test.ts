@@ -741,3 +741,65 @@ describe("forbidden geo redirects", () => {
     ).not.toBeNull();
   });
 });
+
+describe("countryRuleInScope", () => {
+  const geoOn = (path: string, over: Partial<RedirectRule> = {}) =>
+    rule({
+      matches: [
+        { matchType: "path", matchOperator: "equals", matchValue: path },
+        { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+      ],
+      ...over,
+    } as Partial<RedirectRule>);
+
+  it("is true where a country rule's other conditions match, country or not", async () => {
+    const service = new RulesService(
+      new FakeRepository([geoOn("/fr")]),
+      60_000,
+    );
+    expect(await service.countryRuleInScope(params({ path: "/fr" }))).toBe(
+      true,
+    );
+    expect(
+      await service.countryRuleInScope(params({ path: "/fr", country: "DE" })),
+    ).toBe(true);
+  });
+
+  it("is false on a path no country rule can reach", async () => {
+    const service = new RulesService(
+      new FakeRepository([geoOn("/fr")]),
+      60_000,
+    );
+    expect(
+      await service.countryRuleInScope(params({ path: "/static/a.js" })),
+    ).toBe(false);
+  });
+
+  it("ignores rules that do not read the country, and disabled ones", async () => {
+    const service = new RulesService(
+      new FakeRepository([rule(), geoOn("/fr", { disabled: true })]),
+      60_000,
+    );
+    expect(
+      await service.countryRuleInScope(params({ path: "/old-landing" })),
+    ).toBe(false);
+    expect(await service.countryRuleInScope(params({ path: "/fr" }))).toBe(
+      false,
+    );
+  });
+
+  it("looks at rewrites too", async () => {
+    const service = new RulesService(
+      new FakeRepository([
+        geoOn("/fr", {
+          sk: "REWRITE#00100",
+          type: "frMatchRule",
+        } as Partial<RedirectRule>),
+      ]),
+      60_000,
+    );
+    expect(await service.countryRuleInScope(params({ path: "/fr" }))).toBe(
+      true,
+    );
+  });
+});

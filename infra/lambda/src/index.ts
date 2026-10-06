@@ -15,6 +15,7 @@ import type {
   RequestParams,
 } from "./rule-types.js";
 import { TtlCache } from "./ttl-cache.js";
+import { GeoMetrics } from "./lib/geo-metrics.js";
 import { VIEWER_COUNTRY_HEADER } from "./lib/viewer-country.js";
 import { VIEWER_HOST_HEADER, stampViewerHost } from "./lib/viewer-host.js";
 
@@ -73,11 +74,43 @@ let warnedMissingViewerHost = false;
  */
 const checkedForCountry = new TtlCache<true>(60 * 60_000, 500);
 
+/**
+ * Whether a country rule could apply to a request, per host and path: the
+ * metric asks it on every origin-request of a geo host, and with a short rule
+ * cache each ask is a DynamoDB query. Keyed on the path only, so a rule that
+ * also reads a header or cookie is judged on the first request seen for that
+ * path — close enough for a share-based alarm. Bounded: paths, like hosts, come
+ * from the viewer.
+ */
+const geoScope = new TtlCache<boolean>(60_000, 1000);
+
+const inGeoScope = async (
+  service: RulesService,
+  params: RequestParams,
+): Promise<boolean> => {
+  const key = `${params.hostname.toLowerCase()} ${params.path}`;
+  const known = geoScope.get(key);
+  if (known !== undefined) return known;
+  const inScope = await service.countryRuleInScope(params);
+  geoScope.set(key, inScope);
+  return inScope;
+};
+
+/** The skipped-country counts the geo alarm reads. See lib/geo-metrics.ts. */
+let geoMetrics = new GeoMetrics();
+
+/** Test seam: counts into a metrics instance the test controls. */
+export const setGeoMetricsForTest = (metrics: GeoMetrics): void => {
+  geoMetrics = metrics;
+};
+
 /** Test seam: drops the memoized service so the next call rebuilds it. */
 export const resetService = (): void => {
   servicePromise = undefined;
   warnedMissingViewerHost = false;
   checkedForCountry.clear();
+  geoScope.clear();
+  geoMetrics = new GeoMetrics();
 };
 
 /**
@@ -88,14 +121,14 @@ export const resetService = (): void => {
  * anywhere to say why. Worded as "if this repeats" because a single viewer can
  * legitimately come without one — CloudFront cannot place every address.
  */
-const warnIfCountryMissing = async (
-  service: RulesService,
+const warnIfCountryMissing = (
   hostname: string,
-): Promise<void> => {
+  readsCountry: boolean,
+): void => {
+  if (!readsCountry) return;
   const key = hostname.toLowerCase();
   if (checkedForCountry.get(key) !== undefined) return;
   checkedForCountry.set(key, true);
-  if (!(await service.hasRulesReadingCountry(hostname))) return;
 
   console.warn(
     "redirect-rules: country rules, but no viewer country at origin-request",
@@ -275,7 +308,17 @@ const handleOriginRequest = async (
 
   const service = await getService();
 
-  if (!params.country) await warnIfCountryMissing(service, params.hostname);
+  // Counted for every origin-request a country rule could apply to, so the
+  // alarm compares the skipped ones to the total rather than firing on the odd
+  // viewer CloudFront cannot place — or on paths no geo rule covers. Flushed
+  // first, so a minute's line holds only that minute's requests.
+  const inScope = await inGeoScope(service, params);
+  geoMetrics.flushIfDue();
+  if (inScope) geoMetrics.record(params.hostname, !params.country);
+
+  // Only where a country rule could have applied: a path no geo rule covers
+  // loses nothing without the country.
+  if (!params.country) warnIfCountryMissing(params.hostname, inScope);
 
   // Redirects are viewer-request's job, and every one that could fire there
   // already has. What is left is the ones it had to defer: CloudFront works the

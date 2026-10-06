@@ -159,3 +159,59 @@ run "cache_ttl_rejects_negative" {
 
   expect_failures = [var.cache_ttl_ms]
 }
+
+# =============================================================================
+# Geo alarm
+# =============================================================================
+
+run "geo_alarm_defaults" {
+  command = plan
+
+  assert {
+    condition     = length(aws_cloudwatch_metric_alarm.geo_country_missing) == 2
+    error_message = "one geo alarm per default region"
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.geo_country_missing["eu-west-1"].region == "eu-west-1"
+    error_message = "each alarm lives in its own region"
+  }
+
+  assert {
+    condition     = length(aws_cloudwatch_metric_alarm.geo_country_missing["eu-west-1"].alarm_actions) == 0
+    error_message = "no SNS action by default"
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.geo_country_missing["us-east-1"].threshold == 0.5
+    error_message = "default threshold is half the geo requests"
+  }
+}
+
+run "geo_alarm_with_topic" {
+  command = plan
+
+  variables {
+    alarm_sns_topic_arns = { "eu-west-1" = "arn:aws:sns:eu-west-1:123456789012:alerts" }
+  }
+
+  assert {
+    condition     = length(aws_cloudwatch_metric_alarm.geo_country_missing["eu-west-1"].alarm_actions) == 1 && contains(aws_cloudwatch_metric_alarm.geo_country_missing["eu-west-1"].alarm_actions, "arn:aws:sns:eu-west-1:123456789012:alerts")
+    error_message = "the region's topic is the alarm action"
+  }
+
+  assert {
+    condition     = length(aws_cloudwatch_metric_alarm.geo_country_missing["us-east-1"].alarm_actions) == 0
+    error_message = "a region without a topic has no action"
+  }
+}
+
+run "geo_alarm_rejects_a_bad_threshold" {
+  command = plan
+
+  variables {
+    geo_alarm_threshold = 0
+  }
+
+  expect_failures = [var.geo_alarm_threshold]
+}

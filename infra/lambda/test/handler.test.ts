@@ -20,7 +20,9 @@ vi.mock("../src/dynamodb-repository.js", () => ({
   },
 }));
 
-const { handler, resetService } = await import("../src/index.js");
+const { handler, resetService, setGeoMetricsForTest } =
+  await import("../src/index.js");
+const { GeoMetrics } = await import("../src/lib/geo-metrics.js");
 
 const HOST = "www.example.com";
 
@@ -1038,6 +1040,101 @@ describe("geo redirects at origin-request", () => {
  * A distribution that never asks for the country has geo rules that are all
  * skipped. This is the only place that can notice.
  */
+describe("the skipped-country metric", () => {
+  const geoRewrite = () =>
+    rewriteRule({
+      matches: [
+        { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+      ],
+    } as Partial<RedirectRule>);
+
+  const originRequest = (country?: string) => {
+    const event = CloudfrontRequestEventMother.originRequest().withUri("/x");
+    return (
+      country === undefined ? event : event.withViewerCountry(country)
+    ).build();
+  };
+
+  const install = () => {
+    let now = 0;
+    const lines: string[] = [];
+    setGeoMetricsForTest(
+      new GeoMetrics({
+        now: () => now,
+        emit: (line) => lines.push(line),
+        functionName: "us-east-1.edge",
+      }),
+    );
+    return {
+      lines,
+      later: () => {
+        now += 60_000;
+      },
+    };
+  };
+
+  it("counts every origin-request on a host with country rules, and the ones without a country", async () => {
+    withRules(geoRewrite());
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { lines, later } = install();
+
+    await handler(originRequest());
+    await handler(originRequest("FR"));
+    later();
+    await handler(originRequest("FR"));
+
+    expect(lines.map((line) => JSON.parse(line) as object)).toEqual([
+      expect.objectContaining({
+        Host: HOST,
+        CountryRulesEvaluated: 2,
+        CountryRulesSkipped: 1,
+      }),
+    ]);
+  });
+
+  it("counts only the paths a country rule covers", async () => {
+    withRules(
+      rewriteRule({
+        matches: [
+          { matchType: "path", matchOperator: "equals", matchValue: "/fr" },
+          { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+        ],
+      } as Partial<RedirectRule>),
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { lines, later } = install();
+    const at = (uri: string) =>
+      handler(
+        CloudfrontRequestEventMother.originRequest().withUri(uri).build(),
+      );
+
+    // A static asset on a behavior that never asks for the country is not a
+    // skipped geo request: no country rule could have applied to it.
+    await at("/static/app.js");
+    await at("/fr");
+    later();
+    await at("/static/app.js");
+
+    expect(lines.map((line) => JSON.parse(line) as object)).toEqual([
+      expect.objectContaining({
+        CountryRulesEvaluated: 1,
+        CountryRulesSkipped: 1,
+      }),
+    ]);
+  });
+
+  it("counts nothing for a host without country rules", async () => {
+    withRules(rewriteRule());
+    const { lines, later } = install();
+
+    await handler(originRequest());
+    later();
+    await handler(originRequest());
+
+    expect(lines).toEqual([]);
+  });
+});
+
 describe("the missing-country warning", () => {
   const geoRewrite = () =>
     rewriteRule({
@@ -1083,8 +1180,13 @@ describe("the missing-country warning", () => {
   it("remembers a bounded number of hosts, however many arrive", async () => {
     // Behind a wildcard alternate domain every subdomain is a new host. The
     // record of checked hosts must evict rather than grow; an evicted host is
-    // checked again, which is how this test can see the bound.
-    withRules(geoRewrite());
+    // checked again, which is how this test can see the bound. Every host has
+    // country rules: one without any is never recorded at all.
+    const others = Array.from({ length: 500 }, (_, i) => `h${i}.example.com`);
+    withRules(
+      geoRewrite(),
+      ...others.map((pk) => ({ ...geoRewrite(), pk }) as RedirectRule),
+    );
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fromHost = (host: string) =>
       handler(
@@ -1095,7 +1197,7 @@ describe("the missing-country warning", () => {
       );
 
     await fromHost(HOST);
-    for (let i = 0; i < 500; i++) await fromHost(`h${i}.example.com`);
+    for (const other of others) await fromHost(other);
     await fromHost(HOST);
 
     // Warned for HOST twice: once at first, once after it was evicted.
