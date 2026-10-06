@@ -439,6 +439,14 @@ export interface components {
       relevant: components["schemas"]["BehaviorReadiness"][];
       /** @description True when the rule has no exact, case-sensitive path condition, so every behavior running the function may serve it. */
       ambiguous: boolean;
+      /** @description Negated header and cookie conditions of a rewrite that a serving behavior does not send on to origin-request — absent there for every viewer, so the condition holds for everyone, and the rewrite is `blocked`. Always present in the API's answers. */
+      dropped?: {
+        pathPattern: string;
+        /** @enum {string} */
+        matchType: "header" | "cookie";
+        /** @description The header or cookie. `null` for a cookie whose name the condition's value does not say (a regex or a wildcard), which needs every cookie sent on. */
+        name: string | null;
+      }[];
     };
     /** @description `checked`: the distribution was read, and each behavior carries its own verdict, in CloudFront's matching order (the default behavior `*` last). Which behaviors matter for a rule depends on its path — see GeoDecision. `unknown`: the distribution could not be judged, see `cause` and `reason`. */
     GeoReadiness:
@@ -466,9 +474,20 @@ export interface components {
             | "unexpected";
           reason: string;
         };
+    /** @description Names a policy sends on to origin-request, or every one but `except`. */
+    Passed: {
+      all: boolean;
+      names: string[];
+      except: string[];
+    };
     BehaviorReadiness: {
       /** @description The behavior's path pattern; `*` for the default behavior. */
       pathPattern: string;
+      /** @description What reaches origin-request on this behavior, one entry per policy that sends things on. Set on the behaviors a rule runs on. */
+      forwards?: {
+        headers: components["schemas"]["Passed"][];
+        cookies: components["schemas"]["Passed"][];
+      };
       /**
        * @description `notOurs`: our function does not run here, so no rule does. `noOriginRequest`: the function is not associated at origin-request, where country rules run. `viewerHostMissing`: origin-request never learns the viewer's hostname, so no rule matches. `countryNotForwarded`: no policy asks for the country, so country rules are skipped. `cachedWithoutCountry`: caches, and the country is not in the cache key. `cachedByOriginHeaders`: the same, but only when the origin asks for a copy to be kept.
        * @enum {string}
@@ -578,6 +597,7 @@ export interface components {
          */
         code:
           | "BAD_REQUEST"
+          | "CONDITION_NOT_FORWARDED"
           | "FORBIDDEN"
           | "GEO_REWRITE_UNSAFE"
           | "GEO_UNVERIFIED"
@@ -782,7 +802,7 @@ export interface components {
         "application/json": components["schemas"]["Error"];
       };
     };
-    /** @description `RULE_EXISTS`: that priority is already taken for this host and rule type. Priority is part of a rule's key, so two rules cannot share one. Nothing was written — on a move, neither the rule being moved nor the one already there. `GEO_REWRITE_UNSAFE`: a country rewrite on a behavior that caches without CloudFront-Viewer-Country in its cache key, so the rewritten page would be served to every country; it cannot be overridden. `GEO_UNVERIFIED`: a country rewrite whose distribution could not be read; repeat with `confirmUnverifiedGeo=true` to save it anyway. */
+    /** @description `RULE_EXISTS`: that priority is already taken for this host and rule type. Priority is part of a rule's key, so two rules cannot share one. Nothing was written — on a move, neither the rule being moved nor the one already there. `GEO_REWRITE_UNSAFE`: a country rewrite on a behavior that caches without CloudFront-Viewer-Country in its cache key, so the rewritten page would be served to every country; it cannot be overridden. `GEO_UNVERIFIED`: a country rewrite whose distribution could not be read; repeat with `confirmUnverifiedGeo=true` to save it anyway. `CONDITION_NOT_FORWARDED`: a rewrite negating a header or cookie that a behavior serving it does not send on to origin-request, so the condition holds for every viewer; add it to the origin request policy. */
     RuleConflict: {
       headers: {
         [name: string]: unknown;

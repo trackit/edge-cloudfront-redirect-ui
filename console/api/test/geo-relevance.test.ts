@@ -142,7 +142,12 @@ describe("geoDecision", () => {
   it("blocks a country rewrite served by a behavior caching without the country", () => {
     expect(
       geoDecision("rewrite", [path("/shop"), country], checked(ORDER)),
-    ).toEqual({ outcome: "blocked", relevant: [dflt], ambiguous: false });
+    ).toEqual({
+      outcome: "blocked",
+      relevant: [dflt],
+      ambiguous: false,
+      dropped: [],
+    });
   });
 
   it("does not block a rewrite on the uncached geo behavior (the recommended setup)", () => {
@@ -184,5 +189,257 @@ describe("geoDecision", () => {
       "unverifiable",
     );
     expect(geoDecision("redirect", [country], unknown).outcome).toBe("warn");
+  });
+});
+
+describe("a rewrite that negates a header or cookie", () => {
+  const passes = (headers: string[], cookies: string[] | "all" = []) => ({
+    headers: [{ all: false, names: headers, except: [] }],
+    cookies: [
+      cookies === "all"
+        ? { all: true, names: [], except: [] }
+        : { all: false, names: cookies, except: [] },
+    ],
+  });
+  const on = (forwards: ReturnType<typeof passes>): BehaviorReadiness[] => [
+    { pathPattern: "*", verdict: "ok", forwards },
+  ];
+  const notHeader = (name: string, over: Record<string, unknown> = {}) => ({
+    matchType: "header",
+    headerName: name,
+    matchOperator: "equals",
+    matchValue: "1",
+    negate: true,
+    ...over,
+  });
+  const notCookie = (
+    matchValue: string,
+    over: Record<string, unknown> = {},
+  ) => ({
+    matchType: "cookie",
+    matchOperator: "contains",
+    matchValue,
+    negate: true,
+    ...over,
+  });
+
+  it("is blocked when the behavior drops the header, which then matches every viewer", () => {
+    expect(
+      geoDecision("rewrite", [notHeader("X-Beta")], checked(on(passes([])))),
+    ).toMatchObject({
+      outcome: "blocked",
+      dropped: [{ pathPattern: "*", matchType: "header", name: "X-Beta" }],
+    });
+  });
+
+  it("is ok when the header is sent on, whatever its case", () => {
+    expect(
+      geoDecision(
+        "rewrite",
+        [notHeader("X-Beta")],
+        checked(on(passes(["x-beta"]))),
+      ).outcome,
+    ).toBe("ok");
+  });
+
+  it("treats notEquals as a negation too", () => {
+    expect(
+      geoDecision(
+        "rewrite",
+        [notHeader("X-Beta", { negate: false, matchOperator: "notEquals" })],
+        checked(on(passes([]))),
+      ).outcome,
+    ).toBe("blocked");
+  });
+
+  it("reads a cookie's name from its value, and needs every cookie when it cannot", () => {
+    expect(
+      geoDecision(
+        "rewrite",
+        [notCookie("beta=1")],
+        checked(on(passes([], ["beta"]))),
+      ).outcome,
+    ).toBe("ok");
+    expect(
+      geoDecision(
+        "rewrite",
+        [notCookie("beta=1")],
+        checked(on(passes([], ["other"]))),
+      ),
+    ).toMatchObject({
+      outcome: "blocked",
+      dropped: [{ matchType: "cookie", name: "beta" }],
+    });
+    expect(
+      geoDecision(
+        "rewrite",
+        [notCookie("beta.*", { matchOperator: "regex" })],
+        checked(on(passes([], ["beta"]))),
+      ).outcome,
+    ).toBe("blocked");
+    expect(
+      geoDecision(
+        "rewrite",
+        [notCookie("beta.*", { matchOperator: "regex" })],
+        checked(on(passes([], "all"))),
+      ).outcome,
+    ).toBe("ok");
+  });
+
+  it("honours allExcept", () => {
+    const allBut = (except: string[]): BehaviorReadiness[] => [
+      {
+        pathPattern: "*",
+        verdict: "ok",
+        forwards: { headers: [{ all: true, names: [], except }], cookies: [] },
+      },
+    ];
+    expect(
+      geoDecision("rewrite", [notHeader("X-Beta")], checked(allBut([])))
+        .outcome,
+    ).toBe("ok");
+    expect(
+      geoDecision("rewrite", [notHeader("X-Beta")], checked(allBut(["X-Beta"])))
+        .outcome,
+    ).toBe("blocked");
+  });
+
+  it("leaves a positive condition, a redirect and a disabled behavior alone", () => {
+    expect(
+      geoDecision(
+        "rewrite",
+        [notHeader("X-Beta", { negate: false })],
+        checked(on(passes([]))),
+      ).outcome,
+    ).toBe("ok");
+    // A redirect without a country runs at viewer-request, where every header is.
+    expect(
+      geoDecision("redirect", [notHeader("X-Beta")], checked(on(passes([]))))
+        .outcome,
+    ).toBe("ok");
+  });
+
+  it("is unverifiable when the distribution could not be read", () => {
+    expect(
+      geoDecision("rewrite", [notHeader("X-Beta")], {
+        status: "unknown",
+        cause: "transient",
+        reason: "r",
+      }).outcome,
+    ).toBe("unverifiable");
+  });
+
+  it("only looks at the behaviors serving the rule", () => {
+    const behaviors: BehaviorReadiness[] = [
+      { pathPattern: "/beta/*", verdict: "ok", forwards: passes(["X-Beta"]) },
+      { pathPattern: "*", verdict: "ok", forwards: passes([]) },
+    ];
+    expect(
+      geoDecision(
+        "rewrite",
+        [path("/beta/x"), notHeader("X-Beta")],
+        checked(behaviors),
+      ).outcome,
+    ).toBe("ok");
+  });
+
+  it("does not count allViewer as sending on the headers CloudFront adds itself", () => {
+    const allViewer: BehaviorReadiness[] = [
+      {
+        pathPattern: "*",
+        verdict: "ok",
+        forwards: {
+          headers: [{ all: true, names: [], except: [] }],
+          cookies: [],
+        },
+      },
+    ];
+    expect(
+      geoDecision(
+        "rewrite",
+        [notHeader("CloudFront-Is-Mobile-Viewer", { matchValue: "true" })],
+        checked(allViewer),
+      ).outcome,
+    ).toBe("blocked");
+    expect(
+      geoDecision(
+        "rewrite",
+        [notHeader("CloudFront-Is-Mobile-Viewer", { matchValue: "true" })],
+        checked(on(passes(["CloudFront-Is-Mobile-Viewer"]))),
+      ).outcome,
+    ).toBe("ok");
+  });
+
+  it("judges by what the condition does with an absent value, not by negate alone", () => {
+    const dropped = checked(on(passes([])));
+    // Not negated, but true for "": just as dangerous.
+    expect(
+      geoDecision(
+        "rewrite",
+        [
+          notHeader("X-Beta", {
+            negate: false,
+            matchOperator: "regex",
+            matchValue: "^$",
+          }),
+        ],
+        dropped,
+      ).outcome,
+    ).toBe("blocked");
+    expect(
+      geoDecision(
+        "rewrite",
+        [notHeader("X-Beta", { negate: false, matchValue: "*" })],
+        dropped,
+      ).outcome,
+    ).toBe("blocked");
+    // negate on notEquals is equals: false for "", harmless.
+    expect(
+      geoDecision(
+        "rewrite",
+        [notHeader("X-Beta", { matchOperator: "notEquals" })],
+        dropped,
+      ).outcome,
+    ).toBe("ok");
+  });
+
+  it("needs every cookie for a value that does not name its cookie", () => {
+    expect(
+      geoDecision(
+        "rewrite",
+        [notCookie("premium")],
+        checked(on(passes([], ["tier"]))),
+      ).outcome,
+    ).toBe("blocked");
+    expect(
+      geoDecision(
+        "rewrite",
+        [notCookie("premium")],
+        checked(on(passes([], "all"))),
+      ).outcome,
+    ).toBe("ok");
+  });
+
+  it("compares cookie names regardless of case when the rule does", () => {
+    expect(
+      geoDecision(
+        "rewrite",
+        [notCookie("Beta=1")],
+        checked(on(passes([], ["beta"]))),
+      ).outcome,
+    ).toBe("ok");
+    expect(
+      geoDecision(
+        "rewrite",
+        [notCookie("Beta=1", { caseSensitive: true })],
+        checked(on(passes([], ["beta"]))),
+      ).outcome,
+    ).toBe("blocked");
+  });
+
+  it("always says what was dropped, empty when nothing was", () => {
+    expect(
+      geoDecision("rewrite", [path("/x")], checked(ORDER)).dropped,
+    ).toEqual([]);
   });
 });

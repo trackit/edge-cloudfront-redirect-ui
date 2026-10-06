@@ -121,7 +121,7 @@ const only = (result: GeoReadiness): string | undefined =>
 describe("evaluateDistribution", () => {
   it("is ok when nothing is cached and the country is forwarded", () => {
     // The examples/infra setup, tested end to end on a sandbox.
-    expect(verdictOf(NO_CACHE, FORWARDS_COUNTRY)).toEqual({
+    expect(verdictOf(NO_CACHE, FORWARDS_COUNTRY)).toMatchObject({
       status: "checked",
       distributionId: ID,
       functionIdentified: false,
@@ -207,7 +207,7 @@ describe("evaluateDistribution", () => {
       new Map([["origin-req", FORWARDS_COUNTRY]]),
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       status: "checked",
       distributionId: ID,
       functionIdentified: false,
@@ -310,7 +310,7 @@ describe("evaluateDistribution", () => {
       new Map([["origin-req", FORWARDS_COUNTRY]]),
       OURS,
     );
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       status: "checked",
       distributionId: ID,
       functionIdentified: true,
@@ -411,7 +411,13 @@ describe("policy facts", () => {
         DefaultTTL: 0,
         MaxTTL: 0,
       } as CachePolicyConfig),
-    ).toEqual({ caches: false, cachesByDefault: false, keyHeaders: [] });
+    ).toEqual({
+      caches: false,
+      cachesByDefault: false,
+      keyHeaders: [],
+      passedHeaders: { all: false, names: [], except: [] },
+      passedCookies: { all: false, names: [], except: [] },
+    });
   });
 
   it("reads the whitelisted headers of a caching policy as its key", () => {
@@ -431,6 +437,12 @@ describe("policy facts", () => {
       caches: true,
       cachesByDefault: false,
       keyHeaders: ["CloudFront-Viewer-Country"],
+      passedHeaders: {
+        all: false,
+        names: ["CloudFront-Viewer-Country"],
+        except: [],
+      },
+      passedCookies: { all: false, names: [], except: [] },
     });
   });
 
@@ -459,6 +471,8 @@ describe("policy facts", () => {
       forwardedHeaders: [],
       forwardsAllViewer: true,
       exceptHeaders: ["x-a"],
+      passedHeaders: { all: true, names: [], except: ["x-a"] },
+      passedCookies: { all: false, names: [], except: [] },
     });
     expect(facts("allViewer")).toMatchObject({
       forwardsAllViewer: true,
@@ -786,6 +800,7 @@ describe("POST /targets/{id}/geo-readiness", () => {
         outcome: "blocked",
         relevant: [{ pathPattern: "*", verdict: "cachedWithoutCountry" }],
         ambiguous: true,
+        dropped: [],
       },
     });
     expect(asked).toEqual([
@@ -837,5 +852,121 @@ describe("POST /targets/{id}/geo-readiness", () => {
       requestContext: { http: { method: "POST" }, ...VIEWER },
     } as unknown as APIGatewayProxyEventV2);
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe("what reaches origin-request", () => {
+  it("reads the cookies and headers a cache policy sends on", () => {
+    const facts = (CookieBehavior: string, Items: string[]) =>
+      cachePolicyFacts({
+        Name: "p",
+        MinTTL: 0,
+        DefaultTTL: 0,
+        MaxTTL: 0,
+        ParametersInCacheKeyAndForwardedToOrigin: {
+          HeadersConfig: {
+            HeaderBehavior: "whitelist",
+            Headers: { Quantity: 1, Items: ["X-Device"] },
+          },
+          CookiesConfig: {
+            CookieBehavior,
+            Cookies: { Quantity: Items.length, Items },
+          },
+        },
+      } as unknown as CachePolicyConfig);
+
+    expect(facts("whitelist", ["beta"]).passedCookies).toEqual({
+      all: false,
+      names: ["beta"],
+      except: [],
+    });
+    expect(facts("allExcept", ["tracking"]).passedCookies).toEqual({
+      all: true,
+      names: [],
+      except: ["tracking"],
+    });
+    expect(facts("all", []).passedCookies).toMatchObject({ all: true });
+    expect(facts("none", []).passedCookies).toMatchObject({
+      all: false,
+      names: [],
+    });
+    expect(facts("none", []).passedHeaders).toEqual({
+      all: false,
+      names: ["X-Device"],
+      except: [],
+    });
+  });
+
+  it("reads the cookies and headers an origin request policy sends on", () => {
+    const facts = (HeaderBehavior: string, CookieBehavior: string) =>
+      originRequestFacts({
+        Name: "p",
+        HeadersConfig: {
+          HeaderBehavior,
+          Headers: { Quantity: 1, Items: ["X-Device"] },
+        },
+        CookiesConfig: {
+          CookieBehavior,
+          Cookies: { Quantity: 1, Items: ["beta"] },
+        },
+      } as unknown as OriginRequestPolicyConfig);
+
+    expect(facts("whitelist", "whitelist")).toMatchObject({
+      passedHeaders: { all: false, names: ["X-Device"] },
+      passedCookies: { all: false, names: ["beta"] },
+    });
+    expect(facts("allViewer", "all")).toMatchObject({
+      passedHeaders: { all: true, except: [] },
+      passedCookies: { all: true, except: [] },
+    });
+    expect(facts("allExcept", "allExcept")).toMatchObject({
+      passedHeaders: { all: true, except: ["X-Device"] },
+      passedCookies: { all: true, except: ["beta"] },
+    });
+  });
+
+  it("attaches what each behavior passes on, legacy settings included", () => {
+    const result = evaluateDistribution(
+      ID,
+      distribution(behavior(), [
+        behavior({
+          PathPattern: "/legacy/*",
+          CachePolicyId: undefined,
+          OriginRequestPolicyId: undefined,
+          MaxTTL: 0,
+          ForwardedValues: {
+            Headers: { Quantity: 1, Items: ["*"] },
+            Cookies: {
+              Forward: "whitelist",
+              WhitelistedNames: { Quantity: 1, Items: ["beta"] },
+            },
+          },
+        }),
+      ]),
+      new Map([["cache", NO_CACHE]]),
+      new Map([["origin-req", FORWARDS_COUNTRY]]),
+    );
+
+    expect(result.status === "checked" && result.behaviors).toMatchObject([
+      {
+        pathPattern: "/legacy/*",
+        forwards: {
+          headers: [{ all: true }],
+          cookies: [{ all: false, names: ["beta"] }],
+        },
+      },
+      {
+        pathPattern: "*",
+        forwards: {
+          headers: [
+            { all: false, names: [] },
+            {
+              all: false,
+              names: ["x-edgeroute-viewer-host", "CloudFront-Viewer-Country"],
+            },
+          ],
+        },
+      },
+    ]);
   });
 });

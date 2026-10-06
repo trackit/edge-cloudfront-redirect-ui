@@ -2,6 +2,40 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { GeoCheck, MatchCondition } from "../api";
 
+/**
+ * Whether saving this rule depends on the distribution: a rule reading the
+ * country, or a rewrite with a header or cookie condition — at origin-request
+ * one the behavior does not send on is absent for every viewer, and a
+ * condition that holds for an absent value then holds for everyone. Which
+ * conditions do is the API's call (`geoDecision`), so every such rewrite is
+ * asked about rather than guessed at here.
+ */
+export const needsDistributionCheck = (
+  kind: "redirect" | "rewrite",
+  matches: MatchCondition[],
+): boolean =>
+  matches.some((match) => match.matchType === "country") ||
+  (kind === "rewrite" &&
+    matches.some(
+      (match) => match.matchType === "header" || match.matchType === "cookie",
+    ));
+
+type Dropped = NonNullable<GeoCheck["decision"]["dropped"]>[number];
+
+/** "The default behavior does not send on the header X-Beta", for every one. */
+export const describeDropped = (dropped: Dropped[]): string =>
+  [
+    ...new Set(
+      dropped.map((d) => {
+        const where =
+          d.pathPattern === "*" ? "the default behavior" : d.pathPattern;
+        return d.name === null || d.name === undefined
+          ? `${where} does not send on every cookie`
+          : `${where} does not send on the ${d.matchType} ${d.name}`;
+      }),
+    ),
+  ].join("; ");
+
 export interface GeoCheckBody {
   kind: "redirect" | "rewrite";
   matches: MatchCondition[];

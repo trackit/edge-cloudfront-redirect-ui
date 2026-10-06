@@ -188,6 +188,20 @@ rewrite** the same way before writing it:
   `{"event":"geo-unverified-confirmed", principal, targetId, host, sk, cause}`,
   never with the rule's content.
 
+- **`409 CONDITION_NOT_FORWARDED`** for any rewrite — with or without a country
+  — with a header or cookie condition that **holds when the value is absent**
+  (a negation, `notEquals`, a regex like `^$`, a lone `*`) on a header or cookie
+  a behavior serving it does not send on to origin-request. CloudFront drops it
+  before the function runs, it reads as absent for every viewer, and the
+  condition then holds for everyone. Add it to the origin request policy (or
+  the cache key). The `CloudFront-*` headers CloudFront adds itself only count
+  when a policy names them: "all viewer headers" does not include them. A
+  cookie condition is tested against the whole `Cookie` header, so its name is
+  read off the value — `beta=1` needs `beta` (compared regardless of case
+  unless the condition is case-sensitive); a regex, a wildcard or a bare word
+  such as `premium` needs every cookie sent on. An unreadable distribution is
+  `GEO_UNVERIFIED`, as above.
+
 Redirects are never refused (a geo redirect is `no-store`: the same setup makes
 it miss viewers, not misdirect them), nor is a rule saved disabled. The check
 reads the same minute-old reading as the editor, and it happens at write time:

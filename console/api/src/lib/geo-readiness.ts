@@ -60,10 +60,29 @@ export type BehaviorVerdict =
   | "cachedWithoutCountry"
   | "cachedByOriginHeaders";
 
+/** Names a policy sends on to origin-request, or every one but `except`. */
+export interface Passed {
+  all: boolean;
+  names: string[];
+  except: string[];
+}
+
+/**
+ * What reaches origin-request on a behavior, one entry per policy that can
+ * send it on: a name reaches it if any entry lets it through. What does not is
+ * dropped, and reads as empty to a rule there.
+ */
+export interface Forwarding {
+  headers: Passed[];
+  cookies: Passed[];
+}
+
 export interface BehaviorReadiness {
   /** `*` for the default behavior, as CloudFront shows it. */
   pathPattern: string;
   verdict: BehaviorVerdict;
+  /** Set on the behaviors a rule runs on. */
+  forwards?: Forwarding;
 }
 
 /** Why a distribution could not be judged. */
@@ -96,6 +115,9 @@ export interface CachePolicyFacts {
   /** Keeps a copy even when the origin says nothing (MinTTL or DefaultTTL > 0). */
   cachesByDefault: boolean;
   keyHeaders: string[];
+  /** Headers and cookies in the key, which CloudFront also sends on. */
+  passedHeaders?: Passed;
+  passedCookies?: Passed;
 }
 
 /** What the evaluator needs of an origin request policy. */
@@ -106,6 +128,8 @@ export interface OriginRequestFacts {
   forwardsAllViewer: boolean;
   /** What `allExcept` leaves out; empty for every other behavior. */
   exceptHeaders: string[];
+  passedHeaders?: Passed;
+  passedCookies?: Passed;
 }
 
 export const cachePolicyFacts = (
@@ -124,6 +148,17 @@ export const cachePolicyFacts = (
       headers?.HeaderBehavior === "whitelist"
         ? (headers.Headers?.Items ?? [])
         : [],
+    passedHeaders: {
+      all: false,
+      names:
+        headers?.HeaderBehavior === "whitelist"
+          ? (headers.Headers?.Items ?? [])
+          : [],
+      except: [],
+    },
+    passedCookies: cookiesPassed(
+      config.ParametersInCacheKeyAndForwardedToOrigin?.CookiesConfig,
+    ),
   };
 };
 
@@ -147,7 +182,43 @@ export const originRequestFacts = (
       behavior === "allViewerAndWhitelistCloudFront" ||
       behavior === "allExcept",
     exceptHeaders: behavior === "allExcept" ? items : [],
+    passedHeaders: {
+      all:
+        behavior === "allViewer" ||
+        behavior === "allViewerAndWhitelistCloudFront" ||
+        behavior === "allExcept",
+      names:
+        behavior === "whitelist" ||
+        behavior === "allViewerAndWhitelistCloudFront"
+          ? items
+          : [],
+      except: behavior === "allExcept" ? items : [],
+    },
+    passedCookies: cookiesPassed(config.CookiesConfig),
   };
+};
+
+const NOTHING: Passed = { all: false, names: [], except: [] };
+
+/**
+ * A policy's cookie settings: `whitelist` names them, `all` and `allExcept`
+ * send every one (but the listed ones), `none` sends none.
+ */
+const cookiesPassed = (config?: {
+  CookieBehavior?: string;
+  Cookies?: { Items?: string[] };
+}): Passed => {
+  const items = config?.Cookies?.Items ?? [];
+  switch (config?.CookieBehavior) {
+    case "whitelist":
+      return { all: false, names: items, except: [] };
+    case "all":
+      return { all: true, names: [], except: [] };
+    case "allExcept":
+      return { all: true, names: [], except: items };
+    default:
+      return NOTHING;
+  }
 };
 
 const has = (names: string[], header: string): boolean =>
@@ -251,7 +322,11 @@ export const evaluateDistribution = (
             ? "cachedWithoutCountry"
             : "cachedByOriginHeaders"
           : "ok";
-    behaviors.push({ pathPattern, verdict });
+    behaviors.push({
+      pathPattern,
+      verdict,
+      forwards: forwardingOf(behavior, cache, origin),
+    });
   }
 
   if (behaviors.every((b) => b.verdict === "notOurs")) {
@@ -270,6 +345,60 @@ export const evaluateDistribution = (
     distributionId,
     functionIdentified: edgeFunctionArn !== undefined,
     behaviors,
+  };
+};
+
+/**
+ * One entry per policy that sends things on: the cache policy's key, then the
+ * origin request policy. Facts built before cookies were read (tests) fall back
+ * to the header fields they do carry.
+ */
+const forwardingOf = (
+  behavior: Behavior,
+  cache: CachePolicyFacts | undefined,
+  origin: OriginRequestFacts | undefined,
+): Forwarding => {
+  if (!behavior.CachePolicyId && !behavior.OriginRequestPolicyId) {
+    // Legacy settings: the forwarded values are both key and what is sent on.
+    const values = behavior.ForwardedValues;
+    const headers = values?.Headers?.Items ?? [];
+    const cookies = values?.Cookies;
+    return {
+      headers: [
+        headers.includes("*")
+          ? { all: true, names: [], except: [] }
+          : { all: false, names: headers, except: [] },
+      ],
+      cookies: [
+        cookies?.Forward === "all"
+          ? { all: true, names: [], except: [] }
+          : cookies?.Forward === "whitelist"
+            ? {
+                all: false,
+                names: cookies.WhitelistedNames?.Items ?? [],
+                except: [],
+              }
+            : NOTHING,
+      ],
+    };
+  }
+  return {
+    headers: [
+      cache?.passedHeaders ?? {
+        all: false,
+        names: cache?.keyHeaders ?? [],
+        except: [],
+      },
+      origin?.passedHeaders ?? {
+        all: origin?.forwardsAllViewer ?? false,
+        names: origin?.forwardedHeaders ?? [],
+        except: origin?.exceptHeaders ?? [],
+      },
+    ],
+    cookies: [
+      cache?.passedCookies ?? NOTHING,
+      origin?.passedCookies ?? NOTHING,
+    ],
   };
 };
 

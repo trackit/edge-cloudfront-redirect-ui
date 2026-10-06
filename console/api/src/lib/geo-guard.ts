@@ -1,6 +1,12 @@
 import { ApiError } from "./errors.js";
 import { getGeoReadinessChecker } from "./geo-readiness.js";
-import { geoDecision, readsCountry, type MatchLike } from "./geo-relevance.js";
+import {
+  geoDecision,
+  negatedReads,
+  readsCountry,
+  type DroppedCondition,
+  type MatchLike,
+} from "./geo-relevance.js";
 import type { Principal } from "./principal.js";
 import type { RuleItem } from "./rules-repository.js";
 import { getTargetsRepository } from "./targets-repository.js";
@@ -8,8 +14,22 @@ import { getTargetsRepository } from "./targets-repository.js";
 const label = (pattern: string): string =>
   pattern === "*" ? "the default behavior" : pattern;
 
+const describeDropped = (dropped: DroppedCondition[]): string =>
+  [
+    ...new Set(
+      dropped.map((d) =>
+        d.name === null
+          ? `${label(d.pathPattern)} does not send on every cookie`
+          : `${label(d.pathPattern)} does not send on the ${d.matchType} ${d.name}`,
+      ),
+    ),
+  ].join("; ");
+
 /**
- * Refuses a country rewrite the distribution would serve to the wrong viewers.
+ * Refuses a country rewrite the distribution would serve to the wrong viewers,
+ * and a rewrite negating a header or cookie its behavior drops before
+ * origin-request — absent for everyone there, so the condition holds for
+ * everyone.
  * The editor checks first, but this is what holds for a script or a direct
  * call. A redirect is never refused: it is `no-store`, so the worst it does is
  * miss viewers. A disabled rule is not checked — it runs nowhere — and is
@@ -35,7 +55,7 @@ export const assertGeoSafe = async ({
   const matches = (
     Array.isArray(item["matches"]) ? item["matches"] : []
   ) as MatchLike[];
-  if (!readsCountry(matches)) return;
+  if (!readsCountry(matches) && negatedReads(matches).length === 0) return;
 
   // resolveTarget has already turned an unknown target into a 404.
   const target = await getTargetsRepository().get(targetId);
@@ -49,6 +69,16 @@ export const assertGeoSafe = async ({
       : {}),
   });
   const decision = geoDecision("rewrite", matches, readiness);
+
+  if (decision.outcome === "blocked" && decision.dropped.length > 0) {
+    const what = describeDropped(decision.dropped);
+    throw new ApiError(
+      409,
+      "CONDITION_NOT_FORWARDED",
+      `This rewrite would fire for every viewer: ${what}, so the negated condition reads it as absent. Add it to the origin request policy`,
+      [{ path: "/matches", message: what }],
+    );
+  }
 
   if (decision.outcome === "blocked") {
     const where = decision.relevant
@@ -76,7 +106,7 @@ export const assertGeoSafe = async ({
     throw new ApiError(
       409,
       "GEO_UNVERIFIED",
-      `The distribution could not be checked: ${readiness.reason}. Confirm to save this country rewrite anyway`,
+      `The distribution could not be checked: ${readiness.reason}. Confirm to save this rewrite anyway`,
       [{ path: "/forwardSettings", message: readiness.reason }],
     );
   }

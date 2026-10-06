@@ -1108,3 +1108,77 @@ test("a disabled country rewrite saves even where it would be refused enabled", 
   await editor(page).getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => saves(api).length).toBe(1);
 });
+
+const notBetaRewrite = {
+  pk: HOST,
+  sk: "REWRITE#00100",
+  type: "frMatchRule",
+  matches: [
+    { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
+    {
+      matchType: "header",
+      headerName: "X-Beta",
+      matchOperator: "equals",
+      matchValue: "1",
+      negate: true,
+    },
+  ],
+  forwardSettings: { pathAndQS: "/old/shop", useIncomingQueryString: true },
+} as unknown as Rule;
+
+test("a rewrite negating a header its behavior drops says so and cannot be saved", async ({
+  page,
+  api,
+}) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([notBetaRewrite]);
+  api.setGeoCheck(
+    check([DEFAULT_OK], {
+      outcome: "blocked",
+      relevant: [DEFAULT_OK],
+      ambiguous: true,
+      dropped: [{ pathPattern: "*", matchType: "header", name: "X-Beta" }],
+    }),
+  );
+  await open(page);
+  await editFirst(page);
+
+  await expect(
+    editor(page)
+      .getByText(/does not send on the header X-Beta/)
+      .first(),
+  ).toBeVisible();
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+  await expect(
+    editor(page)
+      .getByText(/would fire for every viewer/)
+      .last(),
+  ).toBeVisible();
+  expect(saves(api)).toHaveLength(0);
+});
+
+test("a positive header condition the API finds harmless saves", async ({
+  page,
+  api,
+}) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([
+    {
+      ...notBetaRewrite,
+      matches: [
+        { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
+        {
+          matchType: "header",
+          headerName: "X-Beta",
+          matchOperator: "equals",
+          matchValue: "1",
+        },
+      ],
+    } as unknown as Rule,
+  ]);
+  await open(page);
+  await editFirst(page);
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+
+  await expect.poll(() => saves(api).length).toBe(1);
+});

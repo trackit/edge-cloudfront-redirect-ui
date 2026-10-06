@@ -15,7 +15,11 @@ import type {
   ValidationDetail,
 } from "../api";
 import { asApiError } from "../domain/rules";
-import { useGeoCheck } from "../domain/geoReadiness";
+import {
+  describeDropped,
+  needsDistributionCheck,
+  useGeoCheck,
+} from "../domain/geoReadiness";
 import {
   draftFromRule,
   emptyRedirect,
@@ -79,14 +83,15 @@ export default function RuleEditor({
   const [details, setDetails] = useState<ValidationDetail[]>([]);
   const [failure, setFailure] = useState<ApiError | null>(null);
   const [saving, setSaving] = useState(false);
-  const readsCountry = draft.matches.some(
-    (match) => match.matchType === "country",
-  );
+  // The distribution is asked about a rule that reads the country, and about
+  // a rewrite negating a header or cookie: both depend on what its behaviors
+  // send on to origin-request.
+  const checksDistribution = needsDistributionCheck(draft.kind, draft.matches);
   const { state: geo, recheck } = useGeoCheck(
     targetId,
     draft.kind,
     draft.matches,
-    readsCountry,
+    checksDistribution,
   );
   const [confirmUnverified, setConfirmUnverified] = useState(false);
   const [awaitingCheck, setAwaitingCheck] = useState(false);
@@ -118,7 +123,7 @@ export default function RuleEditor({
   // did not: its GEO_UNVERIFIED is the same case, confirmed the same way.
   const serverUnverified = failure?.code === "GEO_UNVERIFIED";
   const unverifiable =
-    readsCountry &&
+    checksDistribution &&
     draft.kind === "rewrite" &&
     !draft.disabled &&
     (geo.status === "failed" ||
@@ -142,7 +147,8 @@ export default function RuleEditor({
     // setup makes it miss viewers, never misdirect them. So only a rewrite
     // waits for the check — and not a disabled one, which runs nowhere and is
     // checked by the API when it is turned on.
-    const guarded = readsCountry && draft.kind === "rewrite" && !draft.disabled;
+    const guarded =
+      checksDistribution && draft.kind === "rewrite" && !draft.disabled;
     let decided: GeoCheck | null = geo.status === "ready" ? geo.check : null;
     if (guarded && geo.status === "loading") {
       // Saving before the check answers is how an unsafe rewrite got through.
@@ -164,7 +170,13 @@ export default function RuleEditor({
     const found = validateDraft(draft, taken);
     // Checked here rather than in validateDraft, which knows nothing of the
     // distribution.
-    if (outcome === "blocked" && decided !== null) {
+    const dropped = decided?.decision.dropped ?? [];
+    if (outcome === "blocked" && dropped.length > 0) {
+      found.push({
+        path: "/matches",
+        message: `would fire for every viewer: ${describeDropped(dropped)}, so the negated condition reads it as absent. Add it to the origin request policy.`,
+      });
+    } else if (outcome === "blocked" && decided !== null) {
       const unsafe = decided.decision.relevant
         .filter((b) => b.verdict === "cachedWithoutCountry")
         .map((b) =>
@@ -388,6 +400,8 @@ const headingFor = (error: ApiError, details: ValidationDetail[]): string => {
       return "This rewrite would be served to every country";
     case "GEO_UNVERIFIED":
       return "The distribution could not be checked";
+    case "CONDITION_NOT_FORWARDED":
+      return "This rewrite would fire for every viewer";
     default:
       return details.length > 0 ? "Check these details" : "Could not save";
   }

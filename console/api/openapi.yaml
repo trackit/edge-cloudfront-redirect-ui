@@ -1067,6 +1067,29 @@ components:
           description: >-
             True when the rule has no exact, case-sensitive path condition, so
             every behavior running the function may serve it.
+        dropped:
+          type: array
+          description: >-
+            Negated header and cookie conditions of a rewrite that a serving
+            behavior does not send on to origin-request — absent there for every
+            viewer, so the condition holds for everyone, and the rewrite is
+            `blocked`. Always present in the API's answers.
+          items:
+            type: object
+            additionalProperties: false
+            required: [pathPattern, matchType, name]
+            properties:
+              pathPattern:
+                type: string
+              matchType:
+                type: string
+                enum: [header, cookie]
+              name:
+                type: [string, "null"]
+                description: >-
+                  The header or cookie. `null` for a cookie whose name the
+                  condition's value does not say (a regex or a wildcard), which
+                  needs every cookie sent on.
     GeoReadiness:
       description: >-
         `checked`: the distribution was read, and each behavior carries its own
@@ -1119,6 +1142,22 @@ components:
                 else — see the console API logs.
             reason:
               type: string
+    Passed:
+      description: Names a policy sends on to origin-request, or every one but `except`.
+      type: object
+      additionalProperties: false
+      required: [all, names, except]
+      properties:
+        all:
+          type: boolean
+        names:
+          type: array
+          items:
+            type: string
+        except:
+          type: array
+          items:
+            type: string
     BehaviorReadiness:
       type: object
       additionalProperties: false
@@ -1127,6 +1166,22 @@ components:
         pathPattern:
           type: string
           description: The behavior's path pattern; `*` for the default behavior.
+        forwards:
+          description: >-
+            What reaches origin-request on this behavior, one entry per policy
+            that sends things on. Set on the behaviors a rule runs on.
+          type: object
+          additionalProperties: false
+          required: [headers, cookies]
+          properties:
+            headers:
+              type: array
+              items:
+                $ref: "#/components/schemas/Passed"
+            cookies:
+              type: array
+              items:
+                $ref: "#/components/schemas/Passed"
         verdict:
           type: string
           enum:
@@ -1365,6 +1420,7 @@ components:
                 the addressed resource does not exist within a known target.
               enum:
                 - BAD_REQUEST
+                - CONDITION_NOT_FORWARDED
                 - FORBIDDEN
                 - GEO_REWRITE_UNSAFE
                 - GEO_UNVERIFIED
@@ -1486,6 +1542,9 @@ components:
         rewritten page would be served to every country; it cannot be
         overridden. `GEO_UNVERIFIED`: a country rewrite whose distribution could
         not be read; repeat with `confirmUnverifiedGeo=true` to save it anyway.
+        `CONDITION_NOT_FORWARDED`: a rewrite negating a header or cookie that a
+        behavior serving it does not send on to origin-request, so the
+        condition holds for every viewer; add it to the origin request policy.
       content:
         application/json:
           schema:

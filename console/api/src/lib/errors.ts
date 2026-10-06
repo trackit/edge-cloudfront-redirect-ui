@@ -8,6 +8,7 @@ import type { ApiResponse } from "../context.js";
  */
 export const ERROR_CODES = [
   "BAD_REQUEST",
+  "CONDITION_NOT_FORWARDED",
   "FORBIDDEN",
   "GEO_REWRITE_UNSAFE",
   "GEO_UNVERIFIED",

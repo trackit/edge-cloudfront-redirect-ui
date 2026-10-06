@@ -196,6 +196,13 @@ redirect that also has a `country` one. Rewrites are not restricted: they
 always ran at origin-request, so those conditions already depended on the
 policies there.
 
+A rewrite whose header or cookie condition holds for an empty value — a
+negation, say — has the same flaw: one the behavior does not send on reads as
+empty, and the condition holds for everyone. So the
+console API refuses it unless the behavior sends that header or cookie on (see
+[the write guard](../../console/api/infra/README.md#the-write-guard)). The
+edge itself does not second-guess it: it cannot see the policies.
+
 The edge enforces the same rule rather than trusting the schema alone: it reads
 DynamoDB directly, so a script or a restored backup can still write such an
 item. One found there is never evaluated, and logged once per execution

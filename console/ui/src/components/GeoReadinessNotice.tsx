@@ -1,4 +1,5 @@
 import type { BehaviorReadiness, GeoCheck } from "../api";
+import { describeDropped } from "../domain/geoReadiness";
 
 interface Props {
   /** The API's reading and its decision for the rule being edited. */
@@ -80,6 +81,21 @@ export default function GeoReadinessNotice({
       settings to leave out the ones running someone else&apos;s.
     </p>
   );
+
+  const dropped = decision.dropped ?? [];
+  if (dropped.length > 0) {
+    return (
+      <div className="callout is-warn geo-readiness" role="status">
+        <div>
+          <strong>This rewrite would fire for every viewer.</strong>{" "}
+          {describeDropped(dropped)}: CloudFront drops it before origin-request,
+          so the negated condition reads it as absent.{" "}
+          <strong>It cannot be saved until that is fixed.</strong> Fix: add it
+          to the origin request policy of that behavior. {recheck}
+        </div>
+      </div>
+    );
+  }
 
   const failing = decision.relevant.filter((b) => b.verdict !== "ok");
   if (failing.length === 0) return unnamed || null;

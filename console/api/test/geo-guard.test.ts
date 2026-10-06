@@ -256,4 +256,81 @@ describe("country rewrite write guard", () => {
     expect(res.statusCode).toBe(201);
     expect(consulted).toBe(0);
   });
+
+  describe("a rewrite negating a header or cookie", () => {
+    const notBeta = {
+      matchType: "header",
+      headerName: "X-Beta",
+      matchOperator: "equals",
+      matchValue: "1",
+      negate: true,
+    };
+    const forwarding = (headers: string[]): GeoReadiness => ({
+      status: "checked",
+      distributionId: "EQFO7A1FE1EPJ",
+      functionIdentified: true,
+      behaviors: [
+        {
+          pathPattern: "*",
+          verdict: "ok",
+          forwards: {
+            headers: [{ all: false, names: headers, except: [] }],
+            cookies: [],
+          },
+        },
+      ],
+    });
+
+    it("is refused when the behavior drops the header, and says which one", async () => {
+      readiness = forwarding([]);
+      const res = await handler(
+        event("POST", BASE, geoRewrite({ matches: [SHOP, notBeta] })),
+      );
+      expect(res.statusCode).toBe(409);
+      const body = JSON.parse(res.body ?? "null") as {
+        error: { code: string; message: string };
+      };
+      expect(body.error.code).toBe("CONDITION_NOT_FORWARDED");
+      expect(body.error.message).toContain("X-Beta");
+    });
+
+    it("saves when the header is sent on", async () => {
+      readiness = forwarding(["X-Beta"]);
+      const res = await handler(
+        event("POST", BASE, geoRewrite({ matches: [SHOP, notBeta] })),
+      );
+      expect(res.statusCode).toBe(201);
+    });
+
+    it("asks for a confirmation when the distribution could not be read", async () => {
+      readiness = { status: "unknown", cause: "transient", reason: "r" };
+      vi.spyOn(console, "info").mockImplementation(() => {});
+      const refused = await handler(
+        event("POST", BASE, geoRewrite({ matches: [SHOP, notBeta] })),
+      );
+      expect(errorCode(refused.body)).toBe("GEO_UNVERIFIED");
+      expect(
+        (JSON.parse(refused.body ?? "null") as { error: { message: string } })
+          .error.message,
+      ).not.toMatch(/country/i);
+      const accepted = await handler(
+        event("POST", BASE, geoRewrite({ matches: [SHOP, notBeta] }), {
+          confirmUnverifiedGeo: "true",
+        }),
+      );
+      expect(accepted.statusCode).toBe(201);
+    });
+
+    it("does not consult the distribution for a positive header condition", async () => {
+      const res = await handler(
+        event(
+          "POST",
+          BASE,
+          geoRewrite({ matches: [SHOP, { ...notBeta, negate: false }] }),
+        ),
+      );
+      expect(res.statusCode).toBe(201);
+      expect(consulted).toBe(0);
+    });
+  });
 });
