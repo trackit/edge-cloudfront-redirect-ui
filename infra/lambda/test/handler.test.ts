@@ -741,3 +741,24 @@ describe("resilience", () => {
     expect((result as CloudFrontResultResponse).status).toBeUndefined();
   });
 });
+
+describe("a redirect a capture would move off the site", () => {
+  it("never answers with a Location on another host", async () => {
+    withRules(
+      redirectRule({
+        redirectURL: "/$1",
+        matches: [
+          { matchType: "regex", matchOperator: "regex", matchValue: "^/(.*)$" },
+        ],
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.viewerRequest()
+        .withUri("//evil.com")
+        .build(),
+    )) as CloudFrontResultResponse;
+
+    expect(result.headers?.["location"]?.[0]?.value).toBe("/evil.com");
+  });
+});

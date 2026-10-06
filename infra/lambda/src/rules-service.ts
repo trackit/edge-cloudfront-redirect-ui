@@ -13,6 +13,7 @@ import { buildFullUrl } from "./lib/build-full-url.js";
 import { buildRegex } from "./lib/build-regex.js";
 import { checkAkamaiVariant } from "./lib/check-akamai-variant.js";
 import { getMatchSource } from "./lib/get-match-source.js";
+import { keepOnSite } from "./lib/redirect-target.js";
 
 const splitPath = (path: string): { pathname: string; search: string } => {
   const [pathname = "", ...rest] = path.split("?");
@@ -24,6 +25,12 @@ const splitPath = (path: string): { pathname: string; search: string } => {
 
 export class RulesService {
   private readonly cache: TtlCache<RedirectRule[]>;
+  /**
+   * Rules already reported for a target a capture moved off the site — said
+   * once per rule and execution environment, not once per request. Bounded by
+   * the number of rules, which the table bounds.
+   */
+  private readonly refusedOffSite = new Set<string>();
 
   constructor(
     private readonly repo: RuleRepository,
@@ -127,7 +134,21 @@ export class RulesService {
     return match.negate ? !isMatch : isMatch;
   }
 
-  private formatResult(rule: RedirectRule, params: RequestParams): MatchResult {
+  /** The rule's key only: the viewer's URL is what made it unsafe, and it stays out of the log. */
+  private reportOffSite(rule: RedirectRule): void {
+    const key = `${rule.pk}:${rule.sk}`;
+    if (this.refusedOffSite.has(key)) return;
+    this.refusedOffSite.add(key);
+    console.warn(
+      "redirect-rules: not redirecting, a capture would send the viewer off the site",
+      { host: rule.pk, sk: rule.sk },
+    );
+  }
+
+  private formatResult(
+    rule: RedirectRule,
+    params: RequestParams,
+  ): MatchResult | null {
     const { pathname, search } = splitPath(params.path);
 
     let targetString =
@@ -146,10 +167,19 @@ export class RulesService {
     targetString = appendQueryStringIfNeeded(targetString, search, rule);
 
     if (rule.type === "erMatchRule") {
+      const redirectURL = keepOnSite(
+        rule.redirectURL,
+        targetString,
+        params.hostname,
+      );
+      if (redirectURL === null) {
+        this.reportOffSite(rule);
+        return null;
+      }
       return {
         type: "redirect",
         statusCode: rule.statusCode,
-        redirectURL: targetString,
+        redirectURL,
       };
     }
 
