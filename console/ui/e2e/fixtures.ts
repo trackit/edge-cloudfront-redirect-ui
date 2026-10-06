@@ -56,6 +56,8 @@ export interface ApiStub {
    * to force a 409 and exercise the import's per-row failure path.
    */
   createRuleReply: (reply: { status: number; body: unknown }) => void;
+  /** Makes `GET …/hosts/{host}/rules` answer a 500 for this host only. */
+  failRulesListFor: (host: string) => void;
   /**
    * Answers every subsequent `POST …/rules/reorder` with this instead of
    * applying the order — for the specs where the refusal is the point.
@@ -139,6 +141,7 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
   let deleteHost: { status: number; body: unknown } | null = null;
   let rules: Rule[] = [];
   let createRule: { status: number; body: unknown } | null = null;
+  const failingRuleLists = new Set<string>();
   let reorder: { status: number; body: unknown } | null = null;
   let role: "editor" | "viewer" | undefined = "editor";
   let exchangeRole: "editor" | "viewer" = "editor";
@@ -333,6 +336,17 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
       // its rules on mount, so leaving this to the 500 would put every spec that
       // lands on a host into the "Could not load these rules" state.
       if (method === "GET" && RULES_COLLECTION.test(url.pathname)) {
+        const owner = url.pathname.match(/\/hosts\/([^/]+)\/rules$/);
+        if (owner && failingRuleLists.has(decodeURIComponent(owner[1] ?? ""))) {
+          await route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify(
+              errorBody("INTERNAL", "rules table unavailable"),
+            ),
+          });
+          return;
+        }
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -415,6 +429,9 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
     },
     setRules: (next) => {
       rules = next;
+    },
+    failRulesListFor: (host) => {
+      failingRuleLists.add(host);
     },
     createRuleReply: (reply) => {
       createRule = reply;

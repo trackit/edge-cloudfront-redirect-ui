@@ -301,10 +301,21 @@ export function useRules(targetId: string, host: string) {
           }
           if (used.size > 0) cursor = Math.max(...used) + 1;
           for (const rule of existing) present.add(ruleFingerprint(rule));
-        } catch {
-          // Could not read the host's rules — start from zero, treat nothing as
-          // already present, and let any real collision surface as a per-row
-          // failure below rather than aborting.
+        } catch (caught) {
+          // Not "start from zero": priority is evaluation order at the edge, and
+          // a host whose live rules are unknown would get the imported ones in
+          // front of them. Nothing is written for it; every row says why, and
+          // importing the same file again finishes the job once it reads.
+          const err = asApiError(caught, "the API did not answer");
+          for (const { sourceIndex } of group) {
+            done++;
+            failures.push({
+              sourceIndex,
+              message: `could not read the existing rules of ${ruleHost} (${err.message}) — nothing was imported for it, import again`,
+            });
+            onProgress?.({ done, total: items.length });
+          }
+          continue;
         }
 
         for (const { input, sourceIndex } of group) {
