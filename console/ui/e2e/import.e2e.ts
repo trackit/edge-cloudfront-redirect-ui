@@ -261,6 +261,67 @@ test("routes a hostname-conditioned rule to its own host", async ({
   });
 });
 
+test("imports nothing for a host whose existing rules could not be read", async ({
+  page,
+  api,
+}) => {
+  // Starting from priority 0 on a host whose live rules are unknown would put
+  // imported rules in front of them at the edge. That host is skipped and said
+  // so; the others in the file still land.
+  await seedStorage(page, {
+    distributions: [prod],
+    current: prod.distributionId,
+  });
+  api.setHosts([host("www.example.com")]);
+  api.setRules([]);
+  api.failRulesListFor("support.example.com");
+  await page.goto("/console/hosts/www.example.com");
+  await expect(
+    page.getByRole("heading", { name: "www.example.com" }),
+  ).toBeVisible();
+
+  const json = JSON.stringify([
+    {
+      name: "Home",
+      matchURL: "/old-home",
+      redirectURL: "/new-home",
+      statusCode: 301,
+    },
+    {
+      name: "Support",
+      redirectURL: "https://help.example.com",
+      statusCode: 301,
+      matches: [
+        {
+          matchType: "hostname",
+          matchOperator: "equals",
+          matchValue: "support.example.com",
+        },
+      ],
+    },
+  ]);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByPlaceholder(/Paste an Edge Redirector/).fill(json);
+  await page.getByRole("button", { name: /Import 2 rules/ }).click();
+
+  await expect(page.getByText("Imported 1 rule.")).toBeVisible();
+  await expect(
+    page.getByText(
+      /could not read the existing rules of support\.example\.com/,
+    ),
+  ).toBeVisible();
+
+  const posts = api.calls.filter(
+    (call) => call.method === "POST" && /\/rules$/.test(call.url),
+  );
+  expect(
+    posts.filter((c) => c.url.includes("/hosts/support.example.com/")),
+  ).toHaveLength(0);
+  expect(
+    posts.filter((c) => c.url.includes("/hosts/www.example.com/")),
+  ).toHaveLength(1);
+});
+
 /**
  * A domain-move rule as a real export writes it: the visible condition is the
  * Akamai idiom for "everything", and the guard that actually decides is the
