@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   OTHER_GROUP,
   codeFromQuery,
@@ -7,6 +7,7 @@ import {
   matchesCountryQuery,
 } from "../domain/countries";
 import { COUNTRY_CODES } from "../domain/countries.gen";
+import { nextIndex } from "../domain/rovingFocus";
 import { IconCheck, IconPlus, IconSearch } from "./icons";
 import Toggleable from "./Toggleable";
 
@@ -69,6 +70,35 @@ export default function CountryPicker({ codes, excluded, onChange }: Props) {
 
   const unknown = codes.filter((code) => !isKnown(code));
 
+  // A roving tabindex: the grid is one tab stop, at the chip last moved to,
+  // and the arrows move within it. Two hundred and fifty tab stops is a wall
+  // for anyone on a keyboard. Same look either way — only focus moves.
+  const flat = visible.flatMap((group) => group.codes);
+  const [active, setActive] = useState(0);
+  const chips = useRef(new Map<string, HTMLButtonElement>());
+  const activeIndex = Math.min(active, Math.max(flat.length - 1, 0));
+  useEffect(() => {
+    if (active !== activeIndex) setActive(activeIndex);
+  }, [active, activeIndex]);
+
+  /** How many chips the first row holds as laid out now. */
+  const columns = (): number => {
+    const tops = flat
+      .map((code) => chips.current.get(code)?.offsetTop)
+      .filter((top): top is number => top !== undefined);
+    const first = tops[0];
+    return first === undefined ? 1 : tops.filter((top) => top === first).length;
+  };
+
+  const onChipKey = (event: React.KeyboardEvent<HTMLButtonElement>): void => {
+    const target = nextIndex(event.key, activeIndex, flat.length, columns());
+    if (target === null) return;
+    event.preventDefault();
+    setActive(target);
+    const code = flat[target];
+    if (code !== undefined) chips.current.get(code)?.focus();
+  };
+
   const toggle = (code: string): void => {
     onChange({
       codes: selected.has(code)
@@ -115,7 +145,7 @@ export default function CountryPicker({ codes, excluded, onChange }: Props) {
         />
       </div>
 
-      <div className="country-groups">
+      <div className="country-groups" role="group" aria-label="Countries">
         {visible.map((group) => (
           <div className="country-group" key={group.label}>
             <p className="country-group-label">
@@ -133,6 +163,13 @@ export default function CountryPicker({ codes, excluded, onChange }: Props) {
                       isKnown(code) ? "" : " is-unknown"
                     }`}
                     aria-pressed={on}
+                    tabIndex={flat.indexOf(code) === activeIndex ? 0 : -1}
+                    ref={(element) => {
+                      if (element) chips.current.set(code, element);
+                      else chips.current.delete(code);
+                    }}
+                    onFocus={() => setActive(flat.indexOf(code))}
+                    onKeyDown={onChipKey}
                     onClick={() => toggle(code)}
                   >
                     {on && <IconCheck size={13} />}

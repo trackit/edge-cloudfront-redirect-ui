@@ -1005,6 +1005,40 @@ test("a country redirect does not wait for the check to save", async ({
   await expect.poll(() => saves(api).length, { timeout: 2000 }).toBe(1);
 });
 
+test("the country chips are one tab stop, walked with the arrow keys", async ({
+  page,
+}) => {
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  const chips = editor(page).locator(".country-chip");
+  const focusedIsChip = () =>
+    page.evaluate(
+      () => document.activeElement?.classList.contains("country-chip") ?? false,
+    );
+
+  await search(page).focus();
+  await page.keyboard.press("Tab");
+  await expect(chips.first()).toBeFocused();
+
+  // One more Tab leaves the grid instead of walking ~250 chips.
+  await page.keyboard.press("Tab");
+  expect(await focusedIsChip()).toBe(false);
+  await page.keyboard.press("Shift+Tab");
+  await expect(chips.first()).toBeFocused();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(chips.nth(1)).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(chips.last()).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(chips.first()).toBeFocused();
+
+  await page.keyboard.press("Space");
+  await expect(chips.first()).toHaveAttribute("aria-pressed", "true");
+});
+
 test("turning a country rewrite on from the list says why it was refused", async ({
   page,
   api,
