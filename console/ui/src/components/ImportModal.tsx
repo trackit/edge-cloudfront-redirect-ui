@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { IconArrow, IconCheck, IconClose, IconInfo, IconUpload } from "./icons";
 import FormatsPopover from "./FormatsPopover";
 import {
@@ -58,6 +59,21 @@ const PREVIEW_ROW_LIMIT = 200;
  *    "everything"), so the row would read as a catch-all while the real guard
  *    sits in a regex right next to it.
  */
+/**
+ * A URL with a line-break opportunity after each `/`, `?`, `&` and `=`.
+ *
+ * Browsers only wrap mono text at spaces and hyphens, so a long path otherwise
+ * breaks mid-segment (`cyclades/s` + `antorin`). `<wbr>` adds no character, so
+ * the text still copies as the URL it is.
+ */
+const breakable = (url: string): ReactNode =>
+  url.split(/(?<=[/?&=])/).map((part, index) => (
+    <Fragment key={index}>
+      {index > 0 && <wbr />}
+      {part}
+    </Fragment>
+  ));
+
 const fromLabel = (draft: RedirectDraft): string => {
   if (draft.matches.length === 0) return "(any)";
 
@@ -502,15 +518,17 @@ export default function ImportModal({
                           {row.draft.statusCode}
                         </span>
                       )}
-                      <span className="import-host">{row.host}</span>
+                      <span className="import-host" title={row.host}>
+                        {row.host}
+                      </span>
                       <span className="import-from mono">
-                        {fromLabel(row.draft)}
+                        {breakable(fromLabel(row.draft))}
                       </span>
                       <span className="import-arrow" aria-hidden="true">
                         <IconArrow size={14} />
                       </span>
                       <span className="import-to mono">
-                        {row.draft.redirectURL || "—"}
+                        {breakable(row.draft.redirectURL || "—")}
                       </span>
                       {note !== "" && (
                         <span className="import-note">{note}</span>
