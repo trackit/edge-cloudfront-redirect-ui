@@ -51,7 +51,7 @@ export interface ApiStub {
    */
   setRules: (rules: Rule[]) => void;
   /**
-   * What `GET /targets/{id}/geo-readiness` returns. Defaults to a distribution
+   * What `POST /targets/{id}/geo-readiness` returns as its reading. Defaults to a distribution
    * that passes, so a spec about something else sees no warning.
    */
   setGeoReadiness: (readiness: GeoReadiness) => void;
@@ -256,11 +256,14 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
         return;
       }
 
-      if (method === "GET" && url.pathname.endsWith("/geo-readiness")) {
+      if (method === "POST" && url.pathname.endsWith("/geo-readiness")) {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify(geoReadiness),
+          body: JSON.stringify({
+            readiness: geoReadiness,
+            decision: { outcome: "ok", relevant: [], ambiguous: false },
+          }),
         });
         return;
       }

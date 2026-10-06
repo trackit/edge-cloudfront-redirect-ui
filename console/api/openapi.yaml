@@ -293,32 +293,48 @@ paths:
   /targets/{id}/geo-readiness:
     parameters:
       - $ref: "#/components/parameters/TargetPathId"
-    get:
-      operationId: getGeoReadiness
-      summary: Whether the target's distribution can serve country conditions reliably.
+    post:
+      operationId: checkGeoForRule
+      summary: Whether the target's distribution can serve this rule's country condition.
       description: >-
-        Reads the CloudFront distribution the target is named after and gives a
-        verdict for each behavior that runs a Lambda@Edge function. A country
-        condition is evaluated at origin-request, so a behavior that caches
-        without `CloudFront-Viewer-Country` in its cache key serves one
-        viewer's copy to the next and the rule silently misses. Answers 200 for
-        a known target even when the distribution cannot be read: that is
-        `status: unknown` with the reason, never an error, because the check
-        only decides what the console warns about.
+        Reads the CloudFront distribution the target is named after, judges
+        each behavior, and decides for the rule in the body which behaviors can
+        serve it and what saving it should do — the same decision the rule
+        write routes apply. A country condition is evaluated at origin-request,
+        so a behavior that caches without `CloudFront-Viewer-Country` in its
+        cache key serves one viewer's copy to the next. Changes nothing despite POST — the body is the rule being written — but
+        is limited to editors, like the writes it previews. Answers 200 for a known target even
+        when the distribution cannot be read: that is `status: unknown` with the
+        cause, never an error.
       tags: [targets]
+      parameters:
+        - name: fresh
+          in: query
+          required: false
+          description: Read the distribution again instead of reusing a reading up to a minute old.
+          schema:
+            type: boolean
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeoCheckRequest"
       responses:
         "200":
-          description: The verdict.
+          description: The reading and the decision for this rule.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GeoReadiness"
+                $ref: "#/components/schemas/GeoCheck"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -495,6 +511,8 @@ paths:
           $ref: "#/components/responses/TargetUnreachable"
     post:
       operationId: createRule
+      parameters:
+        - $ref: "#/components/parameters/ConfirmUnverifiedGeo"
       summary: Create a rule for a host.
       description: >-
         The server owns both keys: `pk` is the host from the path and `sk` is
@@ -650,6 +668,8 @@ paths:
           $ref: "#/components/responses/TargetUnreachable"
     put:
       operationId: putRule
+      parameters:
+        - $ref: "#/components/parameters/ConfirmUnverifiedGeo"
       summary: Replace a rule.
       description: >-
         Full replace: a field omitted from the body is cleared, so send the whole
@@ -698,6 +718,8 @@ paths:
           $ref: "#/components/responses/TargetUnreachable"
     patch:
       operationId: toggleRule
+      parameters:
+        - $ref: "#/components/parameters/ConfirmUnverifiedGeo"
       summary: Enable or disable a rule.
       description: >-
         Flips `disabled` and changes nothing else. The only edit that is not a
@@ -733,6 +755,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/RuleConflict"
         "500":
           $ref: "#/components/responses/InternalError"
         "502":
@@ -773,6 +797,16 @@ components:
         HTTP API, which refuses the request before it reaches the Lambda — so an
         operation documented here as authenticated never runs without one.
   parameters:
+    ConfirmUnverifiedGeo:
+      name: confirmUnverifiedGeo
+      in: query
+      required: false
+      description: >-
+        Saves a country rewrite even though its distribution could not be
+        checked (409 `GEO_UNVERIFIED` otherwise). Applies to this write only and
+        is logged with who made it. Has no effect on `GEO_REWRITE_UNSAFE`.
+      schema:
+        type: boolean
     TargetPathId:
       name: id
       in: path
@@ -987,6 +1021,52 @@ components:
           type: string
         edgeFunctionArn:
           type: string
+    GeoCheckRequest:
+      description: The parts of a rule the decision reads.
+      type: object
+      additionalProperties: false
+      required: [kind, matches]
+      properties:
+        kind:
+          type: string
+          enum: [redirect, rewrite]
+        matches:
+          type: array
+          items:
+            $ref: "../../shared/redirect-rule.schema.json#/definitions/match"
+    GeoCheck:
+      type: object
+      additionalProperties: false
+      required: [readiness, decision]
+      properties:
+        readiness:
+          $ref: "#/components/schemas/GeoReadiness"
+        decision:
+          $ref: "#/components/schemas/GeoDecision"
+    GeoDecision:
+      type: object
+      additionalProperties: false
+      required: [outcome, relevant, ambiguous]
+      properties:
+        outcome:
+          type: string
+          enum: [ok, warn, blocked, unverifiable]
+          description: >-
+            `blocked`: a rewrite a relevant behavior would cache for every
+            country — the write routes refuse it. `unverifiable`: a rewrite on a
+            distribution that could not be read — saved only when confirmed.
+            `warn`: the rule may misfire or never run. Redirects are never
+            blocked.
+        relevant:
+          type: array
+          description: The behaviors that can serve the rule, in CloudFront's order.
+          items:
+            $ref: "#/components/schemas/BehaviorReadiness"
+        ambiguous:
+          type: boolean
+          description: >-
+            True when the rule has no exact, case-sensitive path condition, so
+            every behavior running the function may serve it.
     GeoReadiness:
       description: >-
         `checked`: the distribution was read, and each behavior carries its own
@@ -1286,6 +1366,8 @@ components:
               enum:
                 - BAD_REQUEST
                 - FORBIDDEN
+                - GEO_REWRITE_UNSAFE
+                - GEO_UNVERIFIED
                 - HOST_EXISTS
                 - INTERNAL
                 - INVALID_JSON
@@ -1396,9 +1478,14 @@ components:
             $ref: "#/components/schemas/Error"
     RuleConflict:
       description: >-
-        That priority is already taken for this host and rule type. Priority is
-        part of a rule's key, so two rules cannot share one. Nothing was written
-        — on a move, neither the rule being moved nor the one already there.
+        `RULE_EXISTS`: that priority is already taken for this host and rule
+        type. Priority is part of a rule's key, so two rules cannot share one.
+        Nothing was written — on a move, neither the rule being moved nor the
+        one already there. `GEO_REWRITE_UNSAFE`: a country rewrite on a behavior
+        that caches without CloudFront-Viewer-Country in its cache key, so the
+        rewritten page would be served to every country; it cannot be
+        overridden. `GEO_UNVERIFIED`: a country rewrite whose distribution could
+        not be read; repeat with `confirmUnverifiedGeo=true` to save it anyway.
       content:
         application/json:
           schema:

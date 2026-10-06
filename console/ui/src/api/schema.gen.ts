@@ -160,13 +160,13 @@ export interface paths {
       };
       cookie?: never;
     };
-    /**
-     * Whether the target's distribution can serve country conditions reliably.
-     * @description Reads the CloudFront distribution the target is named after and gives a verdict for each behavior that runs a Lambda@Edge function. A country condition is evaluated at origin-request, so a behavior that caches without `CloudFront-Viewer-Country` in its cache key serves one viewer's copy to the next and the rule silently misses. Answers 200 for a known target even when the distribution cannot be read: that is `status: unknown` with the reason, never an error, because the check only decides what the console warns about.
-     */
-    get: operations["getGeoReadiness"];
+    get?: never;
     put?: never;
-    post?: never;
+    /**
+     * Whether the target's distribution can serve this rule's country condition.
+     * @description Reads the CloudFront distribution the target is named after, judges each behavior, and decides for the rule in the body which behaviors can serve it and what saving it should do — the same decision the rule write routes apply. A country condition is evaluated at origin-request, so a behavior that caches without `CloudFront-Viewer-Country` in its cache key serves one viewer's copy to the next. Changes nothing despite POST — the body is the rule being written — but is limited to editors, like the writes it previews. Answers 200 for a known target even when the distribution cannot be read: that is `status: unknown` with the cause, never an error.
+     */
+    post: operations["checkGeoForRule"];
     delete?: never;
     options?: never;
     head?: never;
@@ -419,6 +419,27 @@ export interface components {
       roleArn?: string;
       edgeFunctionArn?: string;
     };
+    /** @description The parts of a rule the decision reads. */
+    GeoCheckRequest: {
+      /** @enum {string} */
+      kind: "redirect" | "rewrite";
+      matches: components["schemas"]["match"][];
+    };
+    GeoCheck: {
+      readiness: components["schemas"]["GeoReadiness"];
+      decision: components["schemas"]["GeoDecision"];
+    };
+    GeoDecision: {
+      /**
+       * @description `blocked`: a rewrite a relevant behavior would cache for every country — the write routes refuse it. `unverifiable`: a rewrite on a distribution that could not be read — saved only when confirmed. `warn`: the rule may misfire or never run. Redirects are never blocked.
+       * @enum {string}
+       */
+      outcome: "ok" | "warn" | "blocked" | "unverifiable";
+      /** @description The behaviors that can serve the rule, in CloudFront's order. */
+      relevant: components["schemas"]["BehaviorReadiness"][];
+      /** @description True when the rule has no exact, case-sensitive path condition, so every behavior running the function may serve it. */
+      ambiguous: boolean;
+    };
     /** @description `checked`: the distribution was read, and each behavior carries its own verdict, in CloudFront's matching order (the default behavior `*` last). Which behaviors matter for a rule depends on its path — see GeoDecision. `unknown`: the distribution could not be judged, see `cause` and `reason`. */
     GeoReadiness:
       | {
@@ -558,6 +579,8 @@ export interface components {
         code:
           | "BAD_REQUEST"
           | "FORBIDDEN"
+          | "GEO_REWRITE_UNSAFE"
+          | "GEO_UNVERIFIED"
           | "HOST_EXISTS"
           | "INTERNAL"
           | "INVALID_JSON"
@@ -759,7 +782,7 @@ export interface components {
         "application/json": components["schemas"]["Error"];
       };
     };
-    /** @description That priority is already taken for this host and rule type. Priority is part of a rule's key, so two rules cannot share one. Nothing was written — on a move, neither the rule being moved nor the one already there. */
+    /** @description `RULE_EXISTS`: that priority is already taken for this host and rule type. Priority is part of a rule's key, so two rules cannot share one. Nothing was written — on a move, neither the rule being moved nor the one already there. `GEO_REWRITE_UNSAFE`: a country rewrite on a behavior that caches without CloudFront-Viewer-Country in its cache key, so the rewritten page would be served to every country; it cannot be overridden. `GEO_UNVERIFIED`: a country rewrite whose distribution could not be read; repeat with `confirmUnverifiedGeo=true` to save it anyway. */
     RuleConflict: {
       headers: {
         [name: string]: unknown;
@@ -779,6 +802,8 @@ export interface components {
     };
   };
   parameters: {
+    /** @description Saves a country rewrite even though its distribution could not be checked (409 `GEO_UNVERIFIED` otherwise). Applies to this write only and is logged with who made it. Has no effect on `GEO_REWRITE_UNSAFE`. */
+    ConfirmUnverifiedGeo: boolean;
     /** @description Target id. */
     TargetPathId: string;
     /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
@@ -1060,9 +1085,12 @@ export interface operations {
       500: components["responses"]["InternalError"];
     };
   };
-  getGeoReadiness: {
+  checkGeoForRule: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description Read the distribution again instead of reusing a reading up to a minute old. */
+        fresh?: boolean;
+      };
       header?: never;
       path: {
         /** @description Target id. */
@@ -1070,19 +1098,24 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["GeoCheckRequest"];
+      };
+    };
     responses: {
-      /** @description The verdict. */
+      /** @description The reading and the decision for this rule. */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["GeoReadiness"];
+          "application/json": components["schemas"]["GeoCheck"];
         };
       };
       400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
       500: components["responses"]["InternalError"];
@@ -1215,7 +1248,10 @@ export interface operations {
   };
   createRule: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description Saves a country rewrite even though its distribution could not be checked (409 `GEO_UNVERIFIED` otherwise). Applies to this write only and is logged with who made it. Has no effect on `GEO_REWRITE_UNSAFE`. */
+        confirmUnverifiedGeo?: components["parameters"]["ConfirmUnverifiedGeo"];
+      };
       header?: never;
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
@@ -1322,7 +1358,10 @@ export interface operations {
   };
   putRule: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description Saves a country rewrite even though its distribution could not be checked (409 `GEO_UNVERIFIED` otherwise). Applies to this write only and is logged with who made it. Has no effect on `GEO_REWRITE_UNSAFE`. */
+        confirmUnverifiedGeo?: components["parameters"]["ConfirmUnverifiedGeo"];
+      };
       header?: never;
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
@@ -1393,7 +1432,10 @@ export interface operations {
   };
   toggleRule: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description Saves a country rewrite even though its distribution could not be checked (409 `GEO_UNVERIFIED` otherwise). Applies to this write only and is logged with who made it. Has no effect on `GEO_REWRITE_UNSAFE`. */
+        confirmUnverifiedGeo?: components["parameters"]["ConfirmUnverifiedGeo"];
+      };
       header?: never;
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
@@ -1425,6 +1467,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
+      409: components["responses"]["RuleConflict"];
       500: components["responses"]["InternalError"];
       502: components["responses"]["TargetUnreachable"];
     };

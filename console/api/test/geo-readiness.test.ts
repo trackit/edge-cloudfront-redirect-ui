@@ -30,7 +30,7 @@ import {
   setTargetsRepository,
 } from "../src/lib/targets-repository.js";
 import { FakeTargetsRepository } from "./fake-targets-repository.js";
-import { VIEWER } from "./principal-claims.js";
+import { EDITOR, VIEWER } from "./principal-claims.js";
 
 const ID = "EQFO7A1FE1EPJ";
 
@@ -715,16 +715,27 @@ describe("distributionIdOf", () => {
   });
 });
 
-describe("GET /targets/{id}/geo-readiness", () => {
-  let asked: ReadinessTarget[] = [];
+describe("POST /targets/{id}/geo-readiness", () => {
+  let asked: { target: ReadinessTarget; fresh: boolean }[] = [];
 
-  const event = (path: string): APIGatewayProxyEventV2 =>
+  const COUNTRY = {
+    matchType: "country",
+    matchOperator: "equals",
+    matchValue: "FR",
+  };
+
+  const event = (
+    path: string,
+    body: unknown,
+    query?: Record<string, string>,
+  ): APIGatewayProxyEventV2 =>
     ({
       rawPath: path,
       headers: {},
+      ...(query ? { queryStringParameters: query } : {}),
+      body: JSON.stringify(body),
       isBase64Encoded: false,
-      // A viewer: the route is read-only, and what it says is not a secret.
-      requestContext: { http: { method: "GET" }, ...VIEWER },
+      requestContext: { http: { method: "POST" }, ...EDITOR },
     }) as unknown as APIGatewayProxyEventV2;
 
   beforeEach(async () => {
@@ -739,8 +750,8 @@ describe("GET /targets/{id}/geo-readiness", () => {
       edgeFunctionArn: "arn:aws:lambda:us-east-1:123456789012:function:edge",
     });
     setTargetsRepository(targets);
-    setGeoReadinessChecker((target) => {
-      asked.push(target);
+    setGeoReadinessChecker((target, options) => {
+      asked.push({ target, fresh: options?.fresh === true });
       return Promise.resolve({
         status: "checked",
         distributionId: ID,
@@ -755,24 +766,76 @@ describe("GET /targets/{id}/geo-readiness", () => {
     resetGeoReadinessChecker();
   });
 
-  it("answers the verdict, checked under the target's role", async () => {
-    const res = await handler(event("/targets/t1/geo-readiness"));
+  it("answers the reading and the decision for the rule, checked under the target's role", async () => {
+    const res = await handler(
+      event("/targets/t1/geo-readiness", {
+        kind: "rewrite",
+        matches: [COUNTRY],
+      }),
+    );
 
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body ?? "null")).toMatchObject({
-      status: "checked",
+    expect(JSON.parse(res.body ?? "null")).toEqual({
+      readiness: {
+        status: "checked",
+        distributionId: ID,
+        functionIdentified: true,
+        behaviors: [{ pathPattern: "*", verdict: "cachedWithoutCountry" }],
+      },
+      decision: {
+        outcome: "blocked",
+        relevant: [{ pathPattern: "*", verdict: "cachedWithoutCountry" }],
+        ambiguous: true,
+      },
     });
     expect(asked).toEqual([
       {
-        name: ID,
-        roleArn: "arn:aws:iam::123456789012:role/edge",
-        edgeFunctionArn: "arn:aws:lambda:us-east-1:123456789012:function:edge",
+        target: {
+          name: ID,
+          roleArn: "arn:aws:iam::123456789012:role/edge",
+          edgeFunctionArn:
+            "arn:aws:lambda:us-east-1:123456789012:function:edge",
+        },
+        fresh: false,
       },
     ]);
   });
 
+  it("asks for a fresh reading on ?fresh=true", async () => {
+    await handler(
+      event(
+        "/targets/t1/geo-readiness",
+        { kind: "redirect", matches: [COUNTRY] },
+        { fresh: "true" },
+      ),
+    );
+    expect(asked[0]?.fresh).toBe(true);
+  });
+
+  it("400s a body that is not { kind, matches }", async () => {
+    for (const body of [
+      {},
+      { kind: "other", matches: [] },
+      { kind: "rewrite", matches: "nope" },
+      { kind: "rewrite", matches: [{ matchType: 1 }] },
+    ]) {
+      const res = await handler(event("/targets/t1/geo-readiness", body));
+      expect(res.statusCode).toBe(400);
+    }
+  });
+
   it("404s an unknown target", async () => {
-    const res = await handler(event("/targets/nope/geo-readiness"));
+    const res = await handler(
+      event("/targets/nope/geo-readiness", { kind: "rewrite", matches: [] }),
+    );
     expect(res.statusCode).toBe(404);
+  });
+
+  it("is refused to a viewer, like any route only a rule author needs", async () => {
+    const res = await handler({
+      ...event("/targets/t1/geo-readiness", { kind: "rewrite", matches: [] }),
+      requestContext: { http: { method: "POST" }, ...VIEWER },
+    } as unknown as APIGatewayProxyEventV2);
+    expect(res.statusCode).toBe(403);
   });
 });

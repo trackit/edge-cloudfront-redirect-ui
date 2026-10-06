@@ -22,6 +22,8 @@ export type Target = Schemas["Target"];
  * `GET /targets/{id}/geo-readiness` in the spec.
  */
 export type GeoReadiness = Schemas["GeoReadiness"];
+export type GeoCheck = Schemas["GeoCheck"];
+export type GeoDecision = Schemas["GeoDecision"];
 export type BehaviorReadiness = Schemas["BehaviorReadiness"];
 
 /** Body for creating a target. The server assigns `id`. */

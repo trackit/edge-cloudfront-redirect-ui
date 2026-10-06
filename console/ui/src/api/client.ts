@@ -1,6 +1,7 @@
 import { ApiError, toApiError } from "./error";
 import type {
-  GeoReadiness,
+  GeoCheck,
+  MatchCondition,
   HostSummary,
   Meta,
   Session,
@@ -44,6 +45,12 @@ const trimTrailingSlash = (url: string): string => url.replace(/\/+$/, "");
  * carrying a character with URL meaning.
  */
 const segment = (value: string): string => encodeURIComponent(value);
+
+/** Per-write options for the rule routes. */
+export interface WriteOptions {
+  /** Save a country rewrite even though its distribution could not be checked. */
+  confirmUnverifiedGeo?: boolean;
+}
 
 /**
  * Typed client for the console API.
@@ -134,6 +141,9 @@ export function createApiClient(options: ApiClientOptions = {}) {
 
   const hostsPath = (targetId: string) => `/targets/${segment(targetId)}/hosts`;
 
+  const confirmQuery = (options: WriteOptions): string =>
+    options.confirmUnverifiedGeo ? "?confirmUnverifiedGeo=true" : "";
+
   const rulesPath = (targetId: string, host: string) =>
     `${hostsPath(targetId)}/${segment(host)}/rules`;
 
@@ -190,12 +200,22 @@ export function createApiClient(options: ApiClientOptions = {}) {
       remove: (id: string) =>
         request<void>("DELETE", `/targets/${segment(id)}`),
       /**
-       * Whether the target's distribution caches in a way country conditions
-       * survive. Always 200 for a known target: one the API cannot read is
-       * `status: "unknown"` with a reason, not an error.
+       * Whether the target's distribution can serve this rule's country
+       * condition, and what saving it would do — the decision the rule writes
+       * apply. Always 200 for a known target: one the API cannot read is
+       * `status: "unknown"` with a cause, not an error. `fresh` reads the
+       * distribution again instead of reusing a recent reading.
        */
-      geoReadiness: (id: string) =>
-        request<GeoReadiness>("GET", `/targets/${segment(id)}/geo-readiness`),
+      geoCheck: (
+        id: string,
+        body: { kind: "redirect" | "rewrite"; matches: MatchCondition[] },
+        fresh = false,
+      ) =>
+        request<GeoCheck>(
+          "POST",
+          `/targets/${segment(id)}/geo-readiness${fresh ? "?fresh=true" : ""}`,
+          body,
+        ),
     },
 
     hosts: {
@@ -229,8 +249,21 @@ export function createApiClient(options: ApiClientOptions = {}) {
       list: (targetId: string, host: string) =>
         request<Rule[]>("GET", rulesPath(targetId, host)),
 
-      create: (targetId: string, host: string, input: RuleInput) =>
-        request<Rule>("POST", rulesPath(targetId, host), input),
+      /**
+       * `confirmUnverifiedGeo` saves a country rewrite whose distribution could
+       * not be checked — a 409 `GEO_UNVERIFIED` otherwise. For this write only.
+       */
+      create: (
+        targetId: string,
+        host: string,
+        input: RuleInput,
+        options: WriteOptions = {},
+      ) =>
+        request<Rule>(
+          "POST",
+          `${rulesPath(targetId, host)}${confirmQuery(options)}`,
+          input,
+        ),
 
       get: (targetId: string, host: string, sk: string) =>
         request<Rule>("GET", `${rulesPath(targetId, host)}/${segment(sk)}`),
@@ -240,10 +273,16 @@ export function createApiClient(options: ApiClientOptions = {}) {
        * required even when it is not changing — sending a different one moves
        * the rule, which is why `sk` in the path must stay the rule's current key.
        */
-      put: (targetId: string, host: string, sk: string, input: RuleInput) =>
+      put: (
+        targetId: string,
+        host: string,
+        sk: string,
+        input: RuleInput,
+        options: WriteOptions = {},
+      ) =>
         request<Rule>(
           "PUT",
-          `${rulesPath(targetId, host)}/${segment(sk)}`,
+          `${rulesPath(targetId, host)}/${segment(sk)}${confirmQuery(options)}`,
           input,
         ),
 

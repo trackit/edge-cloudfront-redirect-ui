@@ -12,8 +12,11 @@ const requests = new Map<string, Promise<GeoReadiness>>();
 const readinessOf = (targetId: string): Promise<GeoReadiness> => {
   let request = requests.get(targetId);
   if (!request) {
+    // Only the distribution's reading is used here; the rule-specific
+    // decision the endpoint also returns is wired into the editor separately.
     request = api.targets
-      .geoReadiness(targetId)
+      .geoCheck(targetId, { kind: "redirect", matches: [] })
+      .then((check) => check.readiness)
       .catch((caught: unknown): GeoReadiness => {
         // Forgotten so a later editor retries. Never an error on screen: this
         // only decides whether to warn, and must not get in the way of a rule.

@@ -6,6 +6,16 @@ import { composeRule, parseToggle } from "../lib/rule-input.js";
 import { parseReorder, planReorder } from "../lib/rule-order.js";
 import { getRulesRepository, type RuleItem } from "../lib/rules-repository.js";
 import { resolveTarget } from "../lib/targets-repository.js";
+import { assertGeoSafe } from "../lib/geo-guard.js";
+
+/** The write guard's inputs, from the request. See geo-guard.ts. */
+const guard = (req: ApiRequest, item: RuleItem): Promise<void> =>
+  assertGeoSafe({
+    targetId: req.params.targetId ?? "",
+    item,
+    confirmUnverified: req.query["confirmUnverifiedGeo"] === "true",
+    ...(req.principal ? { principal: req.principal } : {}),
+  });
 
 const ruleNotFound = (host: string, sk: string): ApiError =>
   ApiError.notFound(`No rule "${sk}" for host "${host}" in this target`);
@@ -56,7 +66,17 @@ export const toggleRule = async (req: ApiRequest): Promise<ApiResponse> => {
   parseSk(sk);
 
   const disabled = parseToggle(req.body);
-  const rule = await getRulesRepository(target).setDisabled(host, sk, disabled);
+  const repo = getRulesRepository(target);
+
+  // Turning a rule on is the moment it starts to run, so it is checked like a
+  // write. Turning one off never is.
+  if (!disabled) {
+    const current = await repo.get(host, sk);
+    if (!current) throw ruleNotFound(host, sk);
+    await guard(req, { ...current, disabled: false });
+  }
+
+  const rule = await repo.setDisabled(host, sk, disabled);
   if (!rule) throw ruleNotFound(host, sk);
   return json(200, rule);
 };
@@ -74,6 +94,7 @@ export const deleteRule = async (req: ApiRequest): Promise<ApiResponse> => {
 export const createRule = async (req: ApiRequest): Promise<ApiResponse> => {
   const target = await resolveTarget(req.params.targetId);
   const item = composeRule(req);
+  await guard(req, item);
 
   if (!(await getRulesRepository(target).create(item))) throw ruleExists(item);
   return json(201, item);
@@ -133,6 +154,7 @@ export const putRule = async (req: ApiRequest): Promise<ApiResponse> => {
   parseSk(sk);
 
   const item = composeRule(req);
+  await guard(req, item);
   const repo = getRulesRepository(target);
 
   if (item.sk === sk) {
