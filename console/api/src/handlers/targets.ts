@@ -158,6 +158,9 @@ export const getGeoReadiness = async (
     await getGeoReadinessChecker()({
       name: target.name,
       ...(target.roleArn ? { roleArn: target.roleArn } : {}),
+      ...(target.edgeFunctionArn
+        ? { edgeFunctionArn: target.edgeFunctionArn }
+        : {}),
     }),
   );
 };

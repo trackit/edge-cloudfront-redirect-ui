@@ -201,6 +201,8 @@ export const distributionIdOf = (name: string): string | null => {
 export interface ReadinessTarget {
   name: string;
   roleArn?: string;
+  /** Our function. Absent: every Lambda association counts as ours. */
+  edgeFunctionArn?: string;
 }
 
 export type GeoReadinessChecker = (

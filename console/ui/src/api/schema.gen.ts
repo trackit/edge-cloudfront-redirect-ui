@@ -396,6 +396,8 @@ export interface components {
       tableName: string;
       /** @description Optional IAM role the API assumes to read and write this target's rules table. Omit to use the API's own execution role, which only reaches tables its policy already covers. Required in practice for a target registered after deploy, or one in another account. */
       roleArn?: string;
+      /** @description Optional Lambda@Edge function serving this target's rules (the edge module's `viewer_request_lambda_arn` output), qualified or not. Lets the geo check ignore behaviors running another function. */
+      edgeFunctionArn?: string;
     };
     /** @description Update body. Same fields as TargetInput plus an optional `id`, which must equal the id in the path if present; a mismatch is a 400. Spelled out rather than composed with TargetInput because `allOf` cannot add a property to a schema that sets `additionalProperties: false`. */
     TargetUpdate: {
@@ -405,6 +407,7 @@ export interface components {
       region: string;
       tableName: string;
       roleArn?: string;
+      edgeFunctionArn?: string;
     };
     /** @description A registered target. `id` is server-generated and immutable. */
     Target: {
@@ -414,6 +417,7 @@ export interface components {
       region: string;
       tableName: string;
       roleArn?: string;
+      edgeFunctionArn?: string;
     };
     /** @description `ok`: every behavior running the function receives the country, and caches per country or not at all. `misconfigured`: at least one does not. `unknown`: the distribution could not be read, see `reason`. */
     GeoReadiness:

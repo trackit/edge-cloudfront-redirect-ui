@@ -286,6 +286,7 @@ describe("GET /targets/{id}/geo-readiness", () => {
       region: "us-east-1",
       tableName: "rules",
       roleArn: "arn:aws:iam::123456789012:role/edge",
+      edgeFunctionArn: "arn:aws:lambda:us-east-1:123456789012:function:edge",
     });
     setTargetsRepository(targets);
     setGeoReadinessChecker((target) => {
@@ -311,7 +312,11 @@ describe("GET /targets/{id}/geo-readiness", () => {
       status: "misconfigured",
     });
     expect(asked).toEqual([
-      { name: ID, roleArn: "arn:aws:iam::123456789012:role/edge" },
+      {
+        name: ID,
+        roleArn: "arn:aws:iam::123456789012:role/edge",
+        edgeFunctionArn: "arn:aws:lambda:us-east-1:123456789012:function:edge",
+      },
     ]);
   });
 

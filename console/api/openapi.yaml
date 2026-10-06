@@ -932,6 +932,13 @@ components:
             rules table. Omit to use the API's own execution role, which only
             reaches tables its policy already covers. Required in practice for a
             target registered after deploy, or one in another account.
+        edgeFunctionArn:
+          type: string
+          pattern: "^arn:aws[a-z-]*:lambda:us-east-1:\\d{12}:function:[a-zA-Z0-9-_]{1,64}(:(\\d+|\\$LATEST))?$"
+          description: >-
+            Optional Lambda@Edge function serving this target's rules (the edge
+            module's `viewer_request_lambda_arn` output), qualified or not. Lets
+            the geo check ignore behaviors running another function.
     TargetUpdate:
       description: >-
         Update body. Same fields as TargetInput plus an optional `id`, which must
@@ -958,6 +965,9 @@ components:
         roleArn:
           type: string
           pattern: "^arn:aws[a-z-]*:iam::\\d{12}:role/.+$"
+        edgeFunctionArn:
+          type: string
+          pattern: "^arn:aws[a-z-]*:lambda:us-east-1:\\d{12}:function:[a-zA-Z0-9-_]{1,64}(:(\\d+|\\$LATEST))?$"
     Target:
       description: A registered target. `id` is server-generated and immutable.
       type: object
@@ -974,6 +984,8 @@ components:
         tableName:
           type: string
         roleArn:
+          type: string
+        edgeFunctionArn:
           type: string
     GeoReadiness:
       description: >-

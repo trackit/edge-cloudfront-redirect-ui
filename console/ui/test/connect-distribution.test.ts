@@ -38,6 +38,7 @@ const targetExists = () =>
 const clientWith = (targets: {
   create: () => Promise<Target>;
   list?: () => Promise<Target[]>;
+  update?: (id: string, input: unknown) => Promise<Target>;
 }) =>
   ({
     targets: { list: () => Promise.resolve([]), ...targets },
@@ -129,5 +130,55 @@ describe("connectDistribution", () => {
     const client = clientWith({ create: () => Promise.reject(bug) });
 
     await expect(connectDistribution(draft, client)).rejects.toBe(bug);
+  });
+
+  describe("redirect function ARN", () => {
+    const FN = "arn:aws:lambda:us-east-1:123456789012:function:edge";
+
+    it("sends it when registering", async () => {
+      const create = vi.fn(() =>
+        Promise.resolve(target({ edgeFunctionArn: FN })),
+      );
+      await connectDistribution(
+        { ...draft, edgeFunctionArn: ` ${FN} ` },
+        clientWith({ create }),
+      );
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ edgeFunctionArn: FN }),
+      );
+    });
+
+    it("updates an already registered target whose ARN differs", async () => {
+      const update = vi.fn(() =>
+        Promise.resolve(target({ edgeFunctionArn: FN })),
+      );
+      const client = clientWith({
+        create: () => Promise.reject(targetExists()),
+        list: () => Promise.resolve([target()]),
+        update,
+      });
+
+      await connectDistribution({ ...draft, edgeFunctionArn: FN }, client);
+
+      expect(update).toHaveBeenCalledWith("t-1", {
+        name: "E1",
+        region: "us-east-1",
+        tableName: "rules-prod",
+        edgeFunctionArn: FN,
+      });
+    });
+
+    it("leaves an already registered target alone when the ARN is the same", async () => {
+      const update = vi.fn();
+      const client = clientWith({
+        create: () => Promise.reject(targetExists()),
+        list: () => Promise.resolve([target({ edgeFunctionArn: FN })]),
+        update,
+      });
+
+      await connectDistribution({ ...draft, edgeFunctionArn: FN }, client);
+
+      expect(update).not.toHaveBeenCalled();
+    });
   });
 });
