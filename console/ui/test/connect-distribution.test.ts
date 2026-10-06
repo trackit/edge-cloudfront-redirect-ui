@@ -168,6 +168,40 @@ describe("connectDistribution", () => {
       });
     });
 
+    it("still connects a viewer, who may not update the target", async () => {
+      const client = clientWith({
+        create: () => Promise.reject(targetExists()),
+        list: () => Promise.resolve([target()]),
+        update: () =>
+          Promise.reject(
+            new ApiError({
+              status: 403,
+              code: "FORBIDDEN",
+              message: "Your account has read-only access",
+            }),
+          ),
+      });
+
+      await expect(
+        connectDistribution({ ...draft, edgeFunctionArn: FN }, client),
+      ).resolves.toMatchObject({ targetId: "t-1" });
+    });
+
+    it("still fails on an update error that is not about permissions", async () => {
+      const client = clientWith({
+        create: () => Promise.reject(targetExists()),
+        list: () => Promise.resolve([target()]),
+        update: () =>
+          Promise.reject(
+            new ApiError({ status: 500, code: "INTERNAL", message: "boom" }),
+          ),
+      });
+
+      await expect(
+        connectDistribution({ ...draft, edgeFunctionArn: FN }, client),
+      ).rejects.toThrow("boom");
+    });
+
     it("leaves an already registered target alone when the ARN is the same", async () => {
       const update = vi.fn();
       const client = clientWith({

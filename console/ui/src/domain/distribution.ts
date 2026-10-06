@@ -95,13 +95,24 @@ export const connectDistribution = async (
     // Reconnecting reuses the registered target as it is, so a function ARN
     // typed now would otherwise never reach the API.
     if (edgeFunctionArn && existing.edgeFunctionArn !== edgeFunctionArn) {
-      await client.targets.update(existing.id, {
-        name: existing.name,
-        region: existing.region,
-        tableName: existing.tableName,
-        ...(existing.roleArn ? { roleArn: existing.roleArn } : {}),
-        edgeFunctionArn,
-      });
+      try {
+        await client.targets.update(existing.id, {
+          name: existing.name,
+          region: existing.region,
+          tableName: existing.tableName,
+          ...(existing.roleArn ? { roleArn: existing.roleArn } : {}),
+          edgeFunctionArn,
+        });
+      } catch (updateError) {
+        // A viewer may connect but not change the shared target. Connecting is
+        // what they asked for; the ARN stays as an editor set it.
+        if (
+          !(updateError instanceof ApiError) ||
+          updateError.code !== "FORBIDDEN"
+        ) {
+          throw updateError;
+        }
+      }
     }
 
     return { ...connected, targetId: existing.id };

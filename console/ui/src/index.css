@@ -1927,6 +1927,13 @@ button {
 .editor-section:first-of-type {
   margin-top: 0;
 }
+/* Only there to disable every field at once; no box of its own. */
+.editor-lock {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
 .editor-section > legend {
   padding: 0;
   margin-bottom: 12px;

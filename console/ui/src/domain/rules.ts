@@ -3,6 +3,7 @@ import { ApiError, api, isRedirect, priorityOf } from "../api";
 import { hostKey } from "./hostRoutes";
 import { PRIORITY_MAX } from "./ruleDraft";
 import type { Rule, RuleInput, ValidationDetail } from "../api";
+import type { WriteOptions } from "../api/client";
 
 /**
  * Loading and mutating one host's rules.
@@ -206,7 +207,8 @@ export function useRules(targetId: string, host: string) {
   );
 
   const create = useCallback(
-    (input: RuleInput) => mutate(() => api.rules.create(targetId, host, input)),
+    (input: RuleInput, options?: WriteOptions) =>
+      mutate(() => api.rules.create(targetId, host, input, options)),
     [mutate, targetId, host],
   );
 
@@ -216,8 +218,8 @@ export function useRules(targetId: string, host: string) {
    * the rule, and the response carries its new key.
    */
   const update = useCallback(
-    (sk: string, input: RuleInput) =>
-      mutate(() => api.rules.put(targetId, host, sk, input)),
+    (sk: string, input: RuleInput, options?: WriteOptions) =>
+      mutate(() => api.rules.put(targetId, host, sk, input, options)),
     [mutate, targetId, host],
   );
 

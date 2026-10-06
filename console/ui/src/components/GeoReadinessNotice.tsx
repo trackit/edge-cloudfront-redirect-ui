@@ -1,9 +1,13 @@
-import type { BehaviorReadiness, GeoReadiness } from "../api";
+import type { BehaviorReadiness, GeoCheck } from "../api";
 
 interface Props {
-  readiness: GeoReadiness | null;
+  /** The API's reading and its decision for the rule being edited. */
+  check: GeoCheck | null;
   /** A rewrite is where the cache case turns from a miss into a wrong page. */
   kind: "redirect" | "rewrite";
+  /** Asks the API for a fresh reading — after fixing the distribution, say. */
+  onRecheck?: () => void;
+  rechecking?: boolean;
 }
 
 /** What each failing verdict means for the rule, in the editor's words. */
@@ -14,7 +18,6 @@ const PROBLEM: Record<Exclude<BehaviorReadiness["verdict"], "ok">, string> = {
     "does not ask CloudFront for the country, so this rule is skipped",
   noOriginRequest:
     "does not run the function at origin-request, where country conditions are evaluated",
-  // Never listed: filtered out below, since no rule runs there.
   notOurs: "does not run the redirect function, so this rule never runs there",
   viewerHostMissing:
     "does not pass the viewer's hostname to origin-request (X-EdgeRoute-Viewer-Host), so this rule never matches",
@@ -30,61 +33,96 @@ const label = (pattern: string): string =>
   pattern === "*" ? "The default behavior" : `Behavior ${pattern}`;
 
 /**
- * Warns, under a rule's conditions, when its distribution cannot serve a
- * country condition reliably. The edge cannot say so itself: a request served
- * from cache never reaches it.
+ * Warns, under a rule's conditions, when the behaviors that can serve it
+ * cannot serve a country condition reliably. The edge cannot say so itself: a
+ * request served from cache never reaches it.
+ *
+ * Only the behaviors serving this rule are named — the API resolves them from
+ * the rule's path — so the recommended setup (an uncached geo behavior beside
+ * a cached default) is silent for a rule on the geo paths.
  *
  * Silent while the check runs and when it passes. When the API could not read
  * the distribution it says so quietly, because "not checked" is not "fine".
  */
-export default function GeoReadinessNotice({ readiness, kind }: Props) {
-  if (readiness === null) return null;
+export default function GeoReadinessNotice({
+  check,
+  kind,
+  onRecheck,
+  rechecking = false,
+}: Props) {
+  if (check === null) return null;
+  const { readiness, decision } = check;
+
+  const recheck = onRecheck && (
+    <button
+      type="button"
+      className="btn btn-ghost btn-sm"
+      onClick={onRecheck}
+      disabled={rechecking}
+    >
+      Re-check
+    </button>
+  );
 
   if (readiness.status === "unknown") {
     return (
       <p className="hint" role="status">
         Could not check this distribution&apos;s cache settings:{" "}
-        {readiness.reason}.
+        {readiness.reason}. {recheck}
       </p>
     );
   }
 
-  const failing = readiness.behaviors.filter(
-    (b) => b.verdict !== "ok" && b.verdict !== "notOurs",
+  const unnamed = !readiness.functionIdentified && (
+    <p className="hint" role="status">
+      Redirect function not set on this distribution: every behavior running a
+      Lambda@Edge function is checked. Set it in the distribution&apos;s
+      settings to leave out the ones running someone else&apos;s.
+    </p>
   );
-  if (failing.length === 0) return null;
-  const blocks =
-    kind === "rewrite" &&
-    failing.some((b) => b.verdict === "cachedWithoutCountry");
+
+  const failing = decision.relevant.filter((b) => b.verdict !== "ok");
+  if (failing.length === 0) return unnamed || null;
+
   return (
-    <div className="callout is-warn geo-readiness" role="status">
-      <div>
-        <strong>
-          Distribution {readiness.distributionId} is not set up for country
-          conditions.
-        </strong>
-        <ul>
-          {failing.map((behavior) => (
-            <li key={behavior.pathPattern}>
-              {label(behavior.pathPattern)}{" "}
-              {kind === "rewrite" && behavior.verdict === "cachedWithoutCountry"
-                ? REWRITE_CACHED
-                : PROBLEM[behavior.verdict as keyof typeof PROBLEM]}
-              .
-            </li>
-          ))}
-        </ul>
-        {blocks && (
-          <>
-            <strong>
-              This rewrite cannot be saved until that is fixed.
-            </strong>{" "}
-          </>
-        )}
-        Fix: add <code>CloudFront-Viewer-Country</code> to the cache policy of a
-        behavior that caches, or serve these paths from a behavior that does not
-        cache and forwards it in its origin request policy.
+    <>
+      <div className="callout is-warn geo-readiness" role="status">
+        <div>
+          <strong>
+            Distribution {readiness.distributionId} is not set up for country
+            conditions.
+          </strong>
+          {decision.ambiguous && (
+            <p>
+              This rule can be served by several behaviors: its path condition
+              is not an exact, case-sensitive path.
+            </p>
+          )}
+          <ul>
+            {failing.map((behavior) => (
+              <li key={behavior.pathPattern}>
+                {label(behavior.pathPattern)}{" "}
+                {kind === "rewrite" &&
+                behavior.verdict === "cachedWithoutCountry"
+                  ? REWRITE_CACHED
+                  : PROBLEM[behavior.verdict as keyof typeof PROBLEM]}
+                .
+              </li>
+            ))}
+          </ul>
+          {decision.outcome === "blocked" && (
+            <>
+              <strong>
+                This rewrite cannot be saved until that is fixed.
+              </strong>{" "}
+            </>
+          )}
+          Fix: add <code>CloudFront-Viewer-Country</code> to the cache policy of
+          a behavior that caches, or serve these paths from a behavior that does
+          not cache and forwards it in its origin request policy. {recheck}
+        </div>
       </div>
-    </div>
+      {unnamed}
+    </>
   );
 }

@@ -1,85 +1,182 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { GeoReadiness } from "../api";
+import type { GeoCheck, MatchCondition } from "../api";
 
-/**
- * One request per target per session, shared by every editor that asks. The
- * distribution's cache settings change on a deploy, not while someone edits a
- * rule, and the API reuses its own answer for a minute anyway.
- */
-const requests = new Map<string, Promise<GeoReadiness>>();
-
-const readinessOf = (targetId: string): Promise<GeoReadiness> => {
-  let request = requests.get(targetId);
-  if (!request) {
-    // Only the distribution's reading is used here; the rule-specific
-    // decision the endpoint also returns is wired into the editor separately.
-    request = api.targets
-      .geoCheck(targetId, { kind: "redirect", matches: [] })
-      .then((check) => check.readiness)
-      .catch((caught: unknown): GeoReadiness => {
-        // Forgotten so a later editor retries. Never an error on screen: this
-        // only decides whether to warn, and must not get in the way of a rule.
-        requests.delete(targetId);
-        return {
-          status: "unknown",
-          cause: "transient",
-          reason:
-            caught instanceof Error
-              ? caught.message
-              : "The check did not answer",
-        };
-      });
-    requests.set(targetId, request);
-  }
-  return request;
-};
-
-/**
- * The target's readiness for country conditions, fetched only once `enabled` —
- * the editor asks when the rule gains a country condition, so a console that
- * never writes one never calls CloudFront. `null` until it answers.
- */
-export function useGeoReadiness(
-  targetId: string,
-  enabled: boolean,
-): GeoReadiness | null {
-  const [readiness, setReadiness] = useState<GeoReadiness | null>(null);
-
-  useEffect(() => {
-    if (!enabled) return;
-    let current = true;
-    void readinessOf(targetId).then((answer) => {
-      if (current) setReadiness(answer);
-    });
-    return () => {
-      current = false;
-    };
-  }, [targetId, enabled]);
-
-  return enabled ? readiness : null;
+export interface GeoCheckBody {
+  kind: "redirect" | "rewrite";
+  matches: MatchCondition[];
 }
 
-/** For tests: forgets every answer, as a page load would. */
-export const resetGeoReadiness = (): void => {
-  requests.clear();
-};
+/** How long an answer is reused. Past it, or on "Re-check", the API is asked again. */
+const TTL_MS = 120_000;
+/** How long the editor waits for the conditions to settle before asking. */
+const DEBOUNCE_MS = 300;
+/** Past this a check counts as failed, so a save waiting on it is not stuck. */
+const TIMEOUT_MS = 15_000;
 
 /**
- * The behaviors that make a country rewrite unsafe to save: they cache without
- * the country in the cache key, so the page rewritten for one viewer's country
- * is cached and served to everyone. A redirect is only warned about — it is
- * `no-store`, so the same setup makes it miss viewers, never misdirect them.
- * The other failing verdicts leave a rule inert, which is safe too.
- *
- * Empty while the check has not answered or could not read the distribution:
- * the console blocks only what it knows is wrong.
+ * The editor's memory of geo checks, keyed on the rule's conditions — the
+ * answer depends on its path, not only on the target. Bounded in time so a
+ * distribution fixed meanwhile is seen without a reload, and a failed request
+ * is forgotten so the next one retries. Pure, so its rules are tested without
+ * React.
  */
-export const unsafeForCountryRewrite = (
-  readiness: GeoReadiness | null,
-): string[] =>
-  readiness?.status === "checked"
-    ? readiness.behaviors
-        .filter((behavior) => behavior.verdict === "cachedWithoutCountry")
-        .map((behavior) => behavior.pathPattern)
-    : [];
+export const createGeoCheckStore = ({
+  fetch,
+  now = Date.now,
+  ttlMs = TTL_MS,
+  timeoutMs = TIMEOUT_MS,
+}: {
+  fetch: (
+    targetId: string,
+    body: GeoCheckBody,
+    fresh: boolean,
+  ) => Promise<GeoCheck>;
+  now?: () => number;
+  ttlMs?: number;
+  timeoutMs?: number;
+}) => {
+  const entries = new Map<string, { at: number; request: Promise<GeoCheck> }>();
+  const keyOf = (targetId: string, body: GeoCheckBody): string =>
+    `${targetId} ${JSON.stringify(body)}`;
+
+  const ask = (
+    targetId: string,
+    body: GeoCheckBody,
+    fresh: boolean,
+  ): Promise<GeoCheck> => {
+    const key = keyOf(targetId, body);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(new Error("The distribution check did not answer in time")),
+        timeoutMs,
+      );
+    });
+    const request = Promise.race([fetch(targetId, body, fresh), timeout])
+      .finally(() => clearTimeout(timer))
+      .catch((caught: unknown) => {
+        if (entries.get(key)?.request === request) entries.delete(key);
+        throw caught;
+      });
+    entries.set(key, { at: now(), request });
+    return request;
+  };
+
+  return {
+    get: (targetId: string, body: GeoCheckBody): Promise<GeoCheck> => {
+      const entry = entries.get(keyOf(targetId, body));
+      return entry && now() - entry.at < ttlMs
+        ? entry.request
+        : ask(targetId, body, false);
+    },
+    refresh: (targetId: string, body: GeoCheckBody): Promise<GeoCheck> =>
+      ask(targetId, body, true),
+    clear: (): void => entries.clear(),
+  };
+};
+
+const store = createGeoCheckStore({
+  fetch: (targetId, body, fresh) => api.targets.geoCheck(targetId, body, fresh),
+});
+
+/** For tests: forgets every answer, as a page load would. */
+export const resetGeoReadiness = (): void => store.clear();
+
+/**
+ * - `idle`: the rule reads no country, so nothing was asked.
+ * - `loading`: asked, or about to be; `settled` resolves with the answer, or
+ *   `null` when there will be none — what a save waits on. `previous` is the
+ *   last answer, still shown meanwhile so the notice does not flicker.
+ * - `ready`: the API's reading and its decision for this rule.
+ * - `failed`: the request itself failed (offline, 5xx). Treated like a
+ *   distribution that could not be checked.
+ */
+export type GeoCheckState =
+  | { status: "idle" }
+  | {
+      status: "loading";
+      settled: Promise<GeoCheck | null>;
+      previous: GeoCheck | null;
+    }
+  | { status: "ready"; check: GeoCheck }
+  | { status: "failed"; message: string };
+
+/**
+ * The API's decision for the rule being edited, asked once its conditions have
+ * been still for a moment, and only once `enabled` — the editor enables it when
+ * the rule gains a country condition, so a console that never writes one never
+ * calls CloudFront. `recheck` asks the API for a fresh reading.
+ */
+export function useGeoCheck(
+  targetId: string,
+  kind: GeoCheckBody["kind"],
+  matches: MatchCondition[],
+  enabled: boolean,
+): { state: GeoCheckState; recheck: () => void } {
+  const [state, setState] = useState<GeoCheckState>({ status: "idle" });
+  const [nonce, setNonce] = useState(0);
+  const fresh = useRef(false);
+  const last = useRef<GeoCheck | null>(null);
+  const body = JSON.stringify({ kind, matches });
+
+  useEffect(() => {
+    if (!enabled) {
+      last.current = null;
+      setState({ status: "idle" });
+      return;
+    }
+
+    let current = true;
+    let settle: (check: GeoCheck | null) => void = () => {};
+    const settled = new Promise<GeoCheck | null>((resolve) => {
+      settle = resolve;
+    });
+    setState({ status: "loading", settled, previous: last.current });
+
+    const timer = setTimeout(() => {
+      const parsed = JSON.parse(body) as GeoCheckBody;
+      const request = fresh.current
+        ? store.refresh(targetId, parsed)
+        : store.get(targetId, parsed);
+      fresh.current = false;
+      request.then(
+        (check) => {
+          settle(check);
+          if (current) {
+            last.current = check;
+            setState({ status: "ready", check });
+          }
+        },
+        (caught: unknown) => {
+          settle(null);
+          if (current) {
+            setState({
+              status: "failed",
+              message:
+                caught instanceof Error
+                  ? caught.message
+                  : "The check did not answer",
+            });
+          }
+        },
+      );
+    }, DEBOUNCE_MS);
+
+    return () => {
+      current = false;
+      clearTimeout(timer);
+      // A save waiting on a check that will not happen is not left hanging.
+      settle(null);
+    };
+  }, [targetId, body, enabled, nonce]);
+
+  return {
+    state,
+    recheck: () => {
+      fresh.current = true;
+      setNonce((n) => n + 1);
+    },
+  };
+}

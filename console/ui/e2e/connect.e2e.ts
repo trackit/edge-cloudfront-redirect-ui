@@ -88,15 +88,17 @@ test("connects, lands on the console, and remembers it", async ({
 
   // The distribution ID doubles as the target's name, and the region comes from
   // the select's default — this is the whole body the API is sent.
-  expect(api.calls).toContainEqual({
-    method: "POST",
-    url: "/api/targets",
-    body: {
-      name: "E1AAAAAAAAAAAA",
-      region: "us-east-1",
-      tableName: "rules-prod",
-    },
-  });
+  expect(api.calls).toContainEqual(
+    expect.objectContaining({
+      method: "POST",
+      url: "/api/targets",
+      body: {
+        name: "E1AAAAAAAAAAAA",
+        region: "us-east-1",
+        tableName: "rules-prod",
+      },
+    }),
+  );
 
   // The id the server assigned has to survive into storage, or a reload lands
   // back on this screen.

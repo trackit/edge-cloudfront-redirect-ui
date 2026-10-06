@@ -7,7 +7,7 @@ import {
   test,
 } from "./fixtures";
 import type { Page } from "@playwright/test";
-import type { GeoReadiness, Rule } from "../src/api";
+import type { BehaviorReadiness, GeoCheck, Rule } from "../src/api";
 
 /**
  * The geolocation condition in the rule editor.
@@ -476,22 +476,49 @@ test("a classic redirect in 301 is not warned about", async ({ page }) => {
   await expect(warning301(page)).toHaveCount(0);
 });
 
+/** Set once the editor has rendered the API's answer, so absence can be asserted. */
+const checkAnswered = (page: Page) =>
+  editor(page).locator('[data-geo-check="ready"]');
+
 const readinessNotice = (page: Page) =>
   editor(page).getByText(/is not set up for country conditions/);
+
+/** A reading of these behaviors, and the API's decision for the rule. */
+const check = (
+  behaviors: BehaviorReadiness[],
+  decision: GeoCheck["decision"],
+  functionIdentified = true,
+): GeoCheck => ({
+  readiness: {
+    status: "checked",
+    distributionId: "E2EXAMPLE12345",
+    functionIdentified,
+    behaviors,
+  },
+  decision,
+});
+
+const CAMPAIGN_CACHED: BehaviorReadiness = {
+  pathPattern: "/campaign/*",
+  verdict: "cachedWithoutCountry",
+};
+const DEFAULT_OK: BehaviorReadiness = { pathPattern: "*", verdict: "ok" };
+const DEFAULT_CACHED: BehaviorReadiness = {
+  pathPattern: "*",
+  verdict: "cachedWithoutCountry",
+};
 
 test("a country condition warns when the distribution caches without the country", async ({
   page,
   api,
 }) => {
-  api.setGeoReadiness({
-    status: "checked",
-    distributionId: "E2EXAMPLE12345",
-    functionIdentified: true,
-    behaviors: [
-      { pathPattern: "/campaign/*", verdict: "cachedWithoutCountry" },
-      { pathPattern: "*", verdict: "ok" },
-    ],
-  });
+  api.setGeoCheck(
+    check([CAMPAIGN_CACHED, DEFAULT_OK], {
+      outcome: "warn",
+      relevant: [CAMPAIGN_CACHED, DEFAULT_OK],
+      ambiguous: true,
+    }),
+  );
   await open(page);
   await newRedirect(page);
   await expect(readinessNotice(page)).toHaveCount(0);
@@ -524,25 +551,27 @@ test("a distribution that passes shows no warning", async ({ page, api }) => {
   await newRedirect(page);
   await typeSelect(page).selectOption("country");
 
-  // Absence only means something once the check has answered.
-  await expect
-    .poll(() => api.calls.some((call) => call.url.endsWith("/geo-readiness")))
-    .toBe(true);
+  // Absence only means something once the answer has been rendered.
+  await expect(checkAnswered(page)).toHaveCount(1);
   await expect(readinessNotice(page)).toHaveCount(0);
   await expect(
     editor(page).getByText(/Could not check this distribution/),
   ).toHaveCount(0);
+  void api;
 });
 
 test("a distribution the API cannot read says it was not checked", async ({
   page,
   api,
 }) => {
-  api.setGeoReadiness({
-    status: "unknown",
-    cause: "accessDenied",
-    reason:
-      "The console could not read distribution E2EXAMPLE12345 (AccessDenied)",
+  api.setGeoCheck({
+    readiness: {
+      status: "unknown",
+      cause: "accessDenied",
+      reason:
+        "The console could not read distribution E2EXAMPLE12345 (AccessDenied)",
+    },
+    decision: { outcome: "warn", relevant: [], ambiguous: false },
   });
   await open(page);
   await newRedirect(page);
@@ -565,14 +594,20 @@ const geoRewrite = {
   forwardSettings: { pathAndQS: "/fr/shop", useIncomingQueryString: true },
 } as unknown as Rule;
 
-const cachedWithoutCountry: GeoReadiness = {
-  status: "checked",
-  distributionId: "E2EXAMPLE12345",
-  functionIdentified: true,
-  behaviors: [{ pathPattern: "*", verdict: "cachedWithoutCountry" }],
-};
+const blockedRewrite = check([DEFAULT_CACHED], {
+  outcome: "blocked",
+  relevant: [DEFAULT_CACHED],
+  ambiguous: true,
+});
+const warnedRedirect = check([DEFAULT_CACHED], {
+  outcome: "warn",
+  relevant: [DEFAULT_CACHED],
+  ambiguous: true,
+});
 
-const saves = (api: { calls: { method: string; url: string }[] }) =>
+const saves = (api: {
+  calls: { method: string; url: string; search: string }[];
+}) =>
   api.calls.filter(
     (call) => call.method === "PUT" && call.url.includes("/rules/"),
   );
@@ -589,7 +624,7 @@ test("a country rewrite cannot be saved where the page would be cached for every
 }) => {
   api.setHosts([host(HOST, { rewrites: 1 })]);
   api.setRules([geoRewrite]);
-  api.setGeoReadiness(cachedWithoutCountry);
+  api.setGeoCheck(blockedRewrite);
   await open(page);
   await editFirst(page);
 
@@ -613,7 +648,7 @@ test("a country redirect on the same distribution is warned, and still saves", a
   // A redirect is no-store: the same setup makes it miss viewers, never
   // misdirect them.
   api.setRules([geoRedirect("FR")]);
-  api.setGeoReadiness(cachedWithoutCountry);
+  api.setGeoCheck(warnedRedirect);
   await open(page);
   await editFirst(page);
 
@@ -623,16 +658,19 @@ test("a country redirect on the same distribution is warned, and still saves", a
   await expect.poll(() => saves(api).length).toBe(1);
 });
 
-test("a country rewrite saves when the distribution could not be checked", async ({
+test("a country rewrite the API could not check saves only once confirmed", async ({
   page,
   api,
 }) => {
   api.setHosts([host(HOST, { rewrites: 1 })]);
   api.setRules([geoRewrite]);
-  api.setGeoReadiness({
-    status: "unknown",
-    cause: "accessDenied",
-    reason: "AccessDenied",
+  api.setGeoCheck({
+    readiness: {
+      status: "unknown",
+      cause: "accessDenied",
+      reason: "AccessDenied",
+    },
+    decision: { outcome: "unverifiable", relevant: [], ambiguous: false },
   });
   await open(page);
   await editFirst(page);
@@ -641,6 +679,398 @@ test("a country rewrite saves when the distribution could not be checked", async
   ).toBeVisible();
 
   await editor(page).getByRole("button", { name: "Save changes" }).click();
+  await expect(
+    editor(page).getByText(/the distribution could not be checked/),
+  ).toBeVisible();
+  expect(saves(api)).toHaveLength(0);
 
+  await editor(page).getByLabel("I understand, save anyway").check();
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+
+  await expect.poll(() => saves(api).length).toBe(1);
+  expect(saves(api)[0]?.search).toBe("?confirmUnverifiedGeo=true");
+});
+
+test("a blocked rewrite offers no way around it", async ({ page, api }) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  api.setGeoCheck(blockedRewrite);
+  await open(page);
+  await editFirst(page);
+  await expect(readinessNotice(page)).toBeVisible();
+
+  await expect(
+    editor(page).getByLabel("I understand, save anyway"),
+  ).toHaveCount(0);
+});
+
+test("saving waits for the distribution check", async ({ page, api }) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  api.setGeoCheck(blockedRewrite);
+  api.delayGeoCheck(1500);
+  await open(page);
+  await editFirst(page);
+
+  // Straight away, before the check can have answered.
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+  await expect(
+    editor(page).getByRole("button", { name: "Checking the distribution…" }),
+  ).toBeVisible();
+
+  await expect(
+    editor(page)
+      .getByText(/would be served to everyone/)
+      .last(),
+  ).toBeVisible();
+  expect(saves(api)).toHaveLength(0);
+});
+
+test("the API's refusal is shown when it disagrees with the editor", async ({
+  page,
+  api,
+}) => {
+  // The editor's check said fine — a reading from before someone changed the
+  // distribution, say — and the API, which checks again, refuses.
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  api.putRuleReply({
+    status: 409,
+    body: {
+      error: {
+        code: "GEO_REWRITE_UNSAFE",
+        message:
+          "This country rewrite would be cached and served to every country",
+      },
+    },
+  });
+  await open(page);
+  await editFirst(page);
+  await expect
+    .poll(() => api.calls.some((call) => call.url.endsWith("/geo-readiness")))
+    .toBe(true);
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+
+  await expect(
+    editor(page).getByText("This rewrite would be served to every country"),
+  ).toBeVisible();
+});
+
+test("Re-check asks the API for a fresh reading", async ({ page, api }) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  api.setGeoCheck({
+    readiness: { status: "unknown", cause: "transient", reason: "Throttling" },
+    decision: { outcome: "unverifiable", relevant: [], ambiguous: false },
+  });
+  await open(page);
+  await editFirst(page);
+  await expect(
+    editor(page).getByText(/Could not check this distribution/),
+  ).toBeVisible();
+
+  api.setGeoCheck(
+    check([DEFAULT_OK], {
+      outcome: "ok",
+      relevant: [DEFAULT_OK],
+      ambiguous: false,
+    }),
+  );
+  await editor(page).getByRole("button", { name: "Re-check" }).click();
+
+  await expect
+    .poll(() =>
+      api.calls.some(
+        (call) =>
+          call.url.endsWith("/geo-readiness") && call.search === "?fresh=true",
+      ),
+    )
+    .toBe(true);
+  await expect(
+    editor(page).getByText(/Could not check this distribution/),
+  ).toHaveCount(0);
+});
+
+test("sends the rule being edited to the check", async ({ page, api }) => {
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  await expect
+    .poll(() => api.calls.find((call) => call.url.endsWith("/geo-readiness")))
+    .toBeTruthy();
+  const sent = api.calls.find((call) => call.url.endsWith("/geo-readiness"))
+    ?.body as { kind: string; matches: { matchType: string }[] };
+  expect(sent.kind).toBe("redirect");
+  expect(sent.matches.map((m) => m.matchType)).toContain("country");
+});
+
+test("the recommended setup shows nothing for a rule on the uncached behavior", async ({
+  page,
+  api,
+}) => {
+  const geo: BehaviorReadiness = { pathPattern: "/geo/*", verdict: "ok" };
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  api.setGeoCheck(
+    check([geo, DEFAULT_CACHED], {
+      outcome: "ok",
+      relevant: [geo],
+      ambiguous: false,
+    }),
+  );
+  await open(page);
+  await editFirst(page);
+
+  await expect
+    .poll(() => api.calls.some((call) => call.url.endsWith("/geo-readiness")))
+    .toBe(true);
+  await expect(readinessNotice(page)).toHaveCount(0);
+});
+
+test("only the behaviors serving the rule are named", async ({ page, api }) => {
+  const geo: BehaviorReadiness = {
+    pathPattern: "/geo/*",
+    verdict: "countryNotForwarded",
+  };
+  api.setRules([geoRedirect("FR")]);
+  api.setGeoCheck(
+    check([geo, DEFAULT_CACHED], {
+      outcome: "warn",
+      relevant: [DEFAULT_CACHED],
+      ambiguous: false,
+    }),
+  );
+  await open(page);
+  await editFirst(page);
+
+  await expect(
+    editor(page).getByText(/The default behavior caches/),
+  ).toBeVisible();
+  await expect(editor(page).getByText(/\/geo\/\*/)).toHaveCount(0);
+  await expect(editor(page).getByText(/several behaviors/)).toHaveCount(0);
+});
+
+test("a rule its path does not pin to one behavior says so", async ({
+  page,
+  api,
+}) => {
+  api.setGeoCheck(
+    check([CAMPAIGN_CACHED, DEFAULT_OK], {
+      outcome: "warn",
+      relevant: [CAMPAIGN_CACHED, DEFAULT_OK],
+      ambiguous: true,
+    }),
+  );
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  await expect(
+    editor(page).getByText(/can be served by several behaviors/),
+  ).toBeVisible();
+});
+
+test("an unnamed redirect function is said once the check answers", async ({
+  page,
+  api,
+}) => {
+  api.setGeoCheck(
+    check(
+      [DEFAULT_OK],
+      { outcome: "ok", relevant: [DEFAULT_OK], ambiguous: false },
+      false,
+    ),
+  );
+  await open(page);
+  await newRedirect(page);
+  await typeSelect(page).selectOption("country");
+
+  await expect(
+    editor(page).getByText(/Redirect function not set on this distribution/),
+  ).toBeVisible();
+});
+
+test("a policy that only caches on the origin's say-so is a warning", async ({
+  page,
+  api,
+}) => {
+  const soft: BehaviorReadiness = {
+    pathPattern: "*",
+    verdict: "cachedByOriginHeaders",
+  };
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  api.setGeoCheck(
+    check([soft], { outcome: "warn", relevant: [soft], ambiguous: false }),
+  );
+  await open(page);
+  await editFirst(page);
+
+  await expect(
+    editor(page).getByText(/only caches when the origin asks/),
+  ).toBeVisible();
+  await expect(editor(page).getByText(/cannot be saved/)).toHaveCount(0);
+});
+
+test("cancelling while a save waits for the check saves nothing", async ({
+  page,
+  api,
+}) => {
+  // The dangerous case: a confirmed rewrite, whose save would otherwise go
+  // ahead once the wait ends — after the user cancelled.
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  api.setGeoCheck({
+    readiness: { status: "unknown", cause: "transient", reason: "Throttling" },
+    decision: { outcome: "unverifiable", relevant: [], ambiguous: false },
+  });
+  await open(page);
+  await editFirst(page);
+  await editor(page).getByLabel("I understand, save anyway").check();
+
+  api.delayGeoCheck(1500);
+  await editor(page).getByRole("button", { name: "Re-check" }).click();
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+  await expect(
+    editor(page).getByRole("button", { name: "Checking the distribution…" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(editor(page)).toHaveCount(0);
+
+  await page.waitForTimeout(2500);
+  expect(saves(api)).toHaveLength(0);
+});
+
+test("the rule cannot be edited while a save waits for the check", async ({
+  page,
+  api,
+}) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  api.delayGeoCheck(1500);
+  await open(page);
+  await editFirst(page);
+
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+  await expect(
+    editor(page).getByRole("button", { name: "Checking the distribution…" }),
+  ).toBeVisible();
+  await expect(typeSelect(page)).toBeDisabled();
+});
+
+test("a refusal the API could not check offers the confirmation", async ({
+  page,
+  api,
+}) => {
+  // The editor's reading said fine; the API's own read, at save time, failed.
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoRewrite]);
+  await open(page);
+  await editFirst(page);
+  await expect(checkAnswered(page)).toHaveCount(1);
+
+  api.putRuleReply({
+    status: 409,
+    body: {
+      error: {
+        code: "GEO_UNVERIFIED",
+        message: "The distribution could not be checked: Throttling",
+      },
+    },
+  });
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+  await expect(
+    editor(page).getByText("The distribution could not be checked").first(),
+  ).toBeVisible();
+
+  await editor(page).getByLabel("I understand, save anyway").check();
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+  await expect
+    .poll(() => saves(api).at(-1)?.search)
+    .toBe("?confirmUnverifiedGeo=true");
+});
+
+test("a country redirect does not wait for the check to save", async ({
+  page,
+  api,
+}) => {
+  // A redirect is never held back, so there is nothing to wait for.
+  api.setRules([geoRedirect("FR")]);
+  api.delayGeoCheck(4000);
+  await open(page);
+  await editFirst(page);
+
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saves(api).length, { timeout: 2000 }).toBe(1);
+});
+
+test("turning a country rewrite on from the list says why it was refused", async ({
+  page,
+  api,
+}) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([{ ...geoRewrite, disabled: true } as Rule]);
+  api.patchRuleReply({
+    status: 409,
+    body: {
+      error: {
+        code: "GEO_REWRITE_UNSAFE",
+        message:
+          "This country rewrite would be cached and served to every country",
+      },
+    },
+  });
+  await open(page);
+  await page
+    .getByRole("switch", { name: /Enable/ })
+    .first()
+    .click();
+
+  await expect(
+    page.getByText(
+      "This country rewrite would be cached and served to every country",
+    ),
+  ).toBeVisible();
+});
+
+test("a rewrite the API could not check can be turned on from the editor", async ({
+  page,
+  api,
+}) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([{ ...geoRewrite, disabled: true } as Rule]);
+  api.patchRuleReply({
+    status: 409,
+    body: {
+      error: {
+        code: "GEO_UNVERIFIED",
+        message: "The distribution could not be checked: Throttling",
+      },
+    },
+  });
+  await open(page);
+  await page
+    .getByRole("switch", { name: /Enable/ })
+    .first()
+    .click();
+
+  await page.getByRole("button", { name: "Open the rule" }).click();
+  await expect(editor(page)).toBeVisible();
+});
+
+test("a disabled country rewrite saves even where it would be refused enabled", async ({
+  page,
+  api,
+}) => {
+  // It runs nowhere while disabled; the API checks it when it is turned on.
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([{ ...geoRewrite, disabled: true } as Rule]);
+  api.setGeoCheck(blockedRewrite);
+  await open(page);
+  await editFirst(page);
+  await expect(checkAnswered(page)).toHaveCount(1);
+
+  await editor(page).getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => saves(api).length).toBe(1);
 });
