@@ -39,6 +39,32 @@ This matters for captures too. A `(.*)` tested against path and query would
 carry the query into `$1`, and `useIncomingQueryString` would then append it a
 second time.
 
+### A capture never moves a redirect off the site
+
+A capture is part of the viewer's URL, so filling `$1` in can produce a target
+the template could not: `/$1` fed `//evil.com` would read as another host. The
+edge checks the target **after** substitution (`lib/redirect-target.ts`):
+
+- a path template (`/…`) stays a path on this site — leading slashes and
+  backslashes collapse to one `/`, so `//evil.com` becomes `/evil.com`;
+- an absolute template keeps the scheme, host and port it was written with;
+- a template that starts with a capture (`$1…`) becomes a path on this site or
+  an absolute URL to the host the viewer asked for.
+
+A target that is empty (it would redirect to itself, and loop) or holds a
+space, tab or other control character is not redirected either: a browser drops
+or trims those before following a `Location`, so `/` + tab + `/evil.com` would
+reach evil.com. The schema refuses them in a template, so they can only come
+from a capture — a header or cookie value.
+
+Anything else is not redirected. The request goes on to the origin; lower
+priority rules are **not** tried in its place. It is logged once per rule and
+execution environment with its key, never with the viewer's URL (`not
+redirecting, a capture would send the viewer off the site`). A rule that relies
+on a capture to send viewers to **another domain** — including a capture inside
+the host, such as `https://$1.example.com/` — therefore stops redirecting:
+write the domain into the template instead.
+
 ## The host a rule is keyed on
 
 A rule's `pk` is the hostname the viewer asked for. Only viewer-request sees it:

@@ -541,3 +541,119 @@ describe("match conditions", () => {
     ).toBeNull();
   });
 });
+
+/**
+ * A capture is part of the viewer's URL, so substituting it can move a redirect
+ * to another site even when the template the API accepted could not. The edge
+ * checks the result, not only the template.
+ */
+describe("a redirect a capture would move off the site", () => {
+  const capturing = (redirectURL: string) =>
+    new RulesService(
+      new FakeRepository([
+        rule({
+          redirectURL,
+          matches: [
+            {
+              matchType: "regex",
+              matchOperator: "regex",
+              matchValue: "^/(.*)$",
+            },
+          ],
+        }),
+      ]),
+      60_000,
+    );
+
+  const target = async (redirectURL: string, path: string) => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await capturing(redirectURL).match(
+      params({ path }),
+      "REDIRECT",
+    );
+    return result?.type === "redirect" ? result.redirectURL : null;
+  };
+
+  it("keeps a relative target on this site, whatever the capture starts with", async () => {
+    expect(await target("/$1", "//evil.com")).toBe("/evil.com");
+    expect(await target("/$1", "/\\evil.com")).toBe("/evil.com");
+    expect(await target("/$1", "/\\/\\evil.com/x")).toBe("/evil.com/x");
+  });
+
+  it("does not redirect when a capture changes the host of an absolute target", async () => {
+    expect(await target("https://www.example.com$1", "/@evil.com/")).toBeNull();
+    expect(await target("https://www.example.com$1", "/.evil.com/")).toBeNull();
+    expect(await target("https://www.example.com$1", "/:8443/x")).toBeNull();
+  });
+
+  it("does not redirect a target built from a capture to another site", async () => {
+    expect(await target("$1", "/https://evil.com/")).toBeNull();
+    expect(await target("$1", "//evil.com")).toBe("/evil.com");
+  });
+
+  it("does not redirect a target a browser would read differently: tabs, spaces, controls", async () => {
+    // A header or cookie capture can carry them, and a browser drops a tab or
+    // trims a leading space before following the Location.
+    const fromHeader = (redirectURL: string) =>
+      new RulesService(
+        new FakeRepository([
+          rule({
+            redirectURL,
+            matches: [
+              {
+                matchType: "header",
+                matchOperator: "regex",
+                headerName: "x-from",
+                matchValue: "^(.*)$",
+              },
+            ],
+          } as Partial<RedirectRule>),
+        ]),
+        60_000,
+      );
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (const [template, value] of [
+      ["/$1", "\t/evil.com"],
+      ["$1", "\t//evil.com"],
+      ["$1", " //evil.com"],
+      ["$1", "ht\ttps://evil.com"],
+      ["https://www.example.com/$1", "a\u0000b"],
+    ] as const) {
+      const result = await fromHeader(template).match(
+        params({ headers: { "x-from": value } }),
+        "REDIRECT",
+      );
+      expect(result).toBeNull();
+    }
+  });
+
+  it("does not redirect to an empty target, which would loop", async () => {
+    expect(await target("$1", "/")).toBeNull();
+  });
+
+  it("still redirects within the site, and to the viewer's own host", async () => {
+    expect(await target("/new/$1", "/shoes")).toBe("/new/shoes");
+    expect(await target("https://www.example.com/$1", "/shoes")).toBe(
+      "https://www.example.com/shoes",
+    );
+    expect(await target("$1", "/https://www.example.com/a")).toBe(
+      "https://www.example.com/a",
+    );
+    expect(await target("https://other.example.org/$1", "/shoes")).toBe(
+      "https://other.example.org/shoes",
+    );
+  });
+
+  it("says once which rule it refused, without the viewer's URL", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = capturing("$1");
+    await service.match(params({ path: "/https://evil.com/" }), "REDIRECT");
+    await service.match(params({ path: "/https://evil.com/" }), "REDIRECT");
+
+    const refusals = warn.mock.calls.filter((call) =>
+      String(call[0]).includes("off the site"),
+    );
+    expect(refusals).toHaveLength(1);
+    expect(JSON.stringify(refusals[0])).not.toContain("evil.com");
+  });
+});
