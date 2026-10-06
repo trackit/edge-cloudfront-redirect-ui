@@ -60,15 +60,24 @@ export const connectDistribution = async (
   draft: DistributionDraft,
   client: ApiClient = api,
 ): Promise<Distribution> => {
+  const edgeFunctionArn = draft.edgeFunctionArn?.trim() || undefined;
   const input = {
     name: draft.distributionId,
     region: draft.region,
     tableName: draft.tableName,
+    ...(edgeFunctionArn ? { edgeFunctionArn } : {}),
+  };
+  // What is remembered: the trimmed ARN, or none rather than an empty string.
+  const connected: DistributionDraft = {
+    distributionId: draft.distributionId,
+    tableName: draft.tableName,
+    region: draft.region,
+    ...(edgeFunctionArn ? { edgeFunctionArn } : {}),
   };
 
   try {
     const target = await client.targets.create(input);
-    return { ...draft, targetId: target.id };
+    return { ...connected, targetId: target.id };
   } catch (error) {
     if (!(error instanceof ApiError) || error.code !== "TARGET_EXISTS") {
       throw error;
@@ -83,7 +92,30 @@ export const connectDistribution = async (
     // reason. Only reachable if the registry changed between the two calls.
     if (existing === undefined) throw error;
 
-    return { ...draft, targetId: existing.id };
+    // Reconnecting reuses the registered target as it is, so a function ARN
+    // typed now would otherwise never reach the API.
+    if (edgeFunctionArn && existing.edgeFunctionArn !== edgeFunctionArn) {
+      try {
+        await client.targets.update(existing.id, {
+          name: existing.name,
+          region: existing.region,
+          tableName: existing.tableName,
+          ...(existing.roleArn ? { roleArn: existing.roleArn } : {}),
+          edgeFunctionArn,
+        });
+      } catch (updateError) {
+        // A viewer may connect but not change the shared target. Connecting is
+        // what they asked for; the ARN stays as an editor set it.
+        if (
+          !(updateError instanceof ApiError) ||
+          updateError.code !== "FORBIDDEN"
+        ) {
+          throw updateError;
+        }
+      }
+    }
+
+    return { ...connected, targetId: existing.id };
   }
 };
 
@@ -101,10 +133,8 @@ const parse = (raw: string | null): Distribution | null => {
     const value: unknown = JSON.parse(raw);
     if (typeof value !== "object" || value === null) return null;
 
-    const { targetId, distributionId, tableName, region } = value as Record<
-      string,
-      unknown
-    >;
+    const { targetId, distributionId, tableName, region, edgeFunctionArn } =
+      value as Record<string, unknown>;
     if (
       typeof targetId !== "string" ||
       typeof distributionId !== "string" ||
@@ -114,7 +144,14 @@ const parse = (raw: string | null): Distribution | null => {
       return null;
     }
 
-    return { targetId, distributionId, tableName, region };
+    return {
+      targetId,
+      distributionId,
+      tableName,
+      region,
+      // Optional, and from an older build absent: kept only when it is a string.
+      ...(typeof edgeFunctionArn === "string" ? { edgeFunctionArn } : {}),
+    };
   } catch {
     return null;
   }

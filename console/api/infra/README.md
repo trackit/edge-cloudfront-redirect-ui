@@ -14,7 +14,9 @@ Node 22 Lambda that runs the request router in `console/api/src`.
   [Checking a table exists](#checking-a-table-exists)), and — both off by
   default — `sts:AssumeRole` on `assumable_role_arns` plus item-level DynamoDB
   access on `target_table_arns`
-  (see [Reaching a target's table](#reaching-a-targets-table)).
+  (see [Reaching a target's table](#reaching-a-targets-table)), and read-only
+  CloudFront configuration access, scoped to this account's distributions (see
+  [Checking a distribution's cache settings](#checking-a-distributions-cache-settings)).
 - **`aws_cloudwatch_log_group`** — `/aws/lambda/<function_name>`.
 - **`aws_dynamodb_table` (targets registry)** — the control-plane's own state
   (`pk=id`, `PAY_PER_REQUEST`, PITR on). Named `<function_name>-targets` unless
@@ -65,6 +67,11 @@ execution role gets on `target_table_arns` — in particular
 That permissions policy should also include **`dynamodb:DescribeTable`**, for the
 reason in the next section — and on a resource pattern wide enough to cover a
 name that was typed wrong, not just the one table that should exist.
+
+For the country-condition warning, it should also allow
+**`cloudfront:GetDistributionConfig`**, **`cloudfront:GetCachePolicy`** and
+**`cloudfront:GetOriginRequestPolicy`** — see
+[Checking a distribution's cache settings](#checking-a-distributions-cache-settings).
 
 Both variables are validated, and the rules are the same for each: the **account
 must be literal**, and the role or table name must be literal apart from an
@@ -122,6 +129,83 @@ there to get it back.
 When the check cannot run, the Lambda logs
 `console-api: could not verify table … — registering it unchecked`. A steady
 stream of those in CloudWatch means the typo check is not doing anything.
+
+## Checking a distribution's cache settings
+
+A country condition is evaluated at origin-request, so the edge only sees cache
+misses. On a behavior that caches without `CloudFront-Viewer-Country` in its
+cache key, one viewer's copy is served to the next: a geo redirect silently
+misses most viewers, and a geo rewrite serves one country's page to everyone.
+The edge cannot log what never reaches it, so `POST /targets/{id}/geo-readiness`
+reads the distribution instead. It is sent the rule being written (`kind` and
+`matches`) and answers both the reading — a verdict per behavior, in
+CloudFront's order — and the **decision** for that rule: which behaviors can
+serve it, from its path, and whether saving it is `ok`, `warn`, `blocked` or
+`unverifiable`. The editor shows it; the rule routes apply it.
+
+The distribution is the one the target is **named** after: the console registers
+a target under the distribution ID (or ARN) it was connected with. A target with
+another name answers `unknown`.
+
+A target can also name its **redirect function**, `edgeFunctionArn` — the edge
+module's `viewer_request_lambda_arn` output, qualified or not. With it, only the
+behaviors running that function are judged, and one running someone else's is
+`notOurs`. Without it, every behavior with a Lambda@Edge association counts.
+
+The execution role gets two read-only statements:
+
+- **`cloudfront:GetDistributionConfig`** on this account's distributions
+  (`arn:<partition>:cloudfront::<account>:distribution/*`), or on
+  `readable_distribution_arns` when set. Scoped because a distribution's config
+  includes its **origin custom headers**, which sometimes carry a shared secret
+  for the origin. The API extracts the policy IDs and function associations and
+  returns only a verdict; nothing else is kept, logged or sent to the browser.
+- **`cloudfront:GetCachePolicy`** and **`cloudfront:GetOriginRequestPolicy`** on
+  `*`. They hold TTLs and header, cookie and query string names, no values, and
+  the managed policies behaviors usually point at are AWS's, not this account's.
+
+A target with a `roleArn` is read under that role, so its policy needs the same
+actions. The target's distribution is known there, so scope
+`GetDistributionConfig` to it:
+`arn:aws:cloudfront::<account>:distribution/<ID>`.
+
+A distribution that cannot be read is `unknown` with a `cause` —
+`accessDenied` (the grants above), `notFound`, `transient` (throttling, a
+timeout: try again) or `unexpected` (see the logs) — and the Lambda logs
+`console-api: could not read distribution …` with the error. Only a reading is
+kept for a minute; an `unknown` answer is asked again next time.
+
+### The write guard
+
+`POST` and `PUT` on a rule, and `PATCH` turning one back on, check a **country
+rewrite** the same way before writing it:
+
+- **`409 GEO_REWRITE_UNSAFE`** when a behavior that can serve it caches without
+  `CloudFront-Viewer-Country` in its cache key — the rewritten page would be
+  served to every country. There is no override: fix the distribution.
+- **`409 GEO_UNVERIFIED`** when the distribution could not be read. Repeat with
+  `?confirmUnverifiedGeo=true` to save it anyway; each such write is logged as
+  `{"event":"geo-unverified-confirmed", principal, targetId, host, sk, cause}`,
+  never with the rule's content.
+
+- **`409 CONDITION_NOT_FORWARDED`** for any rewrite — with or without a country
+  — with a header or cookie condition that **holds when the value is absent**
+  (a negation, `notEquals`, a regex like `^$`, a lone `*`) on a header or cookie
+  a behavior serving it does not send on to origin-request. CloudFront drops it
+  before the function runs, it reads as absent for every viewer, and the
+  condition then holds for everyone. Add it to the origin request policy (or
+  the cache key). The `CloudFront-*` headers CloudFront adds itself only count
+  when a policy names them: "all viewer headers" does not include them. A
+  cookie condition is tested against the whole `Cookie` header, so its name is
+  read off the value — `beta=1` needs `beta` (compared regardless of case
+  unless the condition is case-sensitive); a regex, a wildcard or a bare word
+  such as `premium` needs every cookie sent on. An unreadable distribution is
+  `GEO_UNVERIFIED`, as above.
+
+Redirects are never refused (a geo redirect is `no-store`: the same setup makes
+it miss viewers, not misdirect them), nor is a rule saved disabled. The check
+reads the same minute-old reading as the editor, and it happens at write time:
+changing a cache policy later does not re-check rules already saved.
 
 ## Region validation
 

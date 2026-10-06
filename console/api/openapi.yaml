@@ -290,6 +290,55 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
+  /targets/{id}/geo-readiness:
+    parameters:
+      - $ref: "#/components/parameters/TargetPathId"
+    post:
+      operationId: checkGeoForRule
+      summary: Whether the target's distribution can serve this rule's country condition.
+      description: >-
+        Reads the CloudFront distribution the target is named after, judges
+        each behavior, and decides for the rule in the body which behaviors can
+        serve it and what saving it should do — the same decision the rule
+        write routes apply. A country condition is evaluated at origin-request,
+        so a behavior that caches without `CloudFront-Viewer-Country` in its
+        cache key serves one viewer's copy to the next. Changes nothing despite POST — the body is the rule being written — but
+        is limited to editors, like the writes it previews. Answers 200 for a known target even
+        when the distribution cannot be read: that is `status: unknown` with the
+        cause, never an error.
+      tags: [targets]
+      parameters:
+        - name: fresh
+          in: query
+          required: false
+          description: Read the distribution again instead of reusing a reading up to a minute old.
+          schema:
+            type: boolean
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeoCheckRequest"
+      responses:
+        "200":
+          description: The reading and the decision for this rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeoCheck"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /targets/{targetId}/hosts:
     parameters:
       - $ref: "#/components/parameters/TargetId"
@@ -462,6 +511,8 @@ paths:
           $ref: "#/components/responses/TargetUnreachable"
     post:
       operationId: createRule
+      parameters:
+        - $ref: "#/components/parameters/ConfirmUnverifiedGeo"
       summary: Create a rule for a host.
       description: >-
         The server owns both keys: `pk` is the host from the path and `sk` is
@@ -617,6 +668,8 @@ paths:
           $ref: "#/components/responses/TargetUnreachable"
     put:
       operationId: putRule
+      parameters:
+        - $ref: "#/components/parameters/ConfirmUnverifiedGeo"
       summary: Replace a rule.
       description: >-
         Full replace: a field omitted from the body is cleared, so send the whole
@@ -665,6 +718,8 @@ paths:
           $ref: "#/components/responses/TargetUnreachable"
     patch:
       operationId: toggleRule
+      parameters:
+        - $ref: "#/components/parameters/ConfirmUnverifiedGeo"
       summary: Enable or disable a rule.
       description: >-
         Flips `disabled` and changes nothing else. The only edit that is not a
@@ -700,6 +755,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/RuleConflict"
         "500":
           $ref: "#/components/responses/InternalError"
         "502":
@@ -740,6 +797,16 @@ components:
         HTTP API, which refuses the request before it reaches the Lambda — so an
         operation documented here as authenticated never runs without one.
   parameters:
+    ConfirmUnverifiedGeo:
+      name: confirmUnverifiedGeo
+      in: query
+      required: false
+      description: >-
+        Saves a country rewrite even though its distribution could not be
+        checked (409 `GEO_UNVERIFIED` otherwise). Applies to this write only and
+        is logged with who made it. Has no effect on `GEO_REWRITE_UNSAFE`.
+      schema:
+        type: boolean
     TargetPathId:
       name: id
       in: path
@@ -899,6 +966,13 @@ components:
             rules table. Omit to use the API's own execution role, which only
             reaches tables its policy already covers. Required in practice for a
             target registered after deploy, or one in another account.
+        edgeFunctionArn:
+          type: string
+          pattern: "^arn:aws[a-z-]*:lambda:us-east-1:\\d{12}:function:[a-zA-Z0-9-_]{1,64}(:(\\d+|\\$LATEST))?$"
+          description: >-
+            Optional Lambda@Edge function serving this target's rules (the edge
+            module's `viewer_request_lambda_arn` output), qualified or not. Lets
+            the geo check ignore behaviors running another function.
     TargetUpdate:
       description: >-
         Update body. Same fields as TargetInput plus an optional `id`, which must
@@ -925,6 +999,9 @@ components:
         roleArn:
           type: string
           pattern: "^arn:aws[a-z-]*:iam::\\d{12}:role/.+$"
+        edgeFunctionArn:
+          type: string
+          pattern: "^arn:aws[a-z-]*:lambda:us-east-1:\\d{12}:function:[a-zA-Z0-9-_]{1,64}(:(\\d+|\\$LATEST))?$"
     Target:
       description: A registered target. `id` is server-generated and immutable.
       type: object
@@ -942,6 +1019,188 @@ components:
           type: string
         roleArn:
           type: string
+        edgeFunctionArn:
+          type: string
+    GeoCheckRequest:
+      description: The parts of a rule the decision reads.
+      type: object
+      additionalProperties: false
+      required: [kind, matches]
+      properties:
+        kind:
+          type: string
+          enum: [redirect, rewrite]
+        matches:
+          type: array
+          items:
+            $ref: "../../shared/redirect-rule.schema.json#/definitions/match"
+    GeoCheck:
+      type: object
+      additionalProperties: false
+      required: [readiness, decision]
+      properties:
+        readiness:
+          $ref: "#/components/schemas/GeoReadiness"
+        decision:
+          $ref: "#/components/schemas/GeoDecision"
+    GeoDecision:
+      type: object
+      additionalProperties: false
+      required: [outcome, relevant, ambiguous]
+      properties:
+        outcome:
+          type: string
+          enum: [ok, warn, blocked, unverifiable]
+          description: >-
+            `blocked`: a rewrite a relevant behavior would cache for every
+            country — the write routes refuse it. `unverifiable`: a rewrite on a
+            distribution that could not be read — saved only when confirmed.
+            `warn`: the rule may misfire or never run. Redirects are never
+            blocked.
+        relevant:
+          type: array
+          description: The behaviors that can serve the rule, in CloudFront's order.
+          items:
+            $ref: "#/components/schemas/BehaviorReadiness"
+        ambiguous:
+          type: boolean
+          description: >-
+            True when the rule has no exact, case-sensitive path condition, so
+            every behavior running the function may serve it.
+        dropped:
+          type: array
+          description: >-
+            Negated header and cookie conditions of a rewrite that a serving
+            behavior does not send on to origin-request — absent there for every
+            viewer, so the condition holds for everyone, and the rewrite is
+            `blocked`. Always present in the API's answers.
+          items:
+            type: object
+            additionalProperties: false
+            required: [pathPattern, matchType, name]
+            properties:
+              pathPattern:
+                type: string
+              matchType:
+                type: string
+                enum: [header, cookie]
+              name:
+                type: [string, "null"]
+                description: >-
+                  The header or cookie. `null` for a cookie whose name the
+                  condition's value does not say (a regex or a wildcard), which
+                  needs every cookie sent on.
+    GeoReadiness:
+      description: >-
+        `checked`: the distribution was read, and each behavior carries its own
+        verdict, in CloudFront's matching order (the default behavior `*`
+        last). Which behaviors matter for a rule depends on its path — see
+        GeoDecision. `unknown`: the distribution could not be judged, see
+        `cause` and `reason`.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [status, distributionId, functionIdentified, behaviors]
+          properties:
+            status:
+              type: string
+              enum: [checked]
+            distributionId:
+              type: string
+            functionIdentified:
+              type: boolean
+              description: >-
+                False when the target names no `edgeFunctionArn`, so any Lambda
+                association counted as ours.
+            behaviors:
+              type: array
+              items:
+                $ref: "#/components/schemas/BehaviorReadiness"
+        - type: object
+          additionalProperties: false
+          required: [status, cause, reason]
+          properties:
+            status:
+              type: string
+              enum: [unknown]
+            cause:
+              type: string
+              enum:
+                [
+                  accessDenied,
+                  notFound,
+                  notADistribution,
+                  noFunction,
+                  transient,
+                  unexpected,
+                ]
+              description: >-
+                `accessDenied`: the API lacks a cloudfront read permission.
+                `notFound`: no such distribution. `notADistribution`: the target
+                is not named after a distribution. `noFunction`: no behavior
+                runs the function. `transient`: AWS did not answer; try again. `unexpected`: anything
+                else — see the console API logs.
+            reason:
+              type: string
+    Passed:
+      description: Names a policy sends on to origin-request, or every one but `except`.
+      type: object
+      additionalProperties: false
+      required: [all, names, except]
+      properties:
+        all:
+          type: boolean
+        names:
+          type: array
+          items:
+            type: string
+        except:
+          type: array
+          items:
+            type: string
+    BehaviorReadiness:
+      type: object
+      additionalProperties: false
+      required: [pathPattern, verdict]
+      properties:
+        pathPattern:
+          type: string
+          description: The behavior's path pattern; `*` for the default behavior.
+        forwards:
+          description: >-
+            What reaches origin-request on this behavior, one entry per policy
+            that sends things on. Set on the behaviors a rule runs on.
+          type: object
+          additionalProperties: false
+          required: [headers, cookies]
+          properties:
+            headers:
+              type: array
+              items:
+                $ref: "#/components/schemas/Passed"
+            cookies:
+              type: array
+              items:
+                $ref: "#/components/schemas/Passed"
+        verdict:
+          type: string
+          enum:
+            - ok
+            - notOurs
+            - noOriginRequest
+            - viewerHostMissing
+            - countryNotForwarded
+            - cachedWithoutCountry
+            - cachedByOriginHeaders
+          description: >-
+            `notOurs`: our function does not run here, so no rule does.
+            `noOriginRequest`: the function is not associated at
+            origin-request, where country rules run. `viewerHostMissing`:
+            origin-request never learns the viewer's hostname, so no rule
+            matches. `countryNotForwarded`: no policy asks for the country, so
+            country rules are skipped. `cachedWithoutCountry`: caches, and the
+            country is not in the cache key. `cachedByOriginHeaders`: the same,
+            but only when the origin asks for a copy to be kept.
     HostInput:
       description: A host to create, before it has any rules.
       type: object
@@ -1161,7 +1420,10 @@ components:
                 the addressed resource does not exist within a known target.
               enum:
                 - BAD_REQUEST
+                - CONDITION_NOT_FORWARDED
                 - FORBIDDEN
+                - GEO_REWRITE_UNSAFE
+                - GEO_UNVERIFIED
                 - HOST_EXISTS
                 - INTERNAL
                 - INVALID_JSON
@@ -1272,9 +1534,17 @@ components:
             $ref: "#/components/schemas/Error"
     RuleConflict:
       description: >-
-        That priority is already taken for this host and rule type. Priority is
-        part of a rule's key, so two rules cannot share one. Nothing was written
-        — on a move, neither the rule being moved nor the one already there.
+        `RULE_EXISTS`: that priority is already taken for this host and rule
+        type. Priority is part of a rule's key, so two rules cannot share one.
+        Nothing was written — on a move, neither the rule being moved nor the
+        one already there. `GEO_REWRITE_UNSAFE`: a country rewrite on a behavior
+        that caches without CloudFront-Viewer-Country in its cache key, so the
+        rewritten page would be served to every country; it cannot be
+        overridden. `GEO_UNVERIFIED`: a country rewrite whose distribution could
+        not be read; repeat with `confirmUnverifiedGeo=true` to save it anyway.
+        `CONDITION_NOT_FORWARDED`: a rewrite negating a header or cookie that a
+        behavior serving it does not send on to origin-request, so the
+        condition holds for every viewer; add it to the origin request policy.
       content:
         application/json:
           schema:

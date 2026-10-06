@@ -136,15 +136,23 @@ data "aws_cloudfront_cache_policy" "caching_disabled" {
 # A whitelist rather than Managed-AllViewer: that one forwards `Host` too, and an
 # S3 origin behind OAC has to receive the bucket's own hostname. Query strings are
 # forwarded because a rewrite can match on them.
+#
+# `CloudFront-Viewer-Country` is for country conditions: it is how CloudFront is
+# asked for the viewer's country at all. An origin request policy is enough here
+# only because caching is disabled — a caching behavior needs it in the cache
+# key instead.
 resource "aws_cloudfront_origin_request_policy" "viewer_host" {
   name    = "${var.function_name}-viewer-host"
-  comment = "Forwards the edge function's viewer-host header to origin-request"
+  comment = "Forwards the edge function's viewer-host header and the viewer's country to origin-request"
 
   headers_config {
     header_behavior = "whitelist"
 
     headers {
-      items = [module.edge.viewer_host_header]
+      items = [
+        module.edge.viewer_host_header,
+        "CloudFront-Viewer-Country",
+      ]
     }
   }
 

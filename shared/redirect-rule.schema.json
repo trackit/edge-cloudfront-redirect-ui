@@ -36,6 +36,33 @@
       "$comment": "Optional; absent means enabled. The Lambda@Edge filters out rules where disabled=true (RulesService.loadRules), so a toggle takes effect within the edge cache TTL (~1 min). The console writes it through PATCH."
     }
   },
+  "if": {
+    "$comment": "The if/then: a redirect with a `country` condition may not also have a `header`, `cookie` or `protocol` one. Such a redirect is evaluated at origin-request (the country only exists from there on), where the request holds only the headers and cookies the behavior's policies forward. A dropped one reads as \"\" — indistinguishable from a viewer who never sent it — and a negated condition then matches everyone. `protocol` for the same reason: the edge reads it from `X-Forwarded-Proto`, which CloudFront does not guarantee at origin-request, and falls back to \"https\" without it. Not applied to rewrites: they always ran at origin-request, so their header and cookie conditions already depended on the policies. See infra/lambda/README.md#what-a-geo-redirect-cannot-read.",
+    "required": ["matches"],
+    "properties": {
+      "matches": {
+        "type": "array",
+        "contains": {
+          "type": "object",
+          "required": ["matchType"],
+          "properties": { "matchType": { "const": "country" } }
+        }
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "matches": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "matchType": { "not": { "enum": ["header", "cookie", "protocol"] } }
+          }
+        }
+      }
+    }
+  },
   "definitions": {
     "match": {
       "$comment": "Shared match condition, referenced by rewrite-rule.schema.json. Field names/enums mirror MatchCondition + MatchType/MatchOperator in redirect-rule-types.ts.",
@@ -44,12 +71,24 @@
       "additionalProperties": false,
       "properties": {
         "matchType": {
-          "enum": ["path", "hostname", "protocol", "regex", "header", "cookie"]
+          "enum": [
+            "path",
+            "hostname",
+            "protocol",
+            "regex",
+            "header",
+            "cookie",
+            "country"
+          ]
         },
         "matchOperator": {
-          "enum": ["equals", "contains", "regex"]
+          "enum": ["equals", "contains", "regex", "notEquals"]
         },
-        "matchValue": { "type": "string", "minLength": 1 },
+        "matchValue": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Space-separated alternatives, Akamai-style: any variant may match (RulesService.evaluateMatch splits on \" \"). Documented here because it is the whole mechanism a `country` condition uses to mean \"is one of\" — see the conditional below."
+        },
         "negate": { "type": "boolean" },
         "caseSensitive": { "type": "boolean" },
         "headerName": {
@@ -58,11 +97,38 @@
           "description": "Required when matchType is \"header\"; disallowed otherwise."
         }
       },
-      "if": {
-        "properties": { "matchType": { "const": "header" } }
-      },
-      "then": { "required": ["headerName"] },
-      "else": { "not": { "required": ["headerName"] } }
+      "allOf": [
+        {
+          "$comment": "headerName is required iff matchType is \"header\".",
+          "if": {
+            "properties": { "matchType": { "const": "header" } }
+          },
+          "then": { "required": ["headerName"] },
+          "else": { "not": { "required": ["headerName"] } }
+        },
+        {
+          "$comment": "A country condition carries ISO 3166-1 alpha-2 codes, space-separated, and is a set membership test — so the operator can only be `equals` (\"is one of\", which the space-splitting above gives for free) or `notEquals` (\"is none of\"). An exclusion is `notEquals` and never `negate`, and that is a safety property, not a style choice: a reader that predates `country` compares the condition against \"\" and gets false, and `negate` would flip that into a match for every viewer — one excluding rule would redirect the whole site during a deploy or a rollback. `notEquals` is an operator such a reader does not know either, so it falls back to plain equality, still false, and the rule stays inert. `notEquals` is refused on every other type, which have `negate` for that. The pattern validates the format and deliberately not the list of countries: CloudFront publishes no such list, its geolocation database changes without notice, and a closed enum here would reject a legitimate new country until the schema shipped again. Same reasoning as getAllowedRegions in console/api/src/lib/aws-regions.ts. `required` so an item missing matchType fails on that alone, without a confusing second error about matchValue's format.",
+          "if": {
+            "properties": { "matchType": { "const": "country" } },
+            "required": ["matchType"]
+          },
+          "then": {
+            "properties": {
+              "matchOperator": { "enum": ["equals", "notEquals"] },
+              "negate": { "const": false },
+              "matchValue": {
+                "type": "string",
+                "pattern": "^[A-Z]{2}( [A-Z]{2})*$"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "matchOperator": { "not": { "const": "notEquals" } }
+            }
+          }
+        }
+      ]
     }
   }
 }

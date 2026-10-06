@@ -1,5 +1,5 @@
 import { expect, test as base, type Page, type Route } from "@playwright/test";
-import type { HostSummary, Rule } from "../src/api";
+import type { GeoCheck, HostSummary, Rule } from "../src/api";
 import type { Stored } from "../src/domain/distribution";
 import type { Distribution } from "../src/domain/types";
 
@@ -22,7 +22,7 @@ export const errorBody = (
 
 export interface ApiStub {
   /** Every request the page made, in order. */
-  calls: { method: string; url: string; body: unknown }[];
+  calls: { method: string; url: string; search: string; body: unknown }[];
   /**
    * Answers every subsequent `POST /targets` with this instead of the default
    * 201 — it is not consumed, so a spec that submits twice gets it twice.
@@ -50,6 +50,20 @@ export interface ApiStub {
    * mount, so — like `setHosts` — it is the state the page starts in.
    */
   setRules: (rules: Rule[]) => void;
+  /**
+   * What `POST /targets/{id}/geo-readiness` returns. Defaults to a distribution
+   * that passes, so a spec about something else sees no warning.
+   */
+  setGeoCheck: (check: GeoCheck) => void;
+  /** Holds every geo check answer back this long — for the "save waits" specs. */
+  delayGeoCheck: (ms: number) => void;
+  /**
+   * Answers every subsequent `PUT …/rules/{sk}` with this. Without it a PUT is
+   * unstubbed (a 500), which the specs that only count saves never read.
+   */
+  putRuleReply: (reply: { status: number; body: unknown }) => void;
+  /** Answers every subsequent `PATCH …/rules/{sk}` (the list's on/off switch) with this. */
+  patchRuleReply: (reply: { status: number; body: unknown }) => void;
   /**
    * Answers every subsequent `POST …/rules` with this instead of the default
    * 201 that echoes and appends the rule. Non-consuming, like the others — used
@@ -138,6 +152,18 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
   let createHost: { status: number; body: unknown } | null = null;
   let deleteHost: { status: number; body: unknown } | null = null;
   let rules: Rule[] = [];
+  let geoDelay = 0;
+  let putRule: { status: number; body: unknown } | null = null;
+  let patchRule: { status: number; body: unknown } | null = null;
+  let geoCheck: GeoCheck = {
+    readiness: {
+      status: "checked",
+      distributionId: "E2EXAMPLE12345",
+      functionIdentified: true,
+      behaviors: [{ pathPattern: "*", verdict: "ok" }],
+    },
+    decision: { outcome: "ok", relevant: [], ambiguous: false },
+  };
   let createRule: { status: number; body: unknown } | null = null;
   let reorder: { status: number; body: unknown } | null = null;
   let role: "editor" | "viewer" | undefined = "editor";
@@ -159,7 +185,7 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
       const method = request.method();
       const url = new URL(request.url());
       const body = jsonOf(route);
-      calls.push({ method, url: url.pathname, body });
+      calls.push({ method, url: url.pathname, search: url.search, body });
 
       // Before everything else: the console asks this on every page load, and
       // an unstubbed answer sends the route guard to /login instead of the page
@@ -241,6 +267,18 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
           status: reply.status,
           contentType: "application/json",
           body: JSON.stringify(reply.body),
+        });
+        return;
+      }
+
+      if (method === "POST" && url.pathname.endsWith("/geo-readiness")) {
+        if (geoDelay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, geoDelay));
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(geoCheck),
         });
         return;
       }
@@ -372,6 +410,32 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
         return;
       }
 
+      if (
+        method === "PATCH" &&
+        patchRule !== null &&
+        url.pathname.includes("/rules/")
+      ) {
+        await route.fulfill({
+          status: patchRule.status,
+          contentType: "application/json",
+          body: JSON.stringify(patchRule.body),
+        });
+        return;
+      }
+
+      if (
+        method === "PUT" &&
+        putRule !== null &&
+        url.pathname.includes("/rules/")
+      ) {
+        await route.fulfill({
+          status: putRule.status,
+          contentType: "application/json",
+          body: JSON.stringify(putRule.body),
+        });
+        return;
+      }
+
       if (method === "DELETE" && HOSTS_ITEM.test(url.pathname)) {
         const reply = deleteHost ?? { status: 204, body: null };
         await route.fulfill({
@@ -415,6 +479,18 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
     },
     setRules: (next) => {
       rules = next;
+    },
+    setGeoCheck: (next) => {
+      geoCheck = next;
+    },
+    delayGeoCheck: (ms) => {
+      geoDelay = ms;
+    },
+    putRuleReply: (reply) => {
+      putRule = reply;
+    },
+    patchRuleReply: (reply) => {
+      patchRule = reply;
     },
     createRuleReply: (reply) => {
       createRule = reply;

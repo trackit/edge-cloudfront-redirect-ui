@@ -5,10 +5,18 @@
     // files. Park the output out of the tree so it needs no ignore entries.
     "outDir": "./node_modules/.tmp",
     "skipLibCheck": true,
+    // Node 20 runs these. Without a target TypeScript assumes ES5 and rejects
+    // iterating a Set, which the country generator does.
+    "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
     "strict": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
+  "include": [
+    "vite.config.ts",
+    "vitest.config.ts",
+    "playwright.config.ts",
+    "scripts"
+  ]
 }

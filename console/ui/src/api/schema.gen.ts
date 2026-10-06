@@ -150,6 +150,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/targets/{id}/geo-readiness": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Target id. */
+        id: components["parameters"]["TargetPathId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Whether the target's distribution can serve this rule's country condition.
+     * @description Reads the CloudFront distribution the target is named after, judges each behavior, and decides for the rule in the body which behaviors can serve it and what saving it should do — the same decision the rule write routes apply. A country condition is evaluated at origin-request, so a behavior that caches without `CloudFront-Viewer-Country` in its cache key serves one viewer's copy to the next. Changes nothing despite POST — the body is the rule being written — but is limited to editors, like the writes it previews. Answers 200 for a known target even when the distribution cannot be read: that is `status: unknown` with the cause, never an error.
+     */
+    post: operations["checkGeoForRule"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/targets/{targetId}/hosts": {
     parameters: {
       query?: never;
@@ -373,6 +396,8 @@ export interface components {
       tableName: string;
       /** @description Optional IAM role the API assumes to read and write this target's rules table. Omit to use the API's own execution role, which only reaches tables its policy already covers. Required in practice for a target registered after deploy, or one in another account. */
       roleArn?: string;
+      /** @description Optional Lambda@Edge function serving this target's rules (the edge module's `viewer_request_lambda_arn` output), qualified or not. Lets the geo check ignore behaviors running another function. */
+      edgeFunctionArn?: string;
     };
     /** @description Update body. Same fields as TargetInput plus an optional `id`, which must equal the id in the path if present; a mismatch is a 400. Spelled out rather than composed with TargetInput because `allOf` cannot add a property to a schema that sets `additionalProperties: false`. */
     TargetUpdate: {
@@ -382,6 +407,7 @@ export interface components {
       region: string;
       tableName: string;
       roleArn?: string;
+      edgeFunctionArn?: string;
     };
     /** @description A registered target. `id` is server-generated and immutable. */
     Target: {
@@ -391,6 +417,89 @@ export interface components {
       region: string;
       tableName: string;
       roleArn?: string;
+      edgeFunctionArn?: string;
+    };
+    /** @description The parts of a rule the decision reads. */
+    GeoCheckRequest: {
+      /** @enum {string} */
+      kind: "redirect" | "rewrite";
+      matches: components["schemas"]["match"][];
+    };
+    GeoCheck: {
+      readiness: components["schemas"]["GeoReadiness"];
+      decision: components["schemas"]["GeoDecision"];
+    };
+    GeoDecision: {
+      /**
+       * @description `blocked`: a rewrite a relevant behavior would cache for every country — the write routes refuse it. `unverifiable`: a rewrite on a distribution that could not be read — saved only when confirmed. `warn`: the rule may misfire or never run. Redirects are never blocked.
+       * @enum {string}
+       */
+      outcome: "ok" | "warn" | "blocked" | "unverifiable";
+      /** @description The behaviors that can serve the rule, in CloudFront's order. */
+      relevant: components["schemas"]["BehaviorReadiness"][];
+      /** @description True when the rule has no exact, case-sensitive path condition, so every behavior running the function may serve it. */
+      ambiguous: boolean;
+      /** @description Negated header and cookie conditions of a rewrite that a serving behavior does not send on to origin-request — absent there for every viewer, so the condition holds for everyone, and the rewrite is `blocked`. Always present in the API's answers. */
+      dropped?: {
+        pathPattern: string;
+        /** @enum {string} */
+        matchType: "header" | "cookie";
+        /** @description The header or cookie. `null` for a cookie whose name the condition's value does not say (a regex or a wildcard), which needs every cookie sent on. */
+        name: string | null;
+      }[];
+    };
+    /** @description `checked`: the distribution was read, and each behavior carries its own verdict, in CloudFront's matching order (the default behavior `*` last). Which behaviors matter for a rule depends on its path — see GeoDecision. `unknown`: the distribution could not be judged, see `cause` and `reason`. */
+    GeoReadiness:
+      | {
+          /** @enum {string} */
+          status: "checked";
+          distributionId: string;
+          /** @description False when the target names no `edgeFunctionArn`, so any Lambda association counted as ours. */
+          functionIdentified: boolean;
+          behaviors: components["schemas"]["BehaviorReadiness"][];
+        }
+      | {
+          /** @enum {string} */
+          status: "unknown";
+          /**
+           * @description `accessDenied`: the API lacks a cloudfront read permission. `notFound`: no such distribution. `notADistribution`: the target is not named after a distribution. `noFunction`: no behavior runs the function. `transient`: AWS did not answer; try again. `unexpected`: anything else — see the console API logs.
+           * @enum {string}
+           */
+          cause:
+            | "accessDenied"
+            | "notFound"
+            | "notADistribution"
+            | "noFunction"
+            | "transient"
+            | "unexpected";
+          reason: string;
+        };
+    /** @description Names a policy sends on to origin-request, or every one but `except`. */
+    Passed: {
+      all: boolean;
+      names: string[];
+      except: string[];
+    };
+    BehaviorReadiness: {
+      /** @description The behavior's path pattern; `*` for the default behavior. */
+      pathPattern: string;
+      /** @description What reaches origin-request on this behavior, one entry per policy that sends things on. Set on the behaviors a rule runs on. */
+      forwards?: {
+        headers: components["schemas"]["Passed"][];
+        cookies: components["schemas"]["Passed"][];
+      };
+      /**
+       * @description `notOurs`: our function does not run here, so no rule does. `noOriginRequest`: the function is not associated at origin-request, where country rules run. `viewerHostMissing`: origin-request never learns the viewer's hostname, so no rule matches. `countryNotForwarded`: no policy asks for the country, so country rules are skipped. `cachedWithoutCountry`: caches, and the country is not in the cache key. `cachedByOriginHeaders`: the same, but only when the origin asks for a copy to be kept.
+       * @enum {string}
+       */
+      verdict:
+        | "ok"
+        | "notOurs"
+        | "noOriginRequest"
+        | "viewerHostMissing"
+        | "countryNotForwarded"
+        | "cachedWithoutCountry"
+        | "cachedByOriginHeaders";
     };
     /** @description A host to create, before it has any rules. */
     HostInput: {
@@ -488,7 +597,10 @@ export interface components {
          */
         code:
           | "BAD_REQUEST"
+          | "CONDITION_NOT_FORWARDED"
           | "FORBIDDEN"
+          | "GEO_REWRITE_UNSAFE"
+          | "GEO_UNVERIFIED"
           | "HOST_EXISTS"
           | "INTERNAL"
           | "INVALID_JSON"
@@ -510,15 +622,21 @@ export interface components {
     match: {
       /** @enum {unknown} */
       matchType:
-        "path" | "hostname" | "protocol" | "regex" | "header" | "cookie";
+        | "path"
+        | "hostname"
+        | "protocol"
+        | "regex"
+        | "header"
+        | "cookie"
+        | "country";
       /** @enum {unknown} */
-      matchOperator: "equals" | "contains" | "regex";
+      matchOperator: "equals" | "contains" | "regex" | "notEquals";
       matchValue: string;
       negate?: boolean;
       caseSensitive?: boolean;
       /** @description Required when matchType is "header"; disallowed otherwise. */
       headerName?: string;
-    };
+    } & (unknown & unknown);
     /** Redirect rule item (erMatchRule) */
     "redirect-rule.schema": {
       /** @description Host, e.g. www.example.com. DynamoDB partition key. */
@@ -684,7 +802,7 @@ export interface components {
         "application/json": components["schemas"]["Error"];
       };
     };
-    /** @description That priority is already taken for this host and rule type. Priority is part of a rule's key, so two rules cannot share one. Nothing was written — on a move, neither the rule being moved nor the one already there. */
+    /** @description `RULE_EXISTS`: that priority is already taken for this host and rule type. Priority is part of a rule's key, so two rules cannot share one. Nothing was written — on a move, neither the rule being moved nor the one already there. `GEO_REWRITE_UNSAFE`: a country rewrite on a behavior that caches without CloudFront-Viewer-Country in its cache key, so the rewritten page would be served to every country; it cannot be overridden. `GEO_UNVERIFIED`: a country rewrite whose distribution could not be read; repeat with `confirmUnverifiedGeo=true` to save it anyway. `CONDITION_NOT_FORWARDED`: a rewrite negating a header or cookie that a behavior serving it does not send on to origin-request, so the condition holds for every viewer; add it to the origin request policy. */
     RuleConflict: {
       headers: {
         [name: string]: unknown;
@@ -704,6 +822,8 @@ export interface components {
     };
   };
   parameters: {
+    /** @description Saves a country rewrite even though its distribution could not be checked (409 `GEO_UNVERIFIED` otherwise). Applies to this write only and is logged with who made it. Has no effect on `GEO_REWRITE_UNSAFE`. */
+    ConfirmUnverifiedGeo: boolean;
     /** @description Target id. */
     TargetPathId: string;
     /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
@@ -985,6 +1105,42 @@ export interface operations {
       500: components["responses"]["InternalError"];
     };
   };
+  checkGeoForRule: {
+    parameters: {
+      query?: {
+        /** @description Read the distribution again instead of reusing a reading up to a minute old. */
+        fresh?: boolean;
+      };
+      header?: never;
+      path: {
+        /** @description Target id. */
+        id: components["parameters"]["TargetPathId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["GeoCheckRequest"];
+      };
+    };
+    responses: {
+      /** @description The reading and the decision for this rule. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GeoCheck"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      405: components["responses"]["MethodNotAllowed"];
+      500: components["responses"]["InternalError"];
+    };
+  };
   listHosts: {
     parameters: {
       query?: never;
@@ -1112,7 +1268,10 @@ export interface operations {
   };
   createRule: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description Saves a country rewrite even though its distribution could not be checked (409 `GEO_UNVERIFIED` otherwise). Applies to this write only and is logged with who made it. Has no effect on `GEO_REWRITE_UNSAFE`. */
+        confirmUnverifiedGeo?: components["parameters"]["ConfirmUnverifiedGeo"];
+      };
       header?: never;
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
@@ -1219,7 +1378,10 @@ export interface operations {
   };
   putRule: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description Saves a country rewrite even though its distribution could not be checked (409 `GEO_UNVERIFIED` otherwise). Applies to this write only and is logged with who made it. Has no effect on `GEO_REWRITE_UNSAFE`. */
+        confirmUnverifiedGeo?: components["parameters"]["ConfirmUnverifiedGeo"];
+      };
       header?: never;
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
@@ -1290,7 +1452,10 @@ export interface operations {
   };
   toggleRule: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description Saves a country rewrite even though its distribution could not be checked (409 `GEO_UNVERIFIED` otherwise). Applies to this write only and is logged with who made it. Has no effect on `GEO_REWRITE_UNSAFE`. */
+        confirmUnverifiedGeo?: components["parameters"]["ConfirmUnverifiedGeo"];
+      };
       header?: never;
       path: {
         /** @description Target (DynamoDB table) id from the targets registry (CF-12). */
@@ -1322,6 +1487,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       405: components["responses"]["MethodNotAllowed"];
+      409: components["responses"]["RuleConflict"];
       500: components["responses"]["InternalError"];
       502: components["responses"]["TargetUnreachable"];
     };

@@ -1,5 +1,6 @@
 import { isRedirect, narrowForwardSettings } from "../api";
 import type { MatchCondition, Rule } from "../api";
+import { isExcludingCountries, parseCountries } from "./ruleDraft";
 
 /**
  * The one-line renderings a rule list needs. Kept out of the components so the
@@ -7,13 +8,23 @@ import type { MatchCondition, Rule } from "../api";
  * any future confirmation dialog should all describe a rule the same way.
  */
 
-/** `path equals /old`, or `header:x-env not contains staging`. */
+/** `path equals /old`, `header:x-env not contains staging`, `country in BE, FR`. */
 export const describeMatch = (match: MatchCondition): string => {
+  const negated = match.negate === true ? "not " : "";
+
+  // A country condition reads as set membership, because that is what it is:
+  // its `equals` operator is only `equals` because the edge splits the value on
+  // spaces and matches any variant. Rendering the stored form
+  // (`country equals BE FR`) would describe the encoding rather than the rule.
+  if (match.matchType === "country") {
+    const not = isExcludingCountries(match) ? "not " : "";
+    return `country ${not}in ${parseCountries(match.matchValue).join(", ")}`;
+  }
+
   const subject =
     match.matchType === "header"
       ? `header:${match.headerName ?? "?"}`
       : match.matchType;
-  const negated = match.negate === true ? "not " : "";
   return `${subject} ${negated}${match.matchOperator} ${match.matchValue}`;
 };
 
@@ -58,6 +69,15 @@ export const ruleTo = (rule: Rule): string => {
     ? target
     : `${target}${pathAndQS}`;
 };
+
+/**
+ * A redirect that reads the viewer's country. The edge answers these at
+ * origin-request, after every classic redirect of the host had its turn at
+ * viewer-request — so a classic redirect always wins over a geo one, whatever
+ * their priorities. See `infra/lambda/README.md`.
+ */
+export const isGeoRedirect = (rule: Rule): boolean =>
+  isRedirect(rule) && rule.matches.some((m) => m.matchType === "country");
 
 /** The badge text for a rule's kind, including the status code for a redirect. */
 export const ruleKindLabel = (rule: Rule): string =>

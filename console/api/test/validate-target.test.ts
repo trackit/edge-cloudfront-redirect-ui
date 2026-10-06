@@ -78,3 +78,31 @@ describe("validateTarget", () => {
     }
   });
 });
+
+describe("edgeFunctionArn", () => {
+  const FN =
+    "arn:aws:lambda:us-east-1:123456789012:function:edgeroute-redirect-rules";
+
+  it("accepts a qualified or unqualified Lambda ARN in us-east-1", () => {
+    for (const arn of [FN, `${FN}:7`]) {
+      expect(validateTarget({ ...valid, edgeFunctionArn: arn })).toMatchObject({
+        edgeFunctionArn: arn,
+      });
+    }
+  });
+
+  it("refuses an ARN outside us-east-1, where Lambda@Edge cannot live", () => {
+    expect(() =>
+      validateTarget({
+        ...valid,
+        edgeFunctionArn: FN.replace("us-east-1", "eu-west-1"),
+      }),
+    ).toThrow(ApiError);
+  });
+
+  it("refuses something that is not a Lambda function ARN", () => {
+    expect(() =>
+      validateTarget({ ...valid, edgeFunctionArn: "edgeroute-redirect-rules" }),
+    ).toThrow(ApiError);
+  });
+});

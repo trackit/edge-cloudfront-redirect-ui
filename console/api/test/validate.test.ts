@@ -169,6 +169,302 @@ describe("validateRule", () => {
     }
   });
 
+  describe("country conditions", () => {
+    const withCountry = (match: Record<string, unknown>) => ({
+      ...redirectRule,
+      matches: [{ matchType: "country", matchOperator: "equals", ...match }],
+    });
+
+    it.each([
+      ["a single code", "FR"],
+      ["several codes, space-separated", "BE FR NL"],
+      // The point of the whole design: the schema validates the format, not the
+      // list of countries. CloudFront publishes no list and its geolocation
+      // database changes without notice, so an unrecognised code has to be
+      // storable or a legitimate new country is unusable until we ship again.
+      ["a code we have never heard of", "FR XK"],
+    ])("accepts %s", (_label, matchValue) => {
+      expect(() => validateRule(withCountry({ matchValue }))).not.toThrow();
+    });
+
+    it("accepts notEquals, which is how an exclude list is expressed", () => {
+      expect(() =>
+        validateRule(
+          withCountry({ matchValue: "FR", matchOperator: "notEquals" }),
+        ),
+      ).not.toThrow();
+    });
+
+    it("rejects negate on a country condition", () => {
+      // An exclusion is `notEquals`. `negate` is what would turn a reader that
+      // predates `country` into a redirect for every viewer — see below.
+      expect(() =>
+        validateRule(withCountry({ matchValue: "FR", negate: true })),
+      ).toThrowError(ApiError);
+    });
+
+    it("rejects notEquals on any other type", () => {
+      // They have `negate`; a second way to say "not" would only be a way for
+      // two identical rules to look different.
+      expect(() =>
+        validateRule({
+          ...redirectRule,
+          matches: [
+            {
+              matchType: "path",
+              matchOperator: "notEquals",
+              matchValue: "/old",
+            },
+          ],
+        }),
+      ).toThrowError(ApiError);
+    });
+
+    describe("readable errors", () => {
+      // Ajv words these by mechanism ("must NOT be valid", "must match \"then\"
+      // schema"). What an API caller needs is the reason and the fix.
+      const detailsOf = (body: unknown) => {
+        try {
+          validateRule(body);
+        } catch (e) {
+          return (e as ApiError).details as { path: string; message: string }[];
+        }
+        throw new Error("expected a validation error");
+      };
+
+      it("explains a cookie beside a country, and only once", () => {
+        const details = detailsOf({
+          ...redirectRule,
+          matches: [
+            { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+            { matchType: "cookie", matchOperator: "contains", matchValue: "x" },
+          ],
+        });
+
+        expect(details).toEqual([
+          expect.objectContaining({
+            path: "/matches/1/matchType",
+            message: expect.stringContaining("origin-request"),
+          }),
+        ]);
+      });
+
+      it("points a negated country at notEquals", () => {
+        const details = detailsOf(
+          withCountry({ matchValue: "FR", negate: true }),
+        );
+
+        expect(details).toEqual([
+          expect.objectContaining({
+            path: "/matches/0/negate",
+            message: expect.stringContaining("notEquals"),
+          }),
+        ]);
+      });
+
+      it("points notEquals on a path at negate", () => {
+        const details = detailsOf({
+          ...redirectRule,
+          matches: [
+            {
+              matchType: "path",
+              matchOperator: "notEquals",
+              matchValue: "/old",
+            },
+          ],
+        });
+
+        expect(details).toEqual([
+          expect.objectContaining({
+            path: "/matches/0/matchOperator",
+            message: expect.stringContaining("negate"),
+          }),
+        ]);
+      });
+
+      it("leaves every other error as Ajv wrote it", () => {
+        // headerName uses an if/then too; its errors are not ours to reword.
+        const details = detailsOf({
+          ...redirectRule,
+          matches: [
+            {
+              matchType: "path",
+              matchOperator: "equals",
+              matchValue: "/old",
+              headerName: "x-env",
+            },
+          ],
+        });
+
+        expect(details.map((d) => d.message)).toContain(
+          'must match "else" schema',
+        );
+      });
+    });
+
+    describe("inert for a reader that predates country conditions", () => {
+      // A frozen copy of how the edge evaluated a condition before `country`
+      // existed (infra/lambda at `dev`: getMatchSource + checkAkamaiVariant).
+      // Such a reader still runs during a deploy, after a rollback, and in any
+      // other consumer of the table. It finds no source for an unknown type and
+      // tests "" — so the only thing that can make it match is `negate`, or a
+      // `*` wildcard matching the empty string. Deliberately not imported from
+      // the lambda: the point is to keep testing the OLD behaviour.
+      const legacyMatches = (match: {
+        matchOperator: string;
+        matchValue: string;
+        negate?: boolean;
+      }): boolean => {
+        const variants = match.matchValue
+          .toLowerCase()
+          .split(" ")
+          .filter((v) => v.length > 0);
+        const isMatch = variants.some((variant) => {
+          if (!variant.includes("*")) {
+            return match.matchOperator === "contains"
+              ? "".includes(variant)
+              : "" === variant;
+          }
+          const pattern = variant
+            .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+            .replace(/\*/g, ".*");
+          return new RegExp(
+            match.matchOperator === "contains" ? pattern : `^${pattern}$`,
+          ).test("");
+        });
+        return match.negate === true ? !isMatch : isMatch;
+      };
+
+      const candidates = ["equals", "notEquals", "contains", "regex"].flatMap(
+        (matchOperator) =>
+          ["FR", "BE FR", "*", "F*", ""].flatMap((matchValue) =>
+            [false, true, undefined].map((negate) => ({
+              matchOperator,
+              matchValue,
+              ...(negate !== undefined && { negate }),
+            })),
+          ),
+      );
+
+      it.each(candidates)(
+        "a country condition the schema accepts never matches: %o",
+        (match) => {
+          let accepted = true;
+          try {
+            validateRule(withCountry(match));
+          } catch {
+            accepted = false;
+          }
+          if (accepted) expect(legacyMatches(match)).toBe(false);
+        },
+      );
+
+      it("still has candidates the schema accepts, so it tests something", () => {
+        const accepted = candidates.filter((match) => {
+          try {
+            validateRule(withCountry(match));
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        expect(accepted.length).toBeGreaterThan(0);
+      });
+    });
+
+    it.each([
+      ["lowercase", "fr"],
+      ["comma-separated", "FR,DE"],
+      ["a three-letter code", "FRA"],
+      ["a double space", "FR  DE"],
+      ["a trailing space", "FR "],
+      ["empty", ""],
+    ])("rejects %s", (_label, matchValue) => {
+      expect(() => validateRule(withCountry({ matchValue }))).toThrowError(
+        ApiError,
+      );
+    });
+
+    it("rejects any operator but equals and notEquals", () => {
+      // A country condition is a set membership test. `contains` would silently
+      // match FRA against FR, and `regex` would let a rule ReDoS the edge on a
+      // value that is always two letters.
+      expect(() =>
+        validateRule(
+          withCountry({ matchValue: "FR", matchOperator: "contains" }),
+        ),
+      ).toThrowError(ApiError);
+    });
+
+    it.each([
+      ["header", { headerName: "x-env" }],
+      ["cookie", {}],
+      // Read from X-Forwarded-Proto, not guaranteed at origin-request.
+      ["protocol", {}],
+    ])(
+      "rejects a %s condition next to a country one on a redirect",
+      (matchType, extra) => {
+        // The redirect is evaluated at origin-request, where a header or cookie
+        // the policies do not forward reads as "" — and negated, that matches
+        // everyone.
+        expect(() =>
+          validateRule({
+            ...redirectRule,
+            matches: [
+              {
+                matchType: "country",
+                matchOperator: "equals",
+                matchValue: "FR",
+              },
+              {
+                matchType,
+                matchOperator: "contains",
+                matchValue: "x",
+                negate: true,
+                ...extra,
+              },
+            ],
+          }),
+        ).toThrowError(ApiError);
+      },
+    );
+
+    it("leaves a rewrite free to combine them", () => {
+      // Rewrites always ran at origin-request; the restriction is about the
+      // redirects that moved there.
+      expect(() =>
+        validateRule({
+          ...rewriteRule,
+          matches: [
+            { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+            { matchType: "cookie", matchOperator: "contains", matchValue: "x" },
+          ],
+        }),
+      ).not.toThrow();
+    });
+
+    it("accepts a path condition next to a country one", () => {
+      expect(() =>
+        validateRule({
+          ...redirectRule,
+          matches: [
+            { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
+            { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+          ],
+        }),
+      ).not.toThrow();
+    });
+
+    it("still rejects headerName on a country condition", () => {
+      // The headerName conditional and the country one now sit side by side in
+      // an allOf; this is the guard that adding the second did not loosen the
+      // first.
+      expect(() =>
+        validateRule(withCountry({ matchValue: "FR", headerName: "x-env" })),
+      ).toThrowError(ApiError);
+    });
+  });
+
   it("caps details so a large body cannot amplify past the response limit", () => {
     // One junk key yields one detail. Uncapped, a big body produces a response
     // over Lambda's 6 MB limit, and API Gateway replaces the error envelope

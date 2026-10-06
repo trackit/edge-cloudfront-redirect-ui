@@ -7,11 +7,14 @@ import type { RedirectRule } from "../src/rule-types.js";
  */
 export class FakeRepository implements RuleRepository {
   queryCount = 0;
+  /** The sort-key prefix of every query, in order. */
+  readonly prefixes: string[] = [];
 
   constructor(private readonly items: RedirectRule[] = []) {}
 
   async queryByPrefix<T>(pk: string, skPrefix: string): Promise<T[]> {
     this.queryCount++;
+    this.prefixes.push(skPrefix);
     return this.items
       .filter((item) => item.pk === pk && item.sk.startsWith(skPrefix))
       .sort((a, b) => a.sk.localeCompare(b.sk)) as T[];

@@ -180,6 +180,36 @@ resource "aws_cloudfront_distribution" "existing" {
   be served to another. Rules are only re-evaluated on a cache miss, so a caching
   behavior also delays when a rule change is observed.
 
+- **Country conditions need `CloudFront-Viewer-Country`.** A rule with a
+  `country` match condition only fires if the cache behavior asks CloudFront for
+  that header. Where depends on whether the behavior caches:
+  - **It caches**: in the **cache key**, so a cache policy. An origin request
+    policy alone forwards the value without splitting the cache, so a page
+    fetched for one country is served from cache to the next viewer from
+    anywhere else — and a cache hit never reaches the function, so a geo
+    redirect for that URL stops firing. Budget for the hit ratio: up to one
+    cached copy per country per URL.
+  - **Caching is disabled** (`Managed-CachingDisabled`): that policy cannot hold
+    headers, so name it in the **origin request policy**. Nothing is cached, so
+    the question above does not arise. `examples/infra` does this.
+
+  Nothing breaks if you skip it. The header is absent, the function cannot tell
+  which country the viewer is in, and it **skips** those rules rather than
+  guessing — so they simply never fire, including the excluding ones, which is
+  the case that would otherwise redirect your whole site. See
+  [the country a rule can be keyed on](../../lambda/README.md#the-country-a-rule-can-be-keyed-on).
+
+  These redirects are answered at **origin-request**, because CloudFront works
+  the country out after the viewer-request event. That is one more reason to
+  attach both associations, and it means a geo redirect is evaluated on cache
+  misses only — its response is sent `no-store`, so the redirect itself is never
+  cached.
+
+  It also only sees the query string the policies forward: `useIncomingQueryString`
+  carries nothing, and a path condition written with a `?` never matches, unless
+  the origin request policy forwards query strings (`examples/infra` forwards all
+  of them). A campaign link's `utm_*` parameters are the usual casualty.
+
 ## Using the module more than once
 
 Each instance builds in its own directory — `.build/<function_name>/` inside the
@@ -217,18 +247,21 @@ the module neither reads it nor packages it.
 
 ## Inputs
 
-| Name                  | Type        | Default                    | Description                                        |
-| --------------------- | ----------- | -------------------------- | -------------------------------------------------- |
-| `table_name`          | string      | —                          | DynamoDB rules table name (baked into the bundle). |
-| `table_arn`           | string      | —                          | Table ARN; scopes the read-only IAM policy.        |
-| `table_region`        | string      | —                          | Table region (baked into the bundle).              |
-| `function_name`       | string      | `edgeroute-redirect-rules` | Published function name.                           |
-| `cache_ttl_ms`        | number      | `60000`                    | In-memory rule cache TTL, baked in.                |
-| `lambda_source_dir`   | string      | `../../lambda`             | Path to the handler workspace.                     |
-| `monorepo_root`       | string      | `../../..`                 | Repo root where the install runs.                  |
-| `build_dir`           | string      | `.build/<function_name>`   | This instance's build directory.                   |
-| `npm_install_command` | string      | `npm ci`                   | Install run before the build; `""` skips it.       |
-| `tags`                | map(string) | `{}`                       | Tags for the function and role.                    |
+| Name                   | Type         | Default                      | Description                                            |
+| ---------------------- | ------------ | ---------------------------- | ------------------------------------------------------ |
+| `table_name`           | string       | —                            | DynamoDB rules table name (baked into the bundle).     |
+| `table_arn`            | string       | —                            | Table ARN; scopes the read-only IAM policy.            |
+| `table_region`         | string       | —                            | Table region (baked into the bundle).                  |
+| `function_name`        | string       | `edgeroute-redirect-rules`   | Published function name.                               |
+| `cache_ttl_ms`         | number       | `60000`                      | In-memory rule cache TTL, baked in.                    |
+| `lambda_source_dir`    | string       | `../../lambda`               | Path to the handler workspace.                         |
+| `monorepo_root`        | string       | `../../..`                   | Repo root where the install runs.                      |
+| `build_dir`            | string       | `.build/<function_name>`     | This instance's build directory.                       |
+| `npm_install_command`  | string       | `npm ci`                     | Install run before the build; `""` skips it.           |
+| `tags`                 | map(string)  | `{}`                         | Tags for the function and role.                        |
+| `geo_alarm_regions`    | list(string) | `["us-east-1", "eu-west-1"]` | Regions to alarm in when country rules are skipped.    |
+| `geo_alarm_threshold`  | number       | `0.5`                        | Share of geo requests without a country that fires it. |
+| `alarm_sns_topic_arns` | map(string)  | `{}`                         | Region → SNS topic the alarm notifies, one per region. |
 
 ## Outputs
 
@@ -239,6 +272,78 @@ the module neither reads it nor packages it.
 | `origin_request_lambda_arn` | Same qualified ARN, for the origin-request association. |
 | `function_name`             | Published function name.                                |
 | `role_arn`                  | Execution role ARN.                                     |
+| `geo_alarm_names`           | Region → name of the geo alarm.                         |
+
+## Adopting country conditions
+
+**Nothing to do for a distribution that does not use them.** Upgrading the
+module changes nothing for hosts without a `country` rule.
+
+To use them, on every behavior the associations run on:
+
+1. Ask for `CloudFront-Viewer-Country`: in the **cache policy** if the behavior
+   caches, in the **origin request policy** if caching is disabled — see
+   [wiring it into an existing distribution](#wiring-it-into-an-existing-distribution).
+2. Keep **both associations** attached: geo redirects are answered at
+   origin-request.
+3. Forward query strings in the origin request policy if geo redirects must keep
+   them (`utm_*` and the like).
+
+**Deploy in any order.** A version of the function that predates country
+conditions ignores them rather than misreading them — an exclusion is stored as
+`notEquals`, which such a version cannot turn into a match (see
+[why an exclusion is notEquals](../../lambda/README.md#why-an-exclusion-is-notequals)).
+So while a new version propagates, a geo rule fires at the edge locations that
+already run it and is ignored at the others; rolling the function back makes geo
+rules stop firing and changes nothing else. Nothing has to be disabled first.
+
+**Name the function on the target** (the console's distribution settings, or
+`edgeFunctionArn` on the API) so the console checks only the behaviors running
+it.
+
+**Invalidate** paths already cached when a geo rule is added on them — see
+[pages cached before the rule](../../lambda/README.md#pages-cached-before-the-rule).
+
+**Check it works.** A host with country rules whose requests arrive without a
+country is logged at most once an hour per host and execution environment:
+`country rules, but no viewer country at origin-request`. Lambda@Edge writes its
+logs in the region of the edge location that ran it, under
+`/aws/lambda/us-east-1.<function_name>` — look in the regions your viewers are
+in, not only in `us-east-1`.
+
+### The geo alarm
+
+One CloudWatch alarm per region in `geo_alarm_regions`, named
+`<function_name>-geo-country-missing`. It fires when, over three 5-minute
+periods, more than `geo_alarm_threshold` of the origin-request calls a country
+rule could apply to arrived without a country — the policies stopped asking
+CloudFront for it, and every geo rule is being skipped. A few such requests are
+normal (CloudFront cannot place every address), hence a share rather than a
+count.
+
+Per region because Lambda@Edge writes its logs, and the metrics in them, in the
+region of the edge location that ran it, and an alarm only reads its own region.
+List the regions your traffic comes from; a region not listed does not alarm.
+
+By default the alarms have **no action**: they turn red in the CloudWatch
+console and notify nobody. To be told, give each region its own SNS topic — an
+alarm can only notify a topic in its own region:
+
+```hcl
+alarm_sns_topic_arns = {
+  "eu-west-1" = aws_sns_topic.alerts_eu.arn
+  "us-east-1" = aws_sns_topic.alerts_us.arn
+}
+```
+
+The alarm reads the dimension `FunctionName = us-east-1.<function_name>`, the
+name a Lambda@Edge replica runs under in every region.
+
+**Other readers of the rules table** should treat an unknown `matchType` or
+`matchOperator` as a condition that does not hold. The items are written so that
+a reader doing the naive thing — comparing an unknown type against `""`, as this
+function used to — gets that result too; one that does anything else has to be
+checked before geo rules are created.
 
 ## Updating & teardown
 

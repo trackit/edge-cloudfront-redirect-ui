@@ -3,6 +3,7 @@ import { health } from "./handlers/health.js";
 import {
   createTarget,
   deleteTarget,
+  checkGeoForRule,
   getTarget,
   listTargets,
   updateTarget,
@@ -77,6 +78,17 @@ export const routes: Route[] = [
     method: "DELETE",
     pattern: "/targets/:id",
     handler: deleteTarget,
+    write: true,
+  },
+
+  // Changes nothing — POST because it carries the rule being written — but
+  // gated like a write all the same: only someone who can save a rule needs to
+  // know whether it would be refused, and it keeps "every POST is a write"
+  // true without an exception to remember.
+  {
+    method: "POST",
+    pattern: "/targets/:id/geo-readiness",
+    handler: checkGeoForRule,
     write: true,
   },
 

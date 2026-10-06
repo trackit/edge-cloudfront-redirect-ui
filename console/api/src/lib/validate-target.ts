@@ -13,6 +13,13 @@ export interface TargetInput {
    * policy already covers. See console/api/infra/README.md.
    */
   roleArn?: string;
+  /**
+   * The Lambda@Edge function serving this target's rules, qualified or not.
+   * Optional: without it the geo check counts every Lambda association on the
+   * distribution as ours, which misjudges a behavior running someone else's
+   * function. Lambda@Edge only exists in us-east-1, hence the fixed region.
+   */
+  edgeFunctionArn?: string;
 }
 
 const ajv = new Ajv({ allErrors: true, useDefaults: false });
@@ -39,6 +46,11 @@ const validate = ajv.compile<TargetInput>({
     roleArn: {
       type: "string",
       pattern: "^arn:aws[a-z-]*:iam::\\d{12}:role/.+$",
+    },
+    edgeFunctionArn: {
+      type: "string",
+      pattern:
+        "^arn:aws[a-z-]*:lambda:us-east-1:\\d{12}:function:[a-zA-Z0-9-_]{1,64}(:(\\d+|\\$LATEST))?$",
     },
   },
 });

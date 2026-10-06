@@ -17,6 +17,16 @@ export type Meta = Schemas["Meta"];
 /** A registered target. `id` is server-generated and is the `targetId` in rule routes. */
 export type Target = Schemas["Target"];
 
+/**
+ * Whether a target's distribution can serve country conditions reliably, and
+ * what that means for one rule. See `POST /targets/{id}/geo-readiness` in the
+ * spec.
+ */
+export type GeoReadiness = Schemas["GeoReadiness"];
+export type GeoCheck = Schemas["GeoCheck"];
+export type GeoDecision = Schemas["GeoDecision"];
+export type BehaviorReadiness = Schemas["BehaviorReadiness"];
+
 /** Body for creating a target. The server assigns `id`. */
 export type TargetInput = Schemas["TargetInput"];
 
