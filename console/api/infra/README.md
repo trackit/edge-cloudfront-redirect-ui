@@ -136,12 +136,21 @@ A country condition is evaluated at origin-request, so the edge only sees cache
 misses. On a behavior that caches without `CloudFront-Viewer-Country` in its
 cache key, one viewer's copy is served to the next: a geo redirect silently
 misses most viewers, and a geo rewrite serves one country's page to everyone.
-The edge cannot log what never reaches it, so `GET /targets/{id}/geo-readiness`
-reads the distribution instead, and the console warns in the rule editor.
+The edge cannot log what never reaches it, so `POST /targets/{id}/geo-readiness`
+reads the distribution instead. It is sent the rule being written (`kind` and
+`matches`) and answers both the reading — a verdict per behavior, in
+CloudFront's order — and the **decision** for that rule: which behaviors can
+serve it, from its path, and whether saving it is `ok`, `warn`, `blocked` or
+`unverifiable`. The editor shows it; the rule routes apply it.
 
 The distribution is the one the target is **named** after: the console registers
 a target under the distribution ID (or ARN) it was connected with. A target with
 another name answers `unknown`.
+
+A target can also name its **redirect function**, `edgeFunctionArn` — the edge
+module's `viewer_request_lambda_arn` output, qualified or not. With it, only the
+behaviors running that function are judged, and one running someone else's is
+`notOurs`. Without it, every behavior with a Lambda@Edge association counts.
 
 The execution role gets two read-only statements:
 
@@ -160,9 +169,29 @@ actions. The target's distribution is known there, so scope
 `GetDistributionConfig` to it:
 `arn:aws:cloudfront::<account>:distribution/<ID>`.
 
-A missing grant never blocks anything: the answer is `unknown` with the reason,
-the console says it could not check, and the Lambda logs
-`console-api: could not read distribution …`.
+A distribution that cannot be read is `unknown` with a `cause` —
+`accessDenied` (the grants above), `notFound`, `transient` (throttling, a
+timeout: try again) or `unexpected` (see the logs) — and the Lambda logs
+`console-api: could not read distribution …` with the error. Only a reading is
+kept for a minute; an `unknown` answer is asked again next time.
+
+### The write guard
+
+`POST` and `PUT` on a rule, and `PATCH` turning one back on, check a **country
+rewrite** the same way before writing it:
+
+- **`409 GEO_REWRITE_UNSAFE`** when a behavior that can serve it caches without
+  `CloudFront-Viewer-Country` in its cache key — the rewritten page would be
+  served to every country. There is no override: fix the distribution.
+- **`409 GEO_UNVERIFIED`** when the distribution could not be read. Repeat with
+  `?confirmUnverifiedGeo=true` to save it anyway; each such write is logged as
+  `{"event":"geo-unverified-confirmed", principal, targetId, host, sk, cause}`,
+  never with the rule's content.
+
+Redirects are never refused (a geo redirect is `no-store`: the same setup makes
+it miss viewers, not misdirect them), nor is a rule saved disabled. The check
+reads the same minute-old reading as the editor, and it happens at write time:
+changing a cache policy later does not re-check rules already saved.
 
 ## Region validation
 

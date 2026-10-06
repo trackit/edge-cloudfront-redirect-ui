@@ -129,7 +129,7 @@ redirects are to keep campaign parameters such as `utm_*`.
 
 ### When the country never arrives
 
-At origin-request, a request without a country to a host that has country rules
+At origin-request, a request without a country on a path a country rule covers
 is logged at most once an hour per host and execution environment
 (`country rules, but no viewer country at origin-request`). A single one can be
 legitimate — CloudFront cannot place every address — but if it repeats, the
@@ -138,6 +138,30 @@ rule of that host is being skipped. Checking costs one lookup of the host's
 redirects once an hour, not one per cache miss. The record of checked hosts is
 capped at 500, like the rule cache, because hosts come from the viewer's `Host`
 header — behind a wildcard domain, any number of them.
+
+The same requests are **counted** for the geo alarm (`lib/geo-metrics.ts`): per
+host, every origin-request a country rule could apply to — its other conditions
+match — (`CountryRulesEvaluated`) and those that arrived without a country
+(`CountryRulesSkipped`). A path no geo rule covers is not counted, so static
+assets on a behavior that never asks for the country do not raise the alarm, in namespace `EdgeRoute/Geo`, dimensions
+`FunctionName` and `FunctionName, Host`. They are written as CloudWatch EMF at
+most once a minute per execution environment, on the next request — not one log
+line per request — and carry the host and the counts only: no IP, URL, header
+or country. Whether a country rule covers a request is asked once a minute per host and
+path (capped at 1000), judged on the first request seen for that path.
+The module's alarm reads them — see
+[the geo alarm](../modules/edge/README.md#the-geo-alarm).
+
+### Pages cached before the rule
+
+A geo rule only runs on a cache miss. Copies of a page cached **before** the
+rule existed are served as they are until their TTL runs out — to every
+country. After adding a geo rule on paths that may already be cached,
+invalidate them:
+
+```bash
+aws cloudfront create-invalidation --distribution-id <ID> --paths "/shop/*"
+```
 
 ### Classic redirects first
 
