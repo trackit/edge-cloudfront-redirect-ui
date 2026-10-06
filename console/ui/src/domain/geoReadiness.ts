@@ -20,6 +20,7 @@ const readinessOf = (targetId: string): Promise<GeoReadiness> => {
         requests.delete(targetId);
         return {
           status: "unknown",
+          cause: "transient",
           reason:
             caught instanceof Error
               ? caught.message
@@ -74,7 +75,7 @@ export const resetGeoReadiness = (): void => {
 export const unsafeForCountryRewrite = (
   readiness: GeoReadiness | null,
 ): string[] =>
-  readiness?.status === "misconfigured"
+  readiness?.status === "checked"
     ? readiness.behaviors
         .filter((behavior) => behavior.verdict === "cachedWithoutCountry")
         .map((behavior) => behavior.pathPattern)

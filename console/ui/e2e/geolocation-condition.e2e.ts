@@ -484,11 +484,12 @@ test("a country condition warns when the distribution caches without the country
   api,
 }) => {
   api.setGeoReadiness({
-    status: "misconfigured",
+    status: "checked",
     distributionId: "E2EXAMPLE12345",
+    functionIdentified: true,
     behaviors: [
-      { pathPattern: "*", verdict: "ok" },
       { pathPattern: "/campaign/*", verdict: "cachedWithoutCountry" },
+      { pathPattern: "*", verdict: "ok" },
     ],
   });
   await open(page);
@@ -539,6 +540,7 @@ test("a distribution the API cannot read says it was not checked", async ({
 }) => {
   api.setGeoReadiness({
     status: "unknown",
+    cause: "accessDenied",
     reason:
       "The console could not read distribution E2EXAMPLE12345 (AccessDenied)",
   });
@@ -564,8 +566,9 @@ const geoRewrite = {
 } as unknown as Rule;
 
 const cachedWithoutCountry: GeoReadiness = {
-  status: "misconfigured",
+  status: "checked",
   distributionId: "E2EXAMPLE12345",
+  functionIdentified: true,
   behaviors: [{ pathPattern: "*", verdict: "cachedWithoutCountry" }],
 };
 
@@ -626,7 +629,11 @@ test("a country rewrite saves when the distribution could not be checked", async
 }) => {
   api.setHosts([host(HOST, { rewrites: 1 })]);
   api.setRules([geoRewrite]);
-  api.setGeoReadiness({ status: "unknown", reason: "AccessDenied" });
+  api.setGeoReadiness({
+    status: "unknown",
+    cause: "accessDenied",
+    reason: "AccessDenied",
+  });
   await open(page);
   await editFirst(page);
   await expect(

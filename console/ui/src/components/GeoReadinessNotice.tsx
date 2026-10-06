@@ -14,6 +14,12 @@ const PROBLEM: Record<Exclude<BehaviorReadiness["verdict"], "ok">, string> = {
     "does not ask CloudFront for the country, so this rule is skipped",
   noOriginRequest:
     "does not run the function at origin-request, where country conditions are evaluated",
+  // Never listed: filtered out below, since no rule runs there.
+  notOurs: "does not run the redirect function, so this rule never runs there",
+  viewerHostMissing:
+    "does not pass the viewer's hostname to origin-request (X-EdgeRoute-Viewer-Host), so this rule never matches",
+  cachedByOriginHeaders:
+    "only caches when the origin asks for it in Cache-Control; if it does, a copy cached for one country is served to the next viewer",
 };
 
 /** The same cache case, as it lands on a rewrite. */
@@ -32,7 +38,7 @@ const label = (pattern: string): string =>
  * the distribution it says so quietly, because "not checked" is not "fine".
  */
 export default function GeoReadinessNotice({ readiness, kind }: Props) {
-  if (readiness === null || readiness.status === "ok") return null;
+  if (readiness === null) return null;
 
   if (readiness.status === "unknown") {
     return (
@@ -43,7 +49,10 @@ export default function GeoReadinessNotice({ readiness, kind }: Props) {
     );
   }
 
-  const failing = readiness.behaviors.filter((b) => b.verdict !== "ok");
+  const failing = readiness.behaviors.filter(
+    (b) => b.verdict !== "ok" && b.verdict !== "notOurs",
+  );
+  if (failing.length === 0) return null;
   const blocks =
     kind === "rewrite" &&
     failing.some((b) => b.verdict === "cachedWithoutCountry");

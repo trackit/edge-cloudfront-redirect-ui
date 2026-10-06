@@ -989,30 +989,54 @@ components:
           type: string
     GeoReadiness:
       description: >-
-        `ok`: every behavior running the function receives the country, and
-        caches per country or not at all. `misconfigured`: at least one does
-        not. `unknown`: the distribution could not be read, see `reason`.
+        `checked`: the distribution was read, and each behavior carries its own
+        verdict, in CloudFront's matching order (the default behavior `*`
+        last). Which behaviors matter for a rule depends on its path — see
+        GeoDecision. `unknown`: the distribution could not be judged, see
+        `cause` and `reason`.
       oneOf:
         - type: object
           additionalProperties: false
-          required: [status, distributionId, behaviors]
+          required: [status, distributionId, functionIdentified, behaviors]
           properties:
             status:
               type: string
-              enum: [ok, misconfigured]
+              enum: [checked]
             distributionId:
               type: string
+            functionIdentified:
+              type: boolean
+              description: >-
+                False when the target names no `edgeFunctionArn`, so any Lambda
+                association counted as ours.
             behaviors:
               type: array
               items:
                 $ref: "#/components/schemas/BehaviorReadiness"
         - type: object
           additionalProperties: false
-          required: [status, reason]
+          required: [status, cause, reason]
           properties:
             status:
               type: string
               enum: [unknown]
+            cause:
+              type: string
+              enum:
+                [
+                  accessDenied,
+                  notFound,
+                  notADistribution,
+                  noFunction,
+                  transient,
+                  unexpected,
+                ]
+              description: >-
+                `accessDenied`: the API lacks a cloudfront read permission.
+                `notFound`: no such distribution. `notADistribution`: the target
+                is not named after a distribution. `noFunction`: no behavior
+                runs the function. `transient`: AWS did not answer; try again. `unexpected`: anything
+                else — see the console API logs.
             reason:
               type: string
     BehaviorReadiness:
@@ -1025,12 +1049,23 @@ components:
           description: The behavior's path pattern; `*` for the default behavior.
         verdict:
           type: string
-          enum: [ok, cachedWithoutCountry, countryNotForwarded, noOriginRequest]
+          enum:
+            - ok
+            - notOurs
+            - noOriginRequest
+            - viewerHostMissing
+            - countryNotForwarded
+            - cachedWithoutCountry
+            - cachedByOriginHeaders
           description: >-
-            `cachedWithoutCountry`: caches, and the country is not in the cache
-            key. `countryNotForwarded`: no policy asks for the country, so
-            country rules are skipped. `noOriginRequest`: the function is not
-            associated at origin-request, where country rules run.
+            `notOurs`: our function does not run here, so no rule does.
+            `noOriginRequest`: the function is not associated at
+            origin-request, where country rules run. `viewerHostMissing`:
+            origin-request never learns the viewer's hostname, so no rule
+            matches. `countryNotForwarded`: no policy asks for the country, so
+            country rules are skipped. `cachedWithoutCountry`: caches, and the
+            country is not in the cache key. `cachedByOriginHeaders`: the same,
+            but only when the origin asks for a copy to be kept.
     HostInput:
       description: A host to create, before it has any rules.
       type: object

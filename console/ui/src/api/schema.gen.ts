@@ -419,31 +419,47 @@ export interface components {
       roleArn?: string;
       edgeFunctionArn?: string;
     };
-    /** @description `ok`: every behavior running the function receives the country, and caches per country or not at all. `misconfigured`: at least one does not. `unknown`: the distribution could not be read, see `reason`. */
+    /** @description `checked`: the distribution was read, and each behavior carries its own verdict, in CloudFront's matching order (the default behavior `*` last). Which behaviors matter for a rule depends on its path — see GeoDecision. `unknown`: the distribution could not be judged, see `cause` and `reason`. */
     GeoReadiness:
       | {
           /** @enum {string} */
-          status: "ok" | "misconfigured";
+          status: "checked";
           distributionId: string;
+          /** @description False when the target names no `edgeFunctionArn`, so any Lambda association counted as ours. */
+          functionIdentified: boolean;
           behaviors: components["schemas"]["BehaviorReadiness"][];
         }
       | {
           /** @enum {string} */
           status: "unknown";
+          /**
+           * @description `accessDenied`: the API lacks a cloudfront read permission. `notFound`: no such distribution. `notADistribution`: the target is not named after a distribution. `noFunction`: no behavior runs the function. `transient`: AWS did not answer; try again. `unexpected`: anything else — see the console API logs.
+           * @enum {string}
+           */
+          cause:
+            | "accessDenied"
+            | "notFound"
+            | "notADistribution"
+            | "noFunction"
+            | "transient"
+            | "unexpected";
           reason: string;
         };
     BehaviorReadiness: {
       /** @description The behavior's path pattern; `*` for the default behavior. */
       pathPattern: string;
       /**
-       * @description `cachedWithoutCountry`: caches, and the country is not in the cache key. `countryNotForwarded`: no policy asks for the country, so country rules are skipped. `noOriginRequest`: the function is not associated at origin-request, where country rules run.
+       * @description `notOurs`: our function does not run here, so no rule does. `noOriginRequest`: the function is not associated at origin-request, where country rules run. `viewerHostMissing`: origin-request never learns the viewer's hostname, so no rule matches. `countryNotForwarded`: no policy asks for the country, so country rules are skipped. `cachedWithoutCountry`: caches, and the country is not in the cache key. `cachedByOriginHeaders`: the same, but only when the origin asks for a copy to be kept.
        * @enum {string}
        */
       verdict:
         | "ok"
-        | "cachedWithoutCountry"
+        | "notOurs"
+        | "noOriginRequest"
+        | "viewerHostMissing"
         | "countryNotForwarded"
-        | "noOriginRequest";
+        | "cachedWithoutCountry"
+        | "cachedByOriginHeaders";
     };
     /** @description A host to create, before it has any rules. */
     HostInput: {

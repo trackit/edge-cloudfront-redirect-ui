@@ -144,8 +144,9 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
   let deleteHost: { status: number; body: unknown } | null = null;
   let rules: Rule[] = [];
   let geoReadiness: GeoReadiness = {
-    status: "ok",
+    status: "checked",
     distributionId: "E2EXAMPLE12345",
+    functionIdentified: true,
     behaviors: [{ pathPattern: "*", verdict: "ok" }],
   };
   let createRule: { status: number; body: unknown } | null = null;
