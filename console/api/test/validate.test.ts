@@ -143,6 +143,137 @@ describe("validateRule", () => {
     });
   });
 
+  // CF-53. CloudFront validates what the edge returns on every request, so each
+  // value refused here would otherwise be a 502 on every request the rule
+  // matches.
+  describe("rewrite targets CloudFront would refuse", () => {
+    const customOrigin = {
+      domainName: "api.example.com",
+      path: "",
+      port: 443,
+      protocol: "https-only",
+      readTimeout: 30,
+      keepaliveTimeout: 5,
+      sslProtocols: ["TLSv1.2"],
+      customHeaders: {},
+    };
+    const s3Origin = {
+      authMethod: "none",
+      domainName: "bucket.s3.eu-west-1.amazonaws.com",
+      path: "",
+      customHeaders: {},
+    };
+    const withPath = (pathAndQS: string) => ({
+      ...rewriteRule,
+      forwardSettings: { pathAndQS },
+    });
+    const withCustom = (over: Record<string, unknown>) => ({
+      ...rewriteRule,
+      forwardSettings: { origin: { custom: { ...customOrigin, ...over } } },
+    });
+    const withS3 = (over: Record<string, unknown>) => ({
+      ...rewriteRule,
+      forwardSettings: { origin: { s3: { ...s3Origin, ...over } } },
+    });
+
+    it.each(["/new", "/", "/a?b=1", "$1", "$1/x", ""])(
+      "accepts the path %j",
+      (path) => {
+        expect(() => validateRule(withPath(path))).not.toThrow();
+      },
+    );
+
+    it.each(["new-value", "?x=1", "/a b", "/new\r\nX: 1", "x$1"])(
+      "rejects the path %j",
+      (path) => {
+        expect(() => validateRule(withPath(path))).toThrowError(ApiError);
+      },
+    );
+
+    it.each([
+      ["domainName", "api.example.com"],
+      ["domainName", "localhost"],
+      ["path", "/v1"],
+      ["path", ""],
+      ["port", 80],
+      ["port", 1024],
+      ["port", 65535],
+      ["readTimeout", 120],
+      ["keepaliveTimeout", 1],
+      ["sslProtocols", ["TLSv1.2", "TLSv1.1"]],
+    ])("accepts a custom origin %s of %j", (field, value) => {
+      expect(() => validateRule(withCustom({ [field]: value }))).not.toThrow();
+    });
+
+    it.each([
+      ["domainName", "https://api.example.com"],
+      ["domainName", "api.example.com/v1"],
+      ["domainName", "api.example.com:8443"],
+      ["domainName", "203.0.113.10"],
+      ["path", "v1"],
+      ["path", "/v1/"],
+      ["path", "/"],
+      ["path", `/${"a".repeat(255)}`],
+      ["port", 8],
+      ["port", 1023],
+      ["port", 65536],
+      ["readTimeout", 0],
+      ["readTimeout", 121],
+      ["keepaliveTimeout", 121],
+      ["sslProtocols", []],
+      ["sslProtocols", ["TLSv1.3"]],
+    ])("rejects a custom origin %s of %j", (field, value) => {
+      expect(() => validateRule(withCustom({ [field]: value }))).toThrowError(
+        ApiError,
+      );
+    });
+
+    it.each([
+      ["domainName", "Bucket.s3.amazonaws.com"],
+      ["domainName", "https://bucket.s3.amazonaws.com"],
+      ["domainName", `${"a".repeat(120)}.s3.amazonaws.com`],
+      ["path", "assets"],
+    ])("rejects an s3 origin %s of %j", (field, value) => {
+      expect(() => validateRule(withS3({ [field]: value }))).toThrowError(
+        ApiError,
+      );
+    });
+
+    it.each(["Host", "cookie", "X-Amz-Date", "x-edge-thing"])(
+      "rejects the custom header %j",
+      (name) => {
+        const rule = withCustom({
+          customHeaders: { [name.toLowerCase()]: [{ key: name, value: "x" }] },
+        });
+        try {
+          validateRule(rule);
+          expect.unreachable();
+        } catch (err) {
+          const details = (err as ApiError).details as { path: string }[];
+          expect(details[0]?.path).toBe(
+            `/forwardSettings/origin/custom/customHeaders/${name.toLowerCase()}`,
+          );
+        }
+      },
+    );
+
+    it("accepts an ordinary custom header", () => {
+      const rule = withS3({
+        customHeaders: {
+          "x-from-cdn": [{ key: "X-From-CDN", value: "s3cr3t" }],
+        },
+      });
+      expect(() => validateRule(rule)).not.toThrow();
+    });
+
+    it("rejects a header value that would split the request", () => {
+      const rule = withS3({
+        customHeaders: { "x-from-cdn": [{ value: "a\r\nHost: evil" }] },
+      });
+      expect(() => validateRule(rule)).toThrowError(ApiError);
+    });
+  });
+
   it("rejects a redirect body carrying a rewrite-only field", () => {
     // additionalProperties:false — forwardSettings is not valid on a redirect.
     const mixed = { ...redirectRule, forwardSettings: { pathAndQS: "/x" } };

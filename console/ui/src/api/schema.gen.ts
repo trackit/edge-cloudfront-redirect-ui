@@ -541,24 +541,25 @@ export interface components {
         value: string;
       }[];
     };
+    originPath: string;
     s3Origin: {
       /** @enum {unknown} */
       authMethod: "origin-access-identity" | "none";
       customHeaders: components["schemas"]["cloudFrontHeaders"];
       domainName: string;
-      path: string;
+      path: components["schemas"]["originPath"];
       region?: string;
     };
     customOrigin: {
       customHeaders: components["schemas"]["cloudFrontHeaders"];
       domainName: string;
       keepaliveTimeout: number;
-      path: string;
+      path: string & components["schemas"]["originPath"];
       port: number;
       /** @enum {unknown} */
       protocol: "http" | "https" | "http-only" | "https-only" | "match-viewer";
       readTimeout: number;
-      sslProtocols: string[];
+      sslProtocols: ("TLSv1.2" | "TLSv1.1" | "TLSv1" | "SSLv3")[];
     };
     /** Rewrite rule item (frMatchRule) */
     "rewrite-rule.schema": {
@@ -575,7 +576,7 @@ export interface components {
               s3?: components["schemas"]["s3Origin"];
               custom?: components["schemas"]["customOrigin"];
             } & (unknown | unknown);
-            /** @description Rewritten path (and optional query string) the request is forwarded with. */
+            /** @description Rewritten path (and optional query string) the request is forwarded with: a path starting with "/", or a target starting with a capture reference ("$1/x"). */
             pathAndQS?: string;
             /** @description Whether the request's own query string is forwarded. Absent means yes — only an explicit false drops it. A query string written into pathAndQS wins over either. */
             useIncomingQueryString?: boolean;
@@ -590,7 +591,7 @@ export interface components {
             s3?: components["schemas"]["s3Origin"];
             custom?: components["schemas"]["customOrigin"];
           } & (unknown | unknown);
-          /** @description Rewritten path (and optional query string) the request is forwarded with. */
+          /** @description Rewritten path (and optional query string) the request is forwarded with: a path starting with "/", or a target starting with a capture reference ("$1/x"). */
           pathAndQS?: string;
           /** @description Whether the request's own query string is forwarded. Absent means yes — only an explicit false drops it. A query string written into pathAndQS wins over either. */
           useIncomingQueryString?: boolean;

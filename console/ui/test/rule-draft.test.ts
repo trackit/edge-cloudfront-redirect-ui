@@ -416,16 +416,79 @@ describe("validateDraft — custom origin ranges", () => {
     ["port", "0", true],
     ["port", "65536", true],
     ["port", "443", false],
+    ["port", "80", false],
+    ["port", "1024", false],
+    // A valid TCP port CloudFront still will not connect to (CF-53).
+    ["port", "8", true],
+    ["port", "1023", true],
     ["readTimeout", "0", true],
     ["readTimeout", "-5", true],
     ["readTimeout", "30", false],
+    ["readTimeout", "120", false],
+    ["readTimeout", "121", true],
     ["keepaliveTimeout", "0", true],
     ["keepaliveTimeout", "5", false],
+    ["keepaliveTimeout", "121", true],
+    ["domainName", "api.example.com", false],
+    ["domainName", "https://api.example.com", true],
+    ["domainName", "api.example.com/v1", true],
+    ["domainName", "api.example.com:8443", true],
+    ["domainName", "203.0.113.10", true],
+    ["domainName", "api_example.com", true],
+    ["path", "", false],
+    ["path", "/v1", false],
+    ["path", "v1", true],
+    ["path", "/v1/", true],
+    ["path", "/", true],
+    ["path", "/a b", true],
   ] as const)("%s of %s is invalid: %s", (field, value, invalid) => {
     const details = validateDraft(withCustom({ [field]: value }), []);
     expect(has(details, `/forwardSettings/origin/custom/${field}`)).toBe(
       invalid,
     );
+  });
+});
+
+describe("validateDraft — s3 origin", () => {
+  const withS3 = (over: Partial<RewriteDraft["s3"]>): RewriteDraft => {
+    const draft = draftFromRule(s3RewriteRule()) as RewriteDraft;
+    return { ...draft, s3: { ...draft.s3, ...over } };
+  };
+
+  it.each([
+    ["domainName", "bucket.s3.eu-west-3.amazonaws.com", false],
+    ["domainName", "Bucket.s3.eu-west-3.amazonaws.com", true],
+    ["domainName", "https://bucket.s3.eu-west-3.amazonaws.com", true],
+    ["domainName", `${"a".repeat(120)}.s3.amazonaws.com`, true],
+    ["path", "/assets", false],
+    ["path", "assets", true],
+    ["path", "/assets/", true],
+  ] as const)("%s of %s is invalid: %s", (field, value, invalid) => {
+    const details = validateDraft(withS3({ [field]: value }), []);
+    expect(has(details, `/forwardSettings/origin/s3/${field}`)).toBe(invalid);
+  });
+});
+
+// CF-53: a path without a leading "/" was saved, and CloudFront answered every
+// request the rule matched with a 502.
+describe("validateDraft — rewritten path", () => {
+  const withPath = (pathAndQS: string): RewriteDraft => {
+    const draft = draftFromRule(pathOnlyRewriteRule()) as RewriteDraft;
+    return { ...draft, pathAndQS };
+  };
+
+  it.each([
+    ["/new", false],
+    ["/new?x=1", false],
+    ["$1", false],
+    ["$1/x", false],
+    ["new-value", true],
+    ["azeaze", true],
+    ["?x=1", true],
+    ["/a b", true],
+  ] as const)("%j is invalid: %s", (pathAndQS, invalid) => {
+    const details = validateDraft(withPath(pathAndQS), []);
+    expect(has(details, "/forwardSettings/pathAndQS")).toBe(invalid);
   });
 });
 

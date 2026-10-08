@@ -212,8 +212,12 @@ const handleOriginRequest = async (
   let queryReplaced = false;
 
   if (pathAndQS) {
-    const [newPath, ...qsParts] = pathAndQS.split("?");
-    request.uri = newPath || "/";
+    const [newPath = "", ...qsParts] = pathAndQS.split("?");
+    // CloudFront refuses a uri without a leading "/" with a 502 on every
+    // request. The API refuses such a path now, but rules saved before that,
+    // written straight to the table, or built from a `$1` capture that did not
+    // start at the path can still produce one.
+    request.uri = newPath.startsWith("/") ? newPath : `/${newPath}`;
     if (qsParts.length > 0) {
       request.querystring = qsParts.join("?");
       queryReplaced = true;

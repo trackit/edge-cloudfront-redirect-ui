@@ -223,6 +223,51 @@ describe("origin-request (rewrites)", () => {
     expect(result.origin).toBe(originalOrigin);
   });
 
+  // CF-53. CloudFront answers a uri without a leading "/" with a 502
+  // (LambdaValidationError) on every request the rule matches.
+  it.each([
+    ["new-value", "/new-value"],
+    ["new-value?x=1", "/new-value"],
+    ["?x=1", "/"],
+  ])("adds the leading / a stored path %j lacks", async (pathAndQS, uri) => {
+    withRules(
+      rewriteRule({
+        forwardSettings: { pathAndQS },
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.uri).toBe(uri);
+  });
+
+  it("adds the leading / when a capture does not start with one", async () => {
+    withRules(
+      rewriteRule({
+        matches: [
+          {
+            matchType: "path",
+            matchOperator: "regex",
+            matchValue: "^/legacy/(.*)$",
+          },
+        ],
+        forwardSettings: { pathAndQS: "$1" },
+      } as Partial<RedirectRule>),
+    );
+
+    const result = (await handler(
+      CloudfrontRequestEventMother.originRequest()
+        .withUri("/legacy/thing")
+        .build(),
+    )) as CloudFrontRequest;
+
+    expect(result.uri).toBe("/thing");
+  });
+
   it("resolves match-viewer per request, not once for the whole cache", async () => {
     withRules(
       rewriteRule({
