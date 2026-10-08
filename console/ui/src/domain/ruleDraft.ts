@@ -135,8 +135,13 @@ export const PRIORITY_MAX = 99999;
 export const PORT_MIN = 1024;
 export const PORT_MAX = 65535;
 
-/** CloudFront's limit on both custom origin timeouts, in seconds. */
-export const TIMEOUT_MAX = 120;
+/**
+ * CloudFront's limits on the custom origin timeouts, in seconds. Keepalive is
+ * held to its default quota of 60 rather than the 120 the event reference
+ * allows, since a value above the account's quota may be refused per request.
+ */
+export const READ_TIMEOUT_MAX = 120;
+export const KEEPALIVE_TIMEOUT_MAX = 60;
 
 /*
  * The same limits as shared/rewrite-rule.schema.json, here so the form can say
@@ -145,6 +150,7 @@ export const TIMEOUT_MAX = 120;
  * outside them is a 502 on every request the rule matches (CF-53).
  */
 const REWRITE_PATH = /^(?:\/|\$[1-9])/;
+const CONTROL_CHARACTER = /[\x00-\x1f\x7f]/;
 const ORIGIN_PATH = /^\/\S*[^\s/]$/;
 const ORIGIN_PATH_MAX = 255;
 const HOST_LABEL = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
@@ -619,6 +625,17 @@ export const validateDraft = (
         path: "/forwardSettings/pathAndQS",
         message: "must not contain spaces",
       });
+    } else if (pathAndQS.includes("#")) {
+      details.push({
+        path: "/forwardSettings/pathAndQS",
+        message:
+          "must not contain # — CloudFront refuses a fragment in a rewritten path",
+      });
+    } else if (CONTROL_CHARACTER.test(pathAndQS)) {
+      details.push({
+        path: "/forwardSettings/pathAndQS",
+        message: "must not contain control characters",
+      });
     }
   }
 
@@ -718,20 +735,24 @@ export const validateDraft = (
         message: `must be 80, 443, or a whole number between ${PORT_MIN} and ${PORT_MAX}`,
       });
     }
-    for (const [field, value] of [
-      ["readTimeout", draft.custom.readTimeout],
-      ["keepaliveTimeout", draft.custom.keepaliveTimeout],
+    for (const [field, value, max] of [
+      ["readTimeout", draft.custom.readTimeout, READ_TIMEOUT_MAX],
+      [
+        "keepaliveTimeout",
+        draft.custom.keepaliveTimeout,
+        KEEPALIVE_TIMEOUT_MAX,
+      ],
     ] as const) {
       const parsed = Number(value);
       const valid =
         value.trim() !== "" &&
         Number.isInteger(parsed) &&
         parsed >= 1 &&
-        parsed <= TIMEOUT_MAX;
+        parsed <= max;
       if (!valid) {
         details.push({
           path: `/forwardSettings/origin/custom/${field}`,
-          message: `must be a whole number between 1 and ${TIMEOUT_MAX}`,
+          message: `must be a whole number between 1 and ${max}`,
         });
       }
     }

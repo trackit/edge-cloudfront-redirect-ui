@@ -183,12 +183,18 @@ describe("validateRule", () => {
       },
     );
 
-    it.each(["new-value", "?x=1", "/a b", "/new\r\nX: 1", "x$1"])(
-      "rejects the path %j",
-      (path) => {
-        expect(() => validateRule(withPath(path))).toThrowError(ApiError);
-      },
-    );
+    it.each([
+      "new-value",
+      "?x=1",
+      "/a b",
+      "/new\r\nX: 1",
+      "x$1",
+      "/page?x=1#top",
+      "/a\u0001b",
+      "/a\u007fb",
+    ])("rejects the path %j", (path) => {
+      expect(() => validateRule(withPath(path))).toThrowError(ApiError);
+    });
 
     it.each([
       ["domainName", "api.example.com"],
@@ -200,6 +206,7 @@ describe("validateRule", () => {
       ["port", 65535],
       ["readTimeout", 120],
       ["keepaliveTimeout", 1],
+      ["keepaliveTimeout", 60],
       ["sslProtocols", ["TLSv1.2", "TLSv1.1"]],
     ])("accepts a custom origin %s of %j", (field, value) => {
       expect(() => validateRule(withCustom({ [field]: value }))).not.toThrow();
@@ -219,7 +226,7 @@ describe("validateRule", () => {
       ["port", 65536],
       ["readTimeout", 0],
       ["readTimeout", 121],
-      ["keepaliveTimeout", 121],
+      ["keepaliveTimeout", 61],
       ["sslProtocols", []],
       ["sslProtocols", ["TLSv1.3"]],
     ])("rejects a custom origin %s of %j", (field, value) => {
@@ -239,23 +246,32 @@ describe("validateRule", () => {
       );
     });
 
-    it.each(["Host", "cookie", "X-Amz-Date", "x-edge-thing"])(
-      "rejects the custom header %j",
-      (name) => {
-        const rule = withCustom({
-          customHeaders: { [name.toLowerCase()]: [{ key: name, value: "x" }] },
-        });
-        try {
-          validateRule(rule);
-          expect.unreachable();
-        } catch (err) {
-          const details = (err as ApiError).details as { path: string }[];
-          expect(details[0]?.path).toBe(
-            `/forwardSettings/origin/custom/customHeaders/${name.toLowerCase()}`,
-          );
-        }
-      },
-    );
+    it.each([
+      "Host",
+      "cookie",
+      "X-Amz-Date",
+      "x-edge-thing",
+      "X-Forwarded-Proto",
+      "Expect",
+      "Keep-Alive",
+      "X-Cache",
+      "Accept-Encoding",
+      "CDN-Loop",
+      "X-Amzn-RequestId",
+    ])("rejects the custom header %j", (name) => {
+      const rule = withCustom({
+        customHeaders: { [name.toLowerCase()]: [{ key: name, value: "x" }] },
+      });
+      try {
+        validateRule(rule);
+        expect.unreachable();
+      } catch (err) {
+        const details = (err as ApiError).details as { path: string }[];
+        expect(details[0]?.path).toBe(
+          `/forwardSettings/origin/custom/customHeaders/${name.toLowerCase()}`,
+        );
+      }
+    });
 
     it("accepts an ordinary custom header", () => {
       const rule = withS3({

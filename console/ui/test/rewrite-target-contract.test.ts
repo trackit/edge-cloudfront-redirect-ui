@@ -74,6 +74,9 @@ const SAMPLES = [
   "-bad.example.com",
   "bucket.s3.eu-west-1.amazonaws.com",
   "a..b",
+  "/page?x=1#top",
+  "/a\u0001b",
+  "/a\u007fb",
 ];
 
 describe("the form never accepts a rewrite value the schema refuses", () => {

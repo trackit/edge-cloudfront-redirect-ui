@@ -428,7 +428,8 @@ describe("validateDraft — custom origin ranges", () => {
     ["readTimeout", "121", true],
     ["keepaliveTimeout", "0", true],
     ["keepaliveTimeout", "5", false],
-    ["keepaliveTimeout", "121", true],
+    ["keepaliveTimeout", "60", false],
+    ["keepaliveTimeout", "61", true],
     ["domainName", "api.example.com", false],
     ["domainName", "https://api.example.com", true],
     ["domainName", "api.example.com/v1", true],
@@ -486,6 +487,8 @@ describe("validateDraft — rewritten path", () => {
     ["azeaze", true],
     ["?x=1", true],
     ["/a b", true],
+    ["/page?x=1#top", true],
+    ["/a\u0001b", true],
   ] as const)("%j is invalid: %s", (pathAndQS, invalid) => {
     const details = validateDraft(withPath(pathAndQS), []);
     expect(has(details, "/forwardSettings/pathAndQS")).toBe(invalid);

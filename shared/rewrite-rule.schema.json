@@ -41,8 +41,8 @@
         "pathAndQS": {
           "type": "string",
           "description": "Rewritten path (and optional query string) the request is forwarded with: a path starting with \"/\", or a target starting with a capture reference (\"$1/x\").",
-          "pattern": "^(?:/\\S*|\\$[1-9][0-9]*\\S*)?$",
-          "$comment": "The edge assigns the path to request.uri, and CloudFront refuses a uri that does not start with \"/\" with a 502 (LambdaValidationError) on every request the rule matches. Whitespace is no more valid in a uri. A target starting with `$n` is a template whose leading segment only exists once the edge substitutes it, so the edge adds the \"/\" itself when the capture lacks one. Empty stays allowed: the edge reads it as \"keep the incoming path\"."
+          "pattern": "^(?:/[^\\s#\\x00-\\x1f\\x7f]*|\\$[1-9][0-9]*[^\\s#\\x00-\\x1f\\x7f]*)?$",
+          "$comment": "The edge assigns the path to request.uri, and CloudFront refuses a uri that does not start with \"/\" with a 502 (LambdaValidationError) on every request the rule matches. Whitespace, control characters and \"#\" are no more valid in a uri or the query string the edge sets from it (\"Restrictions on all edge functions\"). A target starting with `$n` is a template whose leading segment only exists once the edge substitutes it, so the edge adds the \"/\" itself when the capture lacks one. Empty stays allowed: the edge reads it as \"keep the incoming path\"."
         },
         "useIncomingQueryString": {
           "type": "boolean",
@@ -126,7 +126,12 @@
           "pattern": "^(?![0-9]+(?:\\.[0-9]+){3}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$",
           "$comment": "A DNS name like api.example.com: no scheme, port, path, or colon, and not an IP address."
         },
-        "keepaliveTimeout": { "type": "integer", "minimum": 1, "maximum": 120 },
+        "keepaliveTimeout": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60,
+          "$comment": "The event reference allows up to 120, but CloudFront's default keep-alive quota is 60, and a value above an account's quota may be refused at request time."
+        },
         "path": {
           "type": "string",
           "maxLength": 255,
