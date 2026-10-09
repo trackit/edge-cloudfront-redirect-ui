@@ -128,9 +128,53 @@ export type RuleDraft = RedirectDraft | RewriteDraft;
 export const PRIORITY_MIN = 0;
 export const PRIORITY_MAX = 99999;
 
-/** The TCP port range. A custom origin's port must fall inside it. */
-export const PORT_MIN = 1;
+/**
+ * The ports CloudFront connects to on a custom origin: 80, 443, or this range.
+ * Anything else is refused at request time, not at save, as a 502.
+ */
+export const PORT_MIN = 1024;
 export const PORT_MAX = 65535;
+
+/**
+ * CloudFront's limits on the custom origin timeouts, in seconds. Keepalive is
+ * held to its default quota of 60 rather than the 120 the event reference
+ * allows, since a value above the account's quota may be refused per request.
+ */
+export const READ_TIMEOUT_MAX = 120;
+export const KEEPALIVE_TIMEOUT_MAX = 60;
+
+/*
+ * The same limits as shared/rewrite-rule.schema.json, here so the form can say
+ * which one a value breaks instead of showing the schema's raw pattern.
+ * CloudFront checks the rewrite the edge returns on every request, so a value
+ * outside them is a 502 on every request the rule matches (CF-53).
+ */
+const REWRITE_PATH = /^(?:\/|\$[1-9])/;
+const CONTROL_CHARACTER = /[\x00-\x1f\x7f]/;
+const ORIGIN_PATH = /^\/\S*[^\s/]$/;
+const ORIGIN_PATH_MAX = 255;
+const HOST_LABEL = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
+const DOMAIN_NAME = new RegExp(`^${HOST_LABEL}(?:\\.${HOST_LABEL})*$`);
+const DOMAIN_NAME_MAX = 253;
+const IPV4 = /^[0-9]+(?:\.[0-9]+){3}$/;
+const BUCKET_DOMAIN = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
+const BUCKET_DOMAIN_MAX = 128;
+
+/** A scheme, a path, or a port: what gets pasted when a URL is to hand. */
+const looksLikeUrl = (value: string): boolean => /[/:]/.test(value);
+
+const originPathError = (path: string, max?: number): string | undefined => {
+  if (path === "") return undefined;
+  if (/\s/.test(path)) return "must not contain spaces";
+  if (!path.startsWith("/")) return "must start with /, like /v1";
+  if (path.endsWith("/"))
+    return "must not end with /, like /v1 rather than /v1/";
+  if (!ORIGIN_PATH.test(path)) return "must start with /, like /v1";
+  if (max !== undefined && path.length > max) {
+    return `must be at most ${max} characters`;
+  }
+  return undefined;
+};
 
 /** CloudFront's own defaults for a custom origin, so a new one is valid as-is. */
 const CUSTOM_DEFAULTS: CustomDraft = {
@@ -562,18 +606,68 @@ export const validateDraft = (
 
   // The schema's `anyOf` requires a rewrite to change the origin, the path, or
   // both. Neither is a rule the API accepts and the edge then ignores.
-  if (draft.originKind === "none" && draft.pathAndQS.trim() === "") {
+  const pathAndQS = draft.pathAndQS.trim();
+  if (draft.originKind === "none" && pathAndQS === "") {
     details.push({
       path: "/forwardSettings",
       message: "must change something — pick an origin, set a path, or both",
     });
   }
 
+  if (pathAndQS !== "") {
+    if (!REWRITE_PATH.test(pathAndQS)) {
+      details.push({
+        path: "/forwardSettings/pathAndQS",
+        message: "must start with /, like /new-path, or with a capture like $1",
+      });
+    } else if (/\s/.test(pathAndQS)) {
+      details.push({
+        path: "/forwardSettings/pathAndQS",
+        message: "must not contain spaces",
+      });
+    } else if (pathAndQS.includes("#")) {
+      details.push({
+        path: "/forwardSettings/pathAndQS",
+        message:
+          "must not contain # — CloudFront refuses a fragment in a rewritten path",
+      });
+    } else if (CONTROL_CHARACTER.test(pathAndQS)) {
+      details.push({
+        path: "/forwardSettings/pathAndQS",
+        message: "must not contain control characters",
+      });
+    }
+  }
+
   if (draft.originKind === "s3") {
-    if (draft.s3.domainName.trim() === "") {
+    const domainName = draft.s3.domainName.trim();
+    if (domainName === "") {
       details.push({
         path: "/forwardSettings/origin/s3/domainName",
         message: "is required",
+      });
+    } else if (looksLikeUrl(domainName)) {
+      details.push({
+        path: "/forwardSettings/origin/s3/domainName",
+        message:
+          "must be the bucket's domain name only, like " +
+          "my-bucket.s3.us-east-1.amazonaws.com — no https:// or path",
+      });
+    } else if (
+      !BUCKET_DOMAIN.test(domainName) ||
+      domainName.length > BUCKET_DOMAIN_MAX
+    ) {
+      details.push({
+        path: "/forwardSettings/origin/s3/domainName",
+        message: `must be lowercase letters, digits, dots and hyphens, at most ${BUCKET_DOMAIN_MAX} characters`,
+      });
+    }
+
+    const pathError = originPathError(draft.s3.path.trim());
+    if (pathError !== undefined) {
+      details.push({
+        path: "/forwardSettings/origin/s3/path",
+        message: pathError,
       });
     }
     if (
@@ -588,33 +682,77 @@ export const validateDraft = (
   }
 
   if (draft.originKind === "custom") {
-    if (draft.custom.domainName.trim() === "") {
+    const domainName = draft.custom.domainName.trim();
+    if (domainName === "") {
       details.push({
         path: "/forwardSettings/origin/custom/domainName",
         message: "is required",
       });
+    } else if (looksLikeUrl(domainName)) {
+      details.push({
+        path: "/forwardSettings/origin/custom/domainName",
+        message:
+          "must be a domain name only, like api.example.com — no https://, " +
+          "port or path (the port and origin path have their own fields)",
+      });
+    } else if (IPV4.test(domainName)) {
+      details.push({
+        path: "/forwardSettings/origin/custom/domainName",
+        message:
+          "must be a domain name — CloudFront does not accept an IP address",
+      });
+    } else if (
+      !DOMAIN_NAME.test(domainName) ||
+      domainName.length > DOMAIN_NAME_MAX
+    ) {
+      details.push({
+        path: "/forwardSettings/origin/custom/domainName",
+        message: "must be a valid domain name, like api.example.com",
+      });
     }
+
+    const pathError = originPathError(
+      draft.custom.path.trim(),
+      ORIGIN_PATH_MAX,
+    );
+    if (pathError !== undefined) {
+      details.push({
+        path: "/forwardSettings/origin/custom/path",
+        message: pathError,
+      });
+    }
+
     // Integer-ness is not enough: a 0 or negative port or timeout is a whole
-    // number but a meaningless one. Port is bounded to the TCP range; timeouts
-    // only need to be positive, the API owning CloudFront's upper limits.
-    for (const [field, value, min, max] of [
-      ["port", draft.custom.port, PORT_MIN, PORT_MAX],
-      ["readTimeout", draft.custom.readTimeout, 1, undefined],
-      ["keepaliveTimeout", draft.custom.keepaliveTimeout, 1, undefined],
+    // number but a meaningless one, and CloudFront has its own bounds on both.
+    const port = Number(draft.custom.port);
+    if (
+      draft.custom.port.trim() === "" ||
+      !Number.isInteger(port) ||
+      !(port === 80 || port === 443 || (port >= PORT_MIN && port <= PORT_MAX))
+    ) {
+      details.push({
+        path: "/forwardSettings/origin/custom/port",
+        message: `must be 80, 443, or a whole number between ${PORT_MIN} and ${PORT_MAX}`,
+      });
+    }
+    for (const [field, value, max] of [
+      ["readTimeout", draft.custom.readTimeout, READ_TIMEOUT_MAX],
+      [
+        "keepaliveTimeout",
+        draft.custom.keepaliveTimeout,
+        KEEPALIVE_TIMEOUT_MAX,
+      ],
     ] as const) {
       const parsed = Number(value);
       const valid =
         value.trim() !== "" &&
         Number.isInteger(parsed) &&
-        parsed >= min &&
-        (max === undefined || parsed <= max);
+        parsed >= 1 &&
+        parsed <= max;
       if (!valid) {
         details.push({
           path: `/forwardSettings/origin/custom/${field}`,
-          message:
-            max === undefined
-              ? "must be a whole number greater than 0"
-              : `must be a whole number between ${min} and ${max}`,
+          message: `must be a whole number between 1 and ${max}`,
         });
       }
     }
@@ -645,9 +783,12 @@ const FIELD_LABELS: Record<string, string> = {
   "/priority": "Priority",
   "/redirectURL": "Redirect URL",
   "/forwardSettings": "This rewrite",
+  "/forwardSettings/pathAndQS": "Rewritten path",
   "/forwardSettings/origin/s3/domainName": "Bucket domain name",
   "/forwardSettings/origin/s3/region": "Bucket region",
+  "/forwardSettings/origin/s3/path": "Origin path",
   "/forwardSettings/origin/custom/domainName": "Domain name",
+  "/forwardSettings/origin/custom/path": "Origin path",
   "/forwardSettings/origin/custom/port": "Port",
   "/forwardSettings/origin/custom/readTimeout": "Read timeout",
   "/forwardSettings/origin/custom/keepaliveTimeout": "Keepalive",
