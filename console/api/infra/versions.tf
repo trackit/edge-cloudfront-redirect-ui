@@ -4,8 +4,12 @@ terraform {
 
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
-      version = "~> 6.0"
+      source = "hashicorp/aws"
+      # 6.69.0 fails to upload a Lambda zip whose base64 body passes 64 KB
+      # (~48 KB zipped), before anything is sent: "decomposing request:
+      # bufio.Scanner: token too long". 6.68.0 uploads it. The console API's zip
+      # is well over; lift the cap once a release uploads it again.
+      version = ">= 6.0, < 6.69.0"
     }
     archive = {
       source  = "hashicorp/archive"
