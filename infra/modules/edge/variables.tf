@@ -67,8 +67,8 @@ variable "tags" {
 
 variable "geo_alarm_regions" {
   type        = list(string)
-  default     = ["us-east-1", "eu-west-1"]
-  description = "Regions to alarm in when country rules are skipped. Lambda@Edge logs, and so its metrics, land in the region that served the viewer, and an alarm only sees its own region: list where your traffic is."
+  default     = []
+  description = "Regions to alarm in when country rules are skipped. Lambda@Edge logs, and so its metrics, land in the region that served the viewer, and an alarm only sees its own region: list where your traffic is. Empty (the default) creates no alarm, so the module asks nothing of CloudWatch unless you opt in; listing a region needs cloudwatch:PutMetricAlarm, DescribeAlarms, DeleteAlarms, ListTagsForResource, TagResource and UntagResource."
 }
 
 variable "geo_alarm_threshold" {

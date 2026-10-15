@@ -164,12 +164,25 @@ run "cache_ttl_rejects_negative" {
 # Geo alarm
 # =============================================================================
 
-run "geo_alarm_defaults" {
+run "geo_alarm_off_by_default" {
   command = plan
 
   assert {
+    condition     = length(aws_cloudwatch_metric_alarm.geo_country_missing) == 0
+    error_message = "no geo alarm unless regions are listed"
+  }
+}
+
+run "geo_alarm_defaults" {
+  command = plan
+
+  variables {
+    geo_alarm_regions = ["us-east-1", "eu-west-1"]
+  }
+
+  assert {
     condition     = length(aws_cloudwatch_metric_alarm.geo_country_missing) == 2
-    error_message = "one geo alarm per default region"
+    error_message = "one geo alarm per listed region"
   }
 
   assert {
@@ -192,6 +205,7 @@ run "geo_alarm_with_topic" {
   command = plan
 
   variables {
+    geo_alarm_regions    = ["us-east-1", "eu-west-1"]
     alarm_sns_topic_arns = { "eu-west-1" = "arn:aws:sns:eu-west-1:123456789012:alerts" }
   }
 

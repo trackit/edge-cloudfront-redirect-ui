@@ -247,21 +247,21 @@ the module neither reads it nor packages it.
 
 ## Inputs
 
-| Name                   | Type         | Default                      | Description                                            |
-| ---------------------- | ------------ | ---------------------------- | ------------------------------------------------------ |
-| `table_name`           | string       | —                            | DynamoDB rules table name (baked into the bundle).     |
-| `table_arn`            | string       | —                            | Table ARN; scopes the read-only IAM policy.            |
-| `table_region`         | string       | —                            | Table region (baked into the bundle).                  |
-| `function_name`        | string       | `edgeroute-redirect-rules`   | Published function name.                               |
-| `cache_ttl_ms`         | number       | `60000`                      | In-memory rule cache TTL, baked in.                    |
-| `lambda_source_dir`    | string       | `../../lambda`               | Path to the handler workspace.                         |
-| `monorepo_root`        | string       | `../../..`                   | Repo root where the install runs.                      |
-| `build_dir`            | string       | `.build/<function_name>`     | This instance's build directory.                       |
-| `npm_install_command`  | string       | `npm ci`                     | Install run before the build; `""` skips it.           |
-| `tags`                 | map(string)  | `{}`                         | Tags for the function and role.                        |
-| `geo_alarm_regions`    | list(string) | `["us-east-1", "eu-west-1"]` | Regions to alarm in when country rules are skipped.    |
-| `geo_alarm_threshold`  | number       | `0.5`                        | Share of geo requests without a country that fires it. |
-| `alarm_sns_topic_arns` | map(string)  | `{}`                         | Region → SNS topic the alarm notifies, one per region. |
+| Name                   | Type         | Default                    | Description                                            |
+| ---------------------- | ------------ | -------------------------- | ------------------------------------------------------ |
+| `table_name`           | string       | —                          | DynamoDB rules table name (baked into the bundle).     |
+| `table_arn`            | string       | —                          | Table ARN; scopes the read-only IAM policy.            |
+| `table_region`         | string       | —                          | Table region (baked into the bundle).                  |
+| `function_name`        | string       | `edgeroute-redirect-rules` | Published function name.                               |
+| `cache_ttl_ms`         | number       | `60000`                    | In-memory rule cache TTL, baked in.                    |
+| `lambda_source_dir`    | string       | `../../lambda`             | Path to the handler workspace.                         |
+| `monorepo_root`        | string       | `../../..`                 | Repo root where the install runs.                      |
+| `build_dir`            | string       | `.build/<function_name>`   | This instance's build directory.                       |
+| `npm_install_command`  | string       | `npm ci`                   | Install run before the build; `""` skips it.           |
+| `tags`                 | map(string)  | `{}`                       | Tags for the function and role.                        |
+| `geo_alarm_regions`    | list(string) | `[]`                       | Regions to alarm in when country rules are skipped.    |
+| `geo_alarm_threshold`  | number       | `0.5`                      | Share of geo requests without a country that fires it. |
+| `alarm_sns_topic_arns` | map(string)  | `{}`                       | Region → SNS topic the alarm notifies, one per region. |
 
 ## Outputs
 
@@ -313,11 +313,21 @@ in, not only in `us-east-1`.
 
 ### The geo alarm
 
-One CloudWatch alarm per region in `geo_alarm_regions`, named
-`<function_name>-geo-country-missing`. It fires when, over three 5-minute
-periods, more than `geo_alarm_threshold` of the origin-request calls a country
-rule could apply to arrived without a country — the policies stopped asking
-CloudFront for it, and every geo rule is being skipped. A few such requests are
+Off by default. Listing regions in `geo_alarm_regions` creates one CloudWatch
+alarm per region, named `<function_name>-geo-country-missing`:
+
+```hcl
+geo_alarm_regions = ["us-east-1", "eu-west-1"]
+```
+
+The role that applies the module then needs `cloudwatch:PutMetricAlarm`,
+`DescribeAlarms`, `DeleteAlarms`, `ListTagsForResource`, `TagResource` and
+`UntagResource`.
+
+An alarm fires when, over three 5-minute periods, more than
+`geo_alarm_threshold` of the origin-request calls a country rule could apply to
+arrived without a country — the policies stopped asking CloudFront for it, and
+every geo rule is being skipped. A few such requests are
 normal (CloudFront cannot place every address), hence a share rather than a
 count.
 
