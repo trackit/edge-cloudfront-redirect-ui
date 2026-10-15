@@ -1065,8 +1065,17 @@ components:
         ambiguous:
           type: boolean
           description: >-
-            True when the rule has no exact, case-sensitive path condition, so
-            every behavior running the function may serve it.
+            True when more than one behavior can serve the rule: it has no
+            `equals` path condition, or one whose path — a `*` wildcard, or any
+            casing of it when it ignores case — reaches several behaviors'
+            patterns.
+        matchCaseWouldPin:
+          type: boolean
+          description: >-
+            True when the rule is ambiguous only because a path condition
+            ignores case, which CloudFront's path patterns do not: turning on
+            Match case would pin it to one behavior per path. Always present in
+            the API's answers.
         dropped:
           type: array
           description: >-

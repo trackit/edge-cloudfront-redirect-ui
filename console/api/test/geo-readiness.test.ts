@@ -800,6 +800,7 @@ describe("POST /targets/{id}/geo-readiness", () => {
         outcome: "blocked",
         relevant: [{ pathPattern: "*", verdict: "cachedWithoutCountry" }],
         ambiguous: true,
+        matchCaseWouldPin: false,
         dropped: [],
       },
     });

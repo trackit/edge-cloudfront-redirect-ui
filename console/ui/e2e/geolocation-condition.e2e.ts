@@ -805,18 +805,37 @@ test("sends the rule being edited to the check", async ({ page, api }) => {
   expect(sent.matches.map((m) => m.matchType)).toContain("country");
 });
 
+// The answers below are the API's own for these rules: geoDecision on an
+// uncached /geo/* beside a cached default (console/api/test/geo-relevance.test.ts,
+// "behaviorsServing in the recommended setup").
+const GEO_OK: BehaviorReadiness = { pathPattern: "/geo/*", verdict: "ok" };
+
+const geoPathRewrite = (caseSensitive: boolean): Rule =>
+  ({
+    ...geoRewrite,
+    matches: [
+      {
+        matchType: "path",
+        matchOperator: "equals",
+        matchValue: "/geo/fr",
+        caseSensitive,
+      },
+      { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+    ],
+  }) as unknown as Rule;
+
 test("the recommended setup shows nothing for a rule on the uncached behavior", async ({
   page,
   api,
 }) => {
-  const geo: BehaviorReadiness = { pathPattern: "/geo/*", verdict: "ok" };
   api.setHosts([host(HOST, { rewrites: 1 })]);
-  api.setRules([geoRewrite]);
+  api.setRules([geoPathRewrite(true)]);
   api.setGeoCheck(
-    check([geo, DEFAULT_CACHED], {
+    check([GEO_OK, DEFAULT_CACHED], {
       outcome: "ok",
-      relevant: [geo],
+      relevant: [GEO_OK],
       ambiguous: false,
+      matchCaseWouldPin: false,
     }),
   );
   await open(page);
@@ -826,6 +845,40 @@ test("the recommended setup shows nothing for a rule on the uncached behavior", 
     .poll(() => api.calls.some((call) => call.url.endsWith("/geo-readiness")))
     .toBe(true);
   await expect(readinessNotice(page)).toHaveCount(0);
+});
+
+test("a path that ignores case offers to make it case sensitive", async ({
+  page,
+  api,
+}) => {
+  api.setHosts([host(HOST, { rewrites: 1 })]);
+  api.setRules([geoPathRewrite(false)]);
+  api.setGeoCheck(
+    check([GEO_OK, DEFAULT_CACHED], {
+      outcome: "blocked",
+      relevant: [GEO_OK, DEFAULT_CACHED],
+      ambiguous: true,
+      matchCaseWouldPin: true,
+    }),
+  );
+  await open(page);
+  await editFirst(page);
+
+  await expect(editor(page).getByText(/path ignores case/)).toBeVisible();
+  await editor(page)
+    .getByRole("button", { name: "Make the path case sensitive" })
+    .click();
+
+  await expect
+    .poll(() => {
+      const sent = api.calls
+        .filter((call) => call.url.endsWith("/geo-readiness"))
+        .at(-1)?.body as
+        | { matches: { matchType: string; caseSensitive?: boolean }[] }
+        | undefined;
+      return sent?.matches.find((m) => m.matchType === "path")?.caseSensitive;
+    })
+    .toBe(true);
 });
 
 test("only the behaviors serving the rule are named", async ({ page, api }) => {

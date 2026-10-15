@@ -20,6 +20,23 @@ export const needsDistributionCheck = (
       (match) => match.matchType === "header" || match.matchType === "cookie",
     ));
 
+/**
+ * The rule's `equals` path conditions made case sensitive: what the API's
+ * `matchCaseWouldPin` asks for. CloudFront's path patterns are case
+ * sensitive, so a path compared without case can be served, in another
+ * casing, by a behavior the rule's own path never reaches.
+ */
+export const withCaseSensitivePaths = (
+  matches: MatchCondition[],
+): MatchCondition[] =>
+  matches.map((match) =>
+    match.matchType === "path" &&
+    match.matchOperator === "equals" &&
+    match.negate !== true
+      ? { ...match, caseSensitive: true }
+      : match,
+  );
+
 type Dropped = NonNullable<GeoCheck["decision"]["dropped"]>[number];
 
 /** "The default behavior does not send on the header X-Beta", for every one. */

@@ -57,6 +57,7 @@ describe("behaviorsServing", () => {
     expect(behaviorsServing([path("/geo/fr"), country], ORDER)).toEqual({
       relevant: [geo],
       ambiguous: false,
+      matchCaseWouldPin: false,
     });
   });
 
@@ -81,8 +82,9 @@ describe("behaviorsServing", () => {
     };
     const safe: BehaviorReadiness = { pathPattern: "*", verdict: "ok" };
     expect(behaviorsServing([path("/a /fr/page")], [fr, safe])).toEqual({
-      relevant: [safe, fr],
+      relevant: [fr, safe],
       ambiguous: false,
+      matchCaseWouldPin: false,
     });
     expect(
       geoDecision(
@@ -116,19 +118,134 @@ describe("behaviorsServing", () => {
     ]);
   });
 
-  it("is ambiguous without an exact, case-sensitive, non-negated path", () => {
+  it("can reach every behavior without an equals, non-negated path", () => {
     for (const matches of [
       [country],
       [path("/geo", { matchOperator: "contains" })],
       [path("^/geo", { matchOperator: "regex" })],
-      [path("/geo/fr", { caseSensitive: undefined })],
       [path("/geo/fr", { negate: true })],
+      [path("/geo/fr", { matchOperator: "notEquals" })],
     ]) {
       expect(behaviorsServing(matches, ORDER)).toEqual({
         relevant: [geo, dflt],
         ambiguous: true,
+        matchCaseWouldPin: false,
       });
     }
+  });
+});
+
+describe("behaviorsServing in the recommended setup", () => {
+  // An uncached geo behavior beside a cached default, both running the
+  // function: the setup the module's README recommends.
+  const SETUP = [geo, dflt];
+
+  it("pins a case-sensitive wildcard path to the behavior whose pattern covers it", () => {
+    expect(behaviorsServing([path("/geo/*")], SETUP)).toEqual({
+      relevant: [geo],
+      ambiguous: false,
+      matchCaseWouldPin: false,
+    });
+    expect(
+      geoDecision("rewrite", [path("/geo/*"), country], checked(SETUP)),
+    ).toMatchObject({ outcome: "ok", relevant: [geo], ambiguous: false });
+  });
+
+  it("keeps the default for a case-insensitive path, which /GEO/FR reaches", () => {
+    expect(
+      behaviorsServing([path("/geo/fr", { caseSensitive: undefined })], SETUP),
+    ).toEqual({
+      relevant: [geo, dflt],
+      ambiguous: true,
+      matchCaseWouldPin: true,
+    });
+    expect(
+      geoDecision(
+        "rewrite",
+        [path("/geo/*", { caseSensitive: false }), country],
+        checked(SETUP),
+      ),
+    ).toMatchObject({ outcome: "blocked", matchCaseWouldPin: true });
+  });
+
+  it("treats a path without letters as the same in every case", () => {
+    expect(
+      behaviorsServing(
+        [path("/42/*", { caseSensitive: false })],
+        [{ pathPattern: "/42/*", verdict: "ok" }, dflt],
+      ).ambiguous,
+    ).toBe(false);
+  });
+
+  it("keeps the default when the wildcard reaches past the behavior's pattern", () => {
+    expect(behaviorsServing([path("/ge*")], SETUP)).toEqual({
+      relevant: [geo, dflt],
+      ambiguous: true,
+      matchCaseWouldPin: false,
+    });
+  });
+
+  it("skips a behavior the path can never reach", () => {
+    expect(behaviorsServing([path("/shop/*")], SETUP).relevant).toEqual([dflt]);
+  });
+
+  it("lists every behavior a wildcard can reach until one covers it", () => {
+    const fr: BehaviorReadiness = {
+      pathPattern: "/geo/fr/*",
+      verdict: "cachedWithoutCountry",
+    };
+    expect(behaviorsServing([path("/geo/*")], [fr, geo, dflt])).toEqual({
+      relevant: [fr, geo],
+      ambiguous: true,
+      matchCaseWouldPin: false,
+    });
+  });
+
+  it("meets CloudFront's ? on one character of the path", () => {
+    const img: BehaviorReadiness = { pathPattern: "/img/?.png", verdict: "ok" };
+    expect(
+      behaviorsServing([path("/img/a.png")], [img, dflt]).relevant,
+    ).toEqual([img]);
+    expect(behaviorsServing([path("/img/*")], [img, dflt]).relevant).toEqual([
+      img,
+      dflt,
+    ]);
+  });
+
+  it("reaches every behavior when a * can run on into the query string", () => {
+    // A `?` in the value makes the edge test path and query together, so
+    // `/fr?a.html?x=1` matches `/*.html?x=1` and is served by `/fr`.
+    const fr: BehaviorReadiness = {
+      pathPattern: "/fr",
+      verdict: "cachedWithoutCountry",
+    };
+    const ok: BehaviorReadiness = { pathPattern: "*", verdict: "ok" };
+    for (const value of ["/*.html?x=1", "/*.html /promo?x=1"]) {
+      expect(behaviorsServing([path(value)], [fr, ok])).toEqual({
+        relevant: [fr, ok],
+        ambiguous: true,
+        matchCaseWouldPin: false,
+      });
+      expect(
+        geoDecision("rewrite", [path(value), country], checked([fr, ok]))
+          .outcome,
+      ).toBe("blocked");
+    }
+  });
+
+  it("still pins a query-string path whose wildcard comes after the ?", () => {
+    expect(behaviorsServing([path("/geo/fr?utm=*")], SETUP)).toEqual({
+      relevant: [geo],
+      ambiguous: false,
+      matchCaseWouldPin: false,
+    });
+  });
+
+  it("does not offer Match case when it would not pin the rule", () => {
+    expect(
+      behaviorsServing([path("/g*", { caseSensitive: false })], SETUP)
+        .matchCaseWouldPin,
+    ).toBe(false);
   });
 });
 
@@ -146,6 +263,7 @@ describe("geoDecision", () => {
       outcome: "blocked",
       relevant: [dflt],
       ambiguous: false,
+      matchCaseWouldPin: false,
       dropped: [],
     });
   });

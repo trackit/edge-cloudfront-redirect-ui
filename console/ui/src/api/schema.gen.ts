@@ -437,8 +437,10 @@ export interface components {
       outcome: "ok" | "warn" | "blocked" | "unverifiable";
       /** @description The behaviors that can serve the rule, in CloudFront's order. */
       relevant: components["schemas"]["BehaviorReadiness"][];
-      /** @description True when the rule has no exact, case-sensitive path condition, so every behavior running the function may serve it. */
+      /** @description True when more than one behavior can serve the rule: it has no `equals` path condition, or one whose path — a `*` wildcard, or any casing of it when it ignores case — reaches several behaviors' patterns. */
       ambiguous: boolean;
+      /** @description True when the rule is ambiguous only because a path condition ignores case, which CloudFront's path patterns do not: turning on Match case would pin it to one behavior per path. Always present in the API's answers. */
+      matchCaseWouldPin?: boolean;
       /** @description Negated header and cookie conditions of a rewrite that a serving behavior does not send on to origin-request — absent there for every viewer, so the condition holds for everyone, and the rewrite is `blocked`. Always present in the API's answers. */
       dropped?: {
         pathPattern: string;

@@ -8,6 +8,8 @@ interface Props {
   kind: "redirect" | "rewrite";
   /** Asks the API for a fresh reading — after fixing the distribution, say. */
   onRecheck?: () => void;
+  /** Makes the rule's path conditions case sensitive, offered when that pins it. */
+  onMatchCase?: () => void;
   rechecking?: boolean;
 }
 
@@ -49,6 +51,7 @@ export default function GeoReadinessNotice({
   check,
   kind,
   onRecheck,
+  onMatchCase,
   rechecking = false,
 }: Props) {
   if (check === null) return null;
@@ -108,12 +111,28 @@ export default function GeoReadinessNotice({
             Distribution {readiness.distributionId} is not set up for country
             conditions.
           </strong>
-          {decision.ambiguous && (
-            <p>
-              This rule can be served by several behaviors: its path condition
-              is not an exact, case-sensitive path.
-            </p>
-          )}
+          {decision.ambiguous &&
+            (decision.matchCaseWouldPin === true ? (
+              <p>
+                This rule&apos;s path ignores case, but CloudFront&apos;s
+                behavior patterns do not, so the same path in other capitals can
+                be served by another behavior.{" "}
+                {onMatchCase && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={onMatchCase}
+                  >
+                    Make the path case sensitive
+                  </button>
+                )}
+              </p>
+            ) : (
+              <p>
+                This rule can be served by several behaviors: its path condition
+                does not pin it to one.
+              </p>
+            ))}
           <ul>
             {failing.map((behavior) => (
               <li key={behavior.pathPattern}>

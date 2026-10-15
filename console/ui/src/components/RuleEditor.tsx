@@ -19,6 +19,7 @@ import {
   describeDropped,
   needsDistributionCheck,
   useGeoCheck,
+  withCaseSensitivePaths,
 } from "../domain/geoReadiness";
 import {
   draftFromRule,
@@ -337,6 +338,9 @@ export default function RuleEditor({
               }
               kind={draft.kind}
               onRecheck={recheck}
+              onMatchCase={() =>
+                setMatches(withCaseSensitivePaths(draft.matches))
+              }
               rechecking={geo.status === "loading"}
             />
             {unverifiable && (
