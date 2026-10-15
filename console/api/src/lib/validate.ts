@@ -3,6 +3,7 @@ import redirectSchema from "@cloudfront-redirect-rules/shared/redirect-rule.sche
 import rewriteSchema from "@cloudfront-redirect-rules/shared/rewrite-rule.schema.json" with { type: "json" };
 import { ApiError } from "./errors.js";
 import { formatAjvErrors } from "./ajv-errors.js";
+import { assertOriginHeaders } from "./assert-origin-headers.js";
 import { assertRegexes } from "./assert-regexes.js";
 import { explainCountryErrors } from "./country-errors.js";
 import type { RuleType } from "./rule-keys.js";
@@ -71,4 +72,5 @@ export const validateRule = (body: unknown): void => {
   // and because a body that is the wrong shape should be described as that,
   // rather than as a regex problem.
   assertRegexes(body);
+  assertOriginHeaders(body);
 };
