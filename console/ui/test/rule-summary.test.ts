@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   describeMatch,
   describeMatches,
+  isGeoRedirect,
   ruleFrom,
   ruleKindLabel,
   ruleTo,
@@ -66,6 +67,34 @@ describe("describeMatch", () => {
       "a header missing its name",
       match({ matchType: "header", matchValue: "prod" }),
       "header:? equals prod",
+    ],
+    // A country reads as set membership rather than showing its stored form.
+    // `country equals BE FR` would describe the encoding: the operator is
+    // `equals` only because the edge splits the value on spaces and matches any
+    // variant.
+    [
+      "a country condition, as an inclusion",
+      match({ matchType: "country", matchValue: "BE FR" }),
+      "country in BE, FR",
+    ],
+    [
+      "an excluding country condition",
+      match({
+        matchType: "country",
+        matchOperator: "notEquals",
+        matchValue: "BE FR",
+      }),
+      "country not in BE, FR",
+    ],
+    [
+      "a legacy negated country condition, as an exclusion",
+      match({ matchType: "country", matchValue: "US", negate: true }),
+      "country not in US",
+    ],
+    [
+      "a country condition with no country yet",
+      match({ matchType: "country", matchValue: "" }),
+      "country in ",
     ],
   ])("renders %s", (_case, condition, expected) => {
     expect(describeMatch(condition)).toBe(expected);
@@ -139,5 +168,40 @@ describe("ruleKindLabel", () => {
   it("names a redirect with its status code, and a rewrite plainly", () => {
     expect(ruleKindLabel(redirect({ statusCode: 302 }))).toBe("302 redirect");
     expect(ruleKindLabel(rewrite({ pathAndQS: "/x" }))).toBe("rewrite");
+  });
+});
+
+describe("isGeoRedirect", () => {
+  const geo = (type: "erMatchRule" | "frMatchRule") =>
+    ({
+      pk: "www.example.com",
+      sk: type === "erMatchRule" ? "REDIRECT#00100" : "REWRITE#00100",
+      type,
+      statusCode: 302,
+      redirectURL: "https://www.example.fr/",
+      forwardSettings: { pathAndQS: "/fr" },
+      matches: [
+        { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+      ],
+    }) as unknown as Rule;
+
+  it("flags a redirect that reads the country", () => {
+    expect(isGeoRedirect(geo("erMatchRule"))).toBe(true);
+  });
+
+  it("leaves a geo rewrite alone, which runs at origin-request anyway", () => {
+    expect(isGeoRedirect(geo("frMatchRule"))).toBe(false);
+  });
+
+  it("leaves a classic redirect alone", () => {
+    const classic = geo("erMatchRule");
+    expect(
+      isGeoRedirect({
+        ...classic,
+        matches: [
+          { matchType: "path", matchOperator: "equals", matchValue: "/x" },
+        ],
+      } as Rule),
+    ).toBe(false);
   });
 });

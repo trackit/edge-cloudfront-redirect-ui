@@ -8,6 +8,82 @@ import type {
   S3Origin,
   ValidationDetail,
 } from "../api";
+
+/**
+ * The country codes a `country` condition holds, from its `matchValue`.
+ *
+ * The two functions either side of the wire format, so no component has to know
+ * that a set of countries is stored as a string. Space-separated is not this
+ * feature's invention: the edge splits every `matchValue` on spaces and matches
+ * any variant, which is what makes "one of these countries" work with no
+ * matching code at all. See `shared/redirect-rule.schema.json`.
+ */
+export const parseCountries = (matchValue: string): string[] =>
+  matchValue
+    .split(" ")
+    .map((code) => code.trim().toUpperCase())
+    .filter((code) => code !== "");
+
+/**
+ * Sorted and de-duplicated, so the same set of countries always produces the
+ * same stored string. Without it, adding FR then DE and adding DE then FR would
+ * be two different rules, and every reordering would look like an edit in a
+ * diff or an audit log.
+ */
+export const formatCountries = (codes: readonly string[]): string =>
+  [...new Set(codes.map((code) => code.trim().toUpperCase()))]
+    .filter((code) => code !== "")
+    .sort()
+    .join(" ");
+
+/**
+ * The condition types a redirect cannot combine with a `country` one.
+ *
+ * A redirect reading the country is answered at origin-request, where only the
+ * headers and cookies the distribution forwards are left. A dropped one reads
+ * as empty, and negated that matches everyone. The protocol too: the edge reads
+ * it from `X-Forwarded-Proto`, which is not guaranteed there, and assumes
+ * `https` without it. The redirect schema refuses the combination; this is the
+ * same rule, so the editor can say so before saving. See
+ * `shared/redirect-rule.schema.json`.
+ */
+const NOT_BESIDE_COUNTRY: readonly MatchCondition["matchType"][] = [
+  "header",
+  "cookie",
+  "protocol",
+];
+
+/**
+ * The types condition `at` cannot take, given the rule's other conditions.
+ * Always empty for a rewrite: rewrites always ran at origin-request, so the
+ * restriction is only about the redirects that moved there.
+ */
+export const unavailableMatchTypes = (
+  kind: RuleDraft["kind"],
+  matches: readonly MatchCondition[],
+  at: number,
+): ReadonlySet<MatchCondition["matchType"]> => {
+  if (kind !== "redirect") return new Set();
+  const others = matches.filter((_, i) => i !== at);
+  if (others.some((match) => match.matchType === "country")) {
+    return new Set(NOT_BESIDE_COUNTRY);
+  }
+  if (others.some((match) => NOT_BESIDE_COUNTRY.includes(match.matchType))) {
+    return new Set(["country"]);
+  }
+  return new Set();
+};
+
+/**
+ * Whether a `country` condition excludes its countries rather than matching
+ * them. Stored as `notEquals`, never `negate` — see the country conditional in
+ * `shared/redirect-rule.schema.json` for why that is a safety property. A
+ * `negate` is still read, because a rule saved before that rule existed has
+ * one; the next save rewrites it as `notEquals` (see `cleanMatch`).
+ */
+export const isExcludingCountries = (match: MatchCondition): boolean =>
+  match.matchOperator === "notEquals" || match.negate === true;
+
 /** A blank condition, as both the editor's "add" button and a new draft need one. */
 export const emptyMatch = (): MatchCondition => ({
   matchType: "path",
@@ -434,7 +510,37 @@ export const validateDraft = (
     if (match.matchValue.trim() === "") {
       details.push({
         path: `/matches/${at}/matchValue`,
-        message: "is required",
+        message:
+          match.matchType === "country"
+            ? "needs at least one country"
+            : "is required",
+      });
+    }
+    // Only the format, never membership of the picker's list. That list is
+    // generated from Route 53 and ships with the front, so validating against
+    // it would reject a country CloudFront started reporting after the last
+    // release. An unrecognised code is warned about in the picker instead —
+    // see CountryPicker.
+    if (match.matchType === "country") {
+      const malformed = parseCountries(match.matchValue).filter(
+        (code) => !/^[A-Z]{2}$/.test(code),
+      );
+      if (malformed.length > 0) {
+        details.push({
+          path: `/matches/${at}/matchValue`,
+          message: `must be two-letter country codes (${malformed.join(", ")} ${malformed.length === 1 ? "is" : "are"} not)`,
+        });
+      }
+    }
+    // Reported on the non-country side only, so one conflict is one
+    // error rather than one per condition involved.
+    if (
+      match.matchType !== "country" &&
+      unavailableMatchTypes(draft.kind, draft.matches, at).has(match.matchType)
+    ) {
+      details.push({
+        path: `/matches/${at}/matchType`,
+        message: `cannot be ${match.matchType} on a redirect that also checks the geographic location`,
       });
     }
     if (
@@ -655,11 +761,30 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 const MATCH_FIELD_LABELS: Record<string, string> = {
+  matchType: "type",
   matchValue: "value",
   headerName: "header name",
 };
 
-export const labelForPath = (path: string): string => {
+/**
+ * Same as `MATCH_FIELD_LABELS`, for the fields a condition type renames. A
+ * country condition has no "value" on screen — it has countries — so an error
+ * reading "Condition 1 value needs at least one country" would point at a field
+ * the user cannot see.
+ */
+const MATCH_FIELD_LABELS_BY_TYPE: Record<string, Record<string, string>> = {
+  country: { matchValue: "countries" },
+};
+
+/**
+ * `matches` is the draft's conditions, so a field can be named the way its own
+ * condition type shows it. Optional: a server error may name a condition the
+ * draft no longer has, and the generic label is still better than a pointer.
+ */
+export const labelForPath = (
+  path: string,
+  matches: readonly MatchCondition[] = [],
+): string => {
   const known = FIELD_LABELS[path];
   if (known !== undefined) return known;
 
@@ -668,7 +793,13 @@ export const labelForPath = (path: string): string => {
   const inMatch = /^\/matches\/(\d+)\/(\w+)$/.exec(path);
   if (inMatch !== null) {
     const [, index, field] = inMatch;
-    return `Condition ${Number(index) + 1} ${MATCH_FIELD_LABELS[field] ?? field}`;
+    const at = Number(index);
+    const matchType = matches[at]?.matchType ?? "";
+    const label =
+      MATCH_FIELD_LABELS_BY_TYPE[matchType]?.[field] ??
+      MATCH_FIELD_LABELS[field] ??
+      field;
+    return `Condition ${at + 1} ${label}`;
   }
 
   return path;
@@ -765,6 +896,23 @@ export const toRuleInput = (draft: RuleDraft): RuleInput => {
  * serialised away by `JSON.stringify` — but a `""` would not, and that is a 400.
  */
 const cleanMatch = (match: MatchCondition): MatchCondition => {
+  if (match.matchType === "country") {
+    return {
+      matchType: "country",
+      // Derived rather than carried over: the editor hides the operator, so
+      // whatever the condition held before the type was switched would be a
+      // 400. `negate` is always false — an exclusion is `notEquals`.
+      matchOperator: isExcludingCountries(match) ? "notEquals" : "equals",
+      matchValue: formatCountries(parseCountries(match.matchValue)),
+      negate: false,
+      // Meaningless on two uppercase letters, and the editor offers no way to
+      // set it. Sent as false rather than dropped because the schema has no
+      // conditional forbidding it, and a rule that once had it set should not
+      // keep a flag the UI cannot show.
+      caseSensitive: false,
+    };
+  }
+
   const base: MatchCondition = {
     matchType: match.matchType,
     matchOperator: match.matchOperator,

@@ -26,6 +26,12 @@ export interface Distribution {
   readonly tableName: string;
   /** Region the table lives in. */
   readonly region: string;
+  /**
+   * The Lambda@Edge function ARN, from the edge module's
+   * `viewer_request_lambda_arn` output. Optional: the country check uses it to
+   * ignore behaviors running another function.
+   */
+  readonly edgeFunctionArn?: string;
 }
 
 /** What the connect form collects, before the API assigns a `targetId`. */

@@ -258,11 +258,12 @@ run "assume_role_grant_adds_nothing_else" {
   # The registry statement's own resources can't be asserted here — they hold the
   # provider-computed table ARN, which is unknown under a mocked plan. What is
   # knowable is the statement count: enabling the grant must add exactly one
-  # statement and not a further, broader one. Three, because DescribeTargetTables
-  # is unconditional — it is asserted on its own in
-  # describe_table_is_granted_across_the_account.
+  # statement and not a further, broader one. Five, because DescribeTargetTables
+  # and the two CloudFront read statements are unconditional — they are asserted
+  # on their own in describe_table_is_granted_across_the_account and the
+  # distribution_config_* runs.
   assert {
-    condition     = length(data.aws_iam_policy_document.registry.statement) == 3
+    condition     = length(data.aws_iam_policy_document.registry.statement) == 5
     error_message = "enabling assumable_role_arns must add exactly one statement"
   }
 
@@ -763,4 +764,88 @@ run "a_provider_may_not_take_a_reserved_name" {
   # Cognito keeps these for its own social providers, and the failure it gives
   # for reusing one is not obvious from the message.
   expect_failures = [var.identity_provider]
+}
+
+# =============================================================================
+# CloudFront reads for the country-condition warning
+# =============================================================================
+
+run "distribution_config_scoped_to_this_account_by_default" {
+  command = plan
+
+  # The alltrue checks below pass vacuously on a missing statement.
+  assert {
+    condition = length([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s if contains(["ReadDistributionConfig", "ReadCachePolicies"], s.sid)
+    ]) == 2
+    error_message = "both CloudFront read statements must be present"
+  }
+
+  # A distribution's config carries its origin custom headers, which can hold a
+  # shared secret: never every distribution everywhere.
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s.resources == toset(["arn:aws:cloudfront::123456789012:distribution/*"])
+      if s.sid == "ReadDistributionConfig"
+    ])
+    error_message = "GetDistributionConfig must default to this account's distributions"
+  }
+
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s.actions == toset(["cloudfront:GetDistributionConfig"])
+      if s.sid == "ReadDistributionConfig"
+    ])
+    error_message = "the scoped statement must hold GetDistributionConfig alone"
+  }
+
+  # The policies hold names and TTLs, no values, and the managed ones are AWS's.
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s.actions == toset(["cloudfront:GetCachePolicy", "cloudfront:GetOriginRequestPolicy"])
+      if s.sid == "ReadCachePolicies"
+    ])
+    error_message = "the unscoped statement must hold the two policy reads and nothing else"
+  }
+}
+
+run "distribution_config_narrowed_to_the_given_arns" {
+  command = plan
+
+  variables {
+    readable_distribution_arns = ["arn:aws:cloudfront::123456789012:distribution/EQFO7A1FE1EPJ"]
+  }
+
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.registry.statement :
+      s.resources == toset(["arn:aws:cloudfront::123456789012:distribution/EQFO7A1FE1EPJ"])
+      if s.sid == "ReadDistributionConfig"
+    ])
+    error_message = "readable_distribution_arns must replace the account-wide default"
+  }
+}
+
+run "rejects_a_bare_wildcard_distribution" {
+  command = plan
+
+  variables {
+    readable_distribution_arns = ["*"]
+  }
+
+  expect_failures = [var.readable_distribution_arns]
+}
+
+run "rejects_a_cross_account_distribution" {
+  command = plan
+
+  variables {
+    readable_distribution_arns = ["arn:aws:cloudfront::*:distribution/*"]
+  }
+
+  expect_failures = [var.readable_distribution_arns]
 }

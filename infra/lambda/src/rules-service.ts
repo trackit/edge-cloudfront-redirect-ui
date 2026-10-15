@@ -6,13 +6,28 @@ import type {
   RequestParams,
   RuleKind,
 } from "./rule-types.js";
-import { MatchType, MatchOperator } from "./rule-types.js";
+import { MatchType, MatchOperator, NOT_BESIDE_COUNTRY } from "./rule-types.js";
 import { TtlCache } from "./ttl-cache.js";
 import { appendQueryStringIfNeeded } from "./lib/append-query-string.js";
 import { buildFullUrl } from "./lib/build-full-url.js";
 import { buildRegex } from "./lib/build-regex.js";
 import { checkAkamaiVariant } from "./lib/check-akamai-variant.js";
 import { getMatchSource } from "./lib/get-match-source.js";
+
+/**
+ * Whether the rule reads the viewer's country, and so cannot be evaluated at
+ * viewer-request: CloudFront works the country out after that event.
+ *
+ * Exported because it is what tells the two events apart. viewer-request keeps
+ * every rule that does not read the country -- which is every rule that exists
+ * today -- and origin-request picks up exactly the remainder. Splitting them on
+ * the rule's own content rather than on "is the country header present" matters:
+ * a distribution that enables the header must not thereby start firing ordinary
+ * redirects at origin-request, where they would only run on a cache miss and so
+ * fire unpredictably.
+ */
+export const readsCountry = (rule: RedirectRule): boolean =>
+  rule.matches.some((m) => m.matchType === MatchType.COUNTRY);
 
 const splitPath = (path: string): { pathname: string; search: string } => {
   const [pathname = "", ...rest] = path.split("?");
@@ -22,8 +37,21 @@ const splitPath = (path: string): { pathname: string; search: string } => {
   };
 };
 
+/**
+ * A redirect the schema would refuse: a `country` condition beside a header,
+ * cookie or protocol one. The API never writes one, but this reads items
+ * straight out of DynamoDB, and a script or a restored backup can.
+ */
+const isForbiddenGeoRedirect = (rule: RedirectRule): boolean =>
+  rule.type === "erMatchRule" &&
+  readsCountry(rule) &&
+  rule.matches.some((m) => NOT_BESIDE_COUNTRY.includes(m.matchType));
+
 export class RulesService {
   private readonly cache: TtlCache<RedirectRule[]>;
+
+  /** Rules already reported as forbidden, so each is logged once per instance. */
+  private readonly reported = new Set<string>();
 
   constructor(
     private readonly repo: RuleRepository,
@@ -36,18 +64,103 @@ export class RulesService {
     this.cache.clear();
   }
 
-  /** First enabled rule whose conditions all match, in priority order. */
+  /**
+   * First enabled rule whose conditions all match, in priority order.
+   *
+   * `accepts` narrows which rules are even considered. Only one caller needs
+   * it — origin-request, for the redirects viewer-request had to defer — and it
+   * is a predicate on the rule rather than an event type so that this class
+   * keeps knowing nothing about CloudFront's event model.
+   */
   async match(
     params: RequestParams,
     kind: RuleKind,
+    accepts: (rule: RedirectRule) => boolean = () => true,
   ): Promise<MatchResult | null> {
     const rules = await this.loadRules(params.hostname, kind);
 
-    const matched = rules.find((rule) =>
-      rule.matches.every((m) => this.evaluateMatch(m, params)),
+    const matched = rules.find(
+      (rule) =>
+        accepts(rule) &&
+        this.isEvaluable(rule, params) &&
+        rule.matches.every((m) => this.evaluateMatch(m, params)),
     );
 
     return matched ? this.formatResult(matched, params) : null;
+  }
+
+  /**
+   * Whether any enabled rule of the host, of either kind, reads the country.
+   * For diagnostics only: the rules come from the same TTL cache as `match`.
+   */
+  /**
+   * Whether a country rule could apply to this request: an enabled rule, of
+   * either kind, that reads the country and whose other conditions all match.
+   * The country itself is left out — the point is to know whether its absence
+   * costs anything. For the skipped-country metric only, so that a path no geo
+   * rule covers (static assets on a behavior that never asks for the country)
+   * does not count as a skipped geo request.
+   */
+  async countryRuleInScope(params: RequestParams): Promise<boolean> {
+    for (const kind of ["REDIRECT", "REWRITE"] as const) {
+      const rules = await this.loadRules(params.hostname, kind);
+      const applies = rules.some(
+        (rule) =>
+          readsCountry(rule) &&
+          !isForbiddenGeoRedirect(rule) &&
+          rule.matches
+            .filter((m) => m.matchType !== MatchType.COUNTRY)
+            .every((m) => this.evaluateMatch(m, params)),
+      );
+      if (applies) return true;
+    }
+    return false;
+  }
+
+  async hasRulesReadingCountry(hostname: string): Promise<boolean> {
+    for (const kind of ["REDIRECT", "REWRITE"] as const) {
+      const rules = await this.loadRules(hostname, kind);
+      if (rules.some(readsCountry)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Whether every condition on the rule has something to be tested against —
+   * and, first, whether the rule is one the schema allows at all.
+   *
+   * Only the country can be *unknown* rather than merely different: CloudFront
+   * adds `CloudFront-Viewer-Country` after the viewer-request event, and a
+   * distribution that never asks for it in a cache or origin request policy
+   * never sends it at all. Skipping the rule is not a nicety, it is the only
+   * safe answer — with an empty source the comparison fails, and `negate` then
+   * flips that into a match, so "redirect everyone except France" would fire
+   * for France too, and for every other country. Failing to match is a rule
+   * that does nothing; matching everything is an outage.
+   *
+   * Filtered here and not in `loadRules` so the TTL cache stays keyed on host
+   * and kind alone, and holds the same rules for every request.
+   */
+  private isEvaluable(rule: RedirectRule, params: RequestParams): boolean {
+    // Never evaluated, at either event: its header, cookie or protocol can read
+    // "" at origin-request, and negated that is a match for every viewer.
+    if (isForbiddenGeoRedirect(rule)) {
+      this.reportForbidden(rule);
+      return false;
+    }
+    return Boolean(params.country) || !readsCountry(rule);
+  }
+
+  private reportForbidden(rule: RedirectRule): void {
+    const key = `${rule.pk}:${rule.sk}`;
+    if (this.reported.has(key)) return;
+    this.reported.add(key);
+    console.warn("redirect-rules: skipping a redirect the schema forbids", {
+      host: rule.pk,
+      sk: rule.sk,
+      reason: "a country condition beside a header, cookie or protocol one",
+      fix: "remove one of the two conditions, or save the rule through the console",
+    });
   }
 
   private async loadRules(
@@ -119,9 +232,16 @@ export class RulesService {
         : match.matchValue.toLowerCase();
       // Space-separated alternatives, Akamai-style: any variant may match.
       const variants = matchVal.split(" ").filter((v) => v.length > 0);
-      isMatch = variants.some((v) =>
-        checkAkamaiVariant(testVal, v, match.matchOperator),
-      );
+      if (match.matchOperator === MatchOperator.NOT_EQUALS) {
+        // "None of them": the same comparison as `equals`, inverted as a whole.
+        isMatch = !variants.some((v) =>
+          checkAkamaiVariant(testVal, v, MatchOperator.EQUALS),
+        );
+      } else {
+        isMatch = variants.some((v) =>
+          checkAkamaiVariant(testVal, v, match.matchOperator),
+        );
+      }
     }
 
     return match.negate ? !isMatch : isMatch;

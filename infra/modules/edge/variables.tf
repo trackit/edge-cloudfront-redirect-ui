@@ -64,3 +64,26 @@ variable "tags" {
   default     = {}
   description = "Tags to apply to the Lambda function and IAM role."
 }
+
+variable "geo_alarm_regions" {
+  type        = list(string)
+  default     = []
+  description = "Regions to alarm in when country rules are skipped. Lambda@Edge logs, and so its metrics, land in the region that served the viewer, and an alarm only sees its own region: list where your traffic is. Empty (the default) creates no alarm, so the module asks nothing of CloudWatch unless you opt in; listing a region needs cloudwatch:PutMetricAlarm, DescribeAlarms, DeleteAlarms, ListTagsForResource, TagResource and UntagResource."
+}
+
+variable "geo_alarm_threshold" {
+  type        = number
+  default     = 0.5
+  description = "Share of origin-request calls a country rule could apply to that may arrive without a country before the alarm fires. A few are normal: CloudFront cannot place every address."
+
+  validation {
+    condition     = var.geo_alarm_threshold > 0 && var.geo_alarm_threshold <= 1
+    error_message = "geo_alarm_threshold must be in (0, 1]."
+  }
+}
+
+variable "alarm_sns_topic_arns" {
+  type        = map(string)
+  default     = {}
+  description = "Region => SNS topic ARN the geo alarm notifies. An alarm can only notify a topic in its own region. A region without an entry gets an alarm with no action, visible in the CloudWatch console."
+}

@@ -13,8 +13,11 @@ const clients = new Map<string, DynamoDBDocumentClient>();
  * registration: that verifier treats every failure other than "no such table" as
  * inconclusive and allows it. So a misconfigured role continues to surface when
  * the target's rules are touched, as a 502.
+ *
+ * Exported for `geo-readiness.ts`, which reads the target's distribution under
+ * the same role as its table.
  */
-const assumeRole = (roleArn: string, region: string) => async () => {
+export const assumeRole = (roleArn: string, region: string) => async () => {
   const sts = new STSClient({ region });
   const out = await sts.send(
     new AssumeRoleCommand({

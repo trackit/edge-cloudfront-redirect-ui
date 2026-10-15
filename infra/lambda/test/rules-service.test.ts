@@ -541,3 +541,265 @@ describe("match conditions", () => {
     ).toBeNull();
   });
 });
+
+/**
+ * A country condition is the only one whose source can be *unknown* rather than
+ * just different: CloudFront adds `CloudFront-Viewer-Country` after the
+ * viewer-request event, and a distribution that does not ask for it in a policy
+ * never sends it at all. Every test below exists because of that third state.
+ */
+describe("country conditions", () => {
+  const countryRule = (matchValue: string, negate = false): RedirectRule =>
+    rule({
+      matches: [
+        { matchType: "country", matchOperator: "equals", matchValue, negate },
+      ],
+    });
+
+  const service = (rules: RedirectRule[]) =>
+    new RulesService(new FakeRepository(rules), 60_000);
+
+  it.each([
+    ["the only listed country", "FR", "FR", true],
+    ["one of several listed countries", "BE FR NL", "FR", true],
+    ["a country that is not listed", "BE NL", "FR", false],
+    // Stored codes are uppercase and CloudFront sends uppercase, but
+    // `caseSensitive` defaults to false, so neither side has to be trusted to
+    // get the casing right.
+    ["a lowercase header value", "FR", "fr", true],
+  ])("matches %s", async (_label, matchValue, country, expected) => {
+    const result = await service([countryRule(matchValue)]).match(
+      params({ country }),
+      "REDIRECT",
+    );
+    expect(result !== null).toBe(expected);
+  });
+
+  const excludingRule = (matchValue: string): RedirectRule =>
+    rule({
+      matches: [
+        { matchType: "country", matchOperator: "notEquals", matchValue },
+      ],
+    });
+
+  it.each([
+    ["a listed country", "BE FR", "FR", false],
+    ["a country that is not listed", "BE FR", "DE", true],
+    ["a lowercase header value", "FR", "fr", false],
+  ])(
+    "excludes with notEquals: %s",
+    async (_label, matchValue, country, expected) => {
+      const result = await service([excludingRule(matchValue)]).match(
+        params({ country }),
+        "REDIRECT",
+      );
+      expect(result !== null).toBe(expected);
+    },
+  );
+
+  it("skips a notEquals condition when the country is unknown", async () => {
+    // "Everyone but France" must not read an unknown country as "not France".
+    expect(
+      await service([excludingRule("FR")]).match(params(), "REDIRECT"),
+    ).toBeNull();
+  });
+
+  it("still honours negate on a legacy exclusion", async () => {
+    // The schema now refuses `negate` on a country, but an item written before
+    // that must keep meaning what it meant.
+    const svc = service([countryRule("FR", true)]);
+
+    expect(await svc.match(params({ country: "FR" }), "REDIRECT")).toBeNull();
+    expect(
+      await svc.match(params({ country: "DE" }), "REDIRECT"),
+    ).not.toBeNull();
+  });
+
+  it("keeps a code it does not recognise, and matches on it", async () => {
+    // The edge compares strings and holds no list of countries, which is what
+    // makes a new ISO code work the day CloudFront starts returning it, with no
+    // deploy. Nothing here may be "cleaned up" into a closed list.
+    const svc = service([countryRule("FR XK")]);
+
+    expect(
+      await svc.match(params({ country: "XK" }), "REDIRECT"),
+    ).not.toBeNull();
+  });
+
+  it.each([
+    ["absent", undefined],
+    ["empty", ""],
+  ])(
+    "skips a rule with a country condition when the country is %s",
+    async (_label, country) => {
+      expect(
+        await service([countryRule("FR")]).match(
+          params({ country }),
+          "REDIRECT",
+        ),
+      ).toBeNull();
+    },
+  );
+
+  it("skips a NEGATED country condition when the country is unknown", async () => {
+    // The test this whole guard exists for. Without it: the source is "", the
+    // comparison fails, `negate` flips the failure into a match, and a rule
+    // meaning "redirect everyone except France" fires for every request,
+    // France included. A rule that does nothing is a bug; a rule that matches
+    // everything is an outage.
+    expect(
+      await service([countryRule("FR", true)]).match(params(), "REDIRECT"),
+    ).toBeNull();
+  });
+
+  it("does not skip the rule's other conditions when the country is known", async () => {
+    // The skip is per rule, not per condition: guards against a country
+    // condition being treated as satisfied and the rest ignored.
+    const svc = service([
+      rule({
+        matches: [
+          { matchType: "path", matchOperator: "equals", matchValue: "/other" },
+          { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+        ],
+      }),
+    ]);
+
+    expect(await svc.match(params({ country: "FR" }), "REDIRECT")).toBeNull();
+  });
+
+  it("leaves a rule without a country condition alone", async () => {
+    // No country in the request is the normal case at viewer-request, where
+    // every ordinary redirect still has to fire.
+    expect(await service([rule()]).match(params(), "REDIRECT")).not.toBeNull();
+  });
+});
+
+/**
+ * The schema refuses these, but the edge reads DynamoDB directly: a script or a
+ * restored backup can still put one there.
+ */
+describe("forbidden geo redirects", () => {
+  const forbidden = (matchType: "header" | "cookie" | "protocol") =>
+    rule({
+      sk: "REDIRECT#00007",
+      matches: [
+        { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+        {
+          matchType,
+          matchOperator: "equals",
+          matchValue: "anything",
+          negate: true,
+          ...(matchType === "header" && { headerName: "x-env" }),
+        },
+      ],
+    });
+
+  it.each(["header", "cookie", "protocol"] as const)(
+    "never evaluates a country beside a %s, even where it would match",
+    async (matchType) => {
+      // Known country, negated condition on an empty source: without the guard
+      // this is a match — the redirect-everyone case.
+      const svc = new RulesService(
+        new FakeRepository([forbidden(matchType)]),
+        60_000,
+      );
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      expect(await svc.match(params({ country: "FR" }), "REDIRECT")).toBeNull();
+
+      warn.mockRestore();
+    },
+  );
+
+  it("says so once per rule, not once per request", async () => {
+    const svc = new RulesService(
+      new FakeRepository([forbidden("cookie")]),
+      60_000,
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await svc.match(params({ country: "FR" }), "REDIRECT");
+    await svc.match(params({ country: "DE" }), "REDIRECT");
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[1]).toMatchObject({ sk: "REDIRECT#00007" });
+    warn.mockRestore();
+  });
+
+  it("leaves the same pair alone on a rewrite", async () => {
+    // Rewrites always ran at origin-request; the schema does not restrict them.
+    const rewrite = {
+      ...forbidden("cookie"),
+      sk: "REWRITE#00007",
+      type: "frMatchRule",
+      forwardSettings: { pathAndQS: "/fr" },
+    } as unknown as RedirectRule;
+    const svc = new RulesService(new FakeRepository([rewrite]), 60_000);
+
+    expect(
+      await svc.match(params({ country: "FR" }), "REWRITE"),
+    ).not.toBeNull();
+  });
+});
+
+describe("countryRuleInScope", () => {
+  const geoOn = (path: string, over: Partial<RedirectRule> = {}) =>
+    rule({
+      matches: [
+        { matchType: "path", matchOperator: "equals", matchValue: path },
+        { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+      ],
+      ...over,
+    } as Partial<RedirectRule>);
+
+  it("is true where a country rule's other conditions match, country or not", async () => {
+    const service = new RulesService(
+      new FakeRepository([geoOn("/fr")]),
+      60_000,
+    );
+    expect(await service.countryRuleInScope(params({ path: "/fr" }))).toBe(
+      true,
+    );
+    expect(
+      await service.countryRuleInScope(params({ path: "/fr", country: "DE" })),
+    ).toBe(true);
+  });
+
+  it("is false on a path no country rule can reach", async () => {
+    const service = new RulesService(
+      new FakeRepository([geoOn("/fr")]),
+      60_000,
+    );
+    expect(
+      await service.countryRuleInScope(params({ path: "/static/a.js" })),
+    ).toBe(false);
+  });
+
+  it("ignores rules that do not read the country, and disabled ones", async () => {
+    const service = new RulesService(
+      new FakeRepository([rule(), geoOn("/fr", { disabled: true })]),
+      60_000,
+    );
+    expect(
+      await service.countryRuleInScope(params({ path: "/old-landing" })),
+    ).toBe(false);
+    expect(await service.countryRuleInScope(params({ path: "/fr" }))).toBe(
+      false,
+    );
+  });
+
+  it("looks at rewrites too", async () => {
+    const service = new RulesService(
+      new FakeRepository([
+        geoOn("/fr", {
+          sk: "REWRITE#00100",
+          type: "frMatchRule",
+        } as Partial<RedirectRule>),
+      ]),
+      60_000,
+    );
+    expect(await service.countryRuleInScope(params({ path: "/fr" }))).toBe(
+      true,
+    );
+  });
+});

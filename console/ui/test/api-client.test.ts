@@ -33,6 +33,46 @@ const json = (body: unknown, status = 200) =>
 const client = (fetch: typeof globalThis.fetch, baseUrl = "/api") =>
   createApiClient({ baseUrl, fetch });
 
+describe("createApiClient — geo check and confirmation", () => {
+  const body = {
+    kind: "rewrite" as const,
+    matches: [
+      { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+    ] as never,
+  };
+
+  it("posts the rule to the geo check, asking for a fresh reading only when told", async () => {
+    const { calls, fetch } = stubFetch(json({}), json({}));
+    await client(fetch).targets.geoCheck("t-1", body);
+    await client(fetch).targets.geoCheck("t-1", body, true);
+
+    expect(calls[0].url).toBe("/api/targets/t-1/geo-readiness");
+    expect(calls[0].init.method).toBe("POST");
+    expect(calls[0].init.body).toBe(JSON.stringify(body));
+    expect(calls[1].url).toBe("/api/targets/t-1/geo-readiness?fresh=true");
+  });
+
+  it("adds confirmUnverifiedGeo to a create or a put only when asked", async () => {
+    const { calls, fetch } = stubFetch(json({}), json({}), json({}));
+    const input = { priority: 1 } as never;
+    await client(fetch).rules.create("t-1", "www", input);
+    await client(fetch).rules.create("t-1", "www", input, {
+      confirmUnverifiedGeo: true,
+    });
+    await client(fetch).rules.put("t-1", "www", "REWRITE#00100", input, {
+      confirmUnverifiedGeo: true,
+    });
+
+    expect(calls[0].url).toBe("/api/targets/t-1/hosts/www/rules");
+    expect(calls[1].url).toBe(
+      "/api/targets/t-1/hosts/www/rules?confirmUnverifiedGeo=true",
+    );
+    expect(calls[2].url).toBe(
+      "/api/targets/t-1/hosts/www/rules/REWRITE%2300100?confirmUnverifiedGeo=true",
+    );
+  });
+});
+
 describe("createApiClient — URLs", () => {
   it("trims trailing slashes off the base URL", () => {
     const { fetch } = stubFetch();

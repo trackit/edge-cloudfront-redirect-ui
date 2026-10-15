@@ -62,6 +62,23 @@ describe("parseStored", () => {
     });
   });
 
+  it("keeps the redirect function ARN when it is a string, and drops it otherwise", () => {
+    const fn = "arn:aws:lambda:us-east-1:123456789012:function:edge";
+    const withArn = dist({ edgeFunctionArn: fn });
+    const raw = JSON.stringify({
+      distributions: [
+        withArn,
+        { ...dist({ distributionId: "E2" }), edgeFunctionArn: 42 },
+      ],
+      current: "E1",
+    });
+
+    expect(parseStored(raw).distributions).toEqual([
+      withArn,
+      dist({ distributionId: "E2" }),
+    ]);
+  });
+
   it("treats an absent key as empty", () => {
     expect(parseStored(null)).toEqual(EMPTY);
   });

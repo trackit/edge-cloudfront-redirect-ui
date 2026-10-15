@@ -21,6 +21,8 @@ export interface Target {
    * console/api/infra/README.md.
    */
   roleArn?: string;
+  /** The Lambda@Edge function serving this target's rules. See validate-target.ts. */
+  edgeFunctionArn?: string;
 }
 
 export interface TargetsRepository {

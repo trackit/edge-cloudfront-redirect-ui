@@ -37,3 +37,8 @@ output "viewer_host_header" {
   value       = "x-edgeroute-viewer-host"
   description = "Header the function stamps the viewer's hostname into at viewer-request and reads at origin-request. Your cache behavior must forward it to the origin, or no rewrite rule will ever match."
 }
+
+output "geo_alarm_names" {
+  value       = { for region, alarm in aws_cloudwatch_metric_alarm.geo_country_missing : region => alarm.alarm_name }
+  description = "Region => name of the alarm that fires when country rules are skipped."
+}

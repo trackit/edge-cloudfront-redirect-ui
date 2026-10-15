@@ -2,10 +2,10 @@
 
 The Lambda@Edge data plane (CF-8). **One** function, associated twice on your distribution:
 
-| Association    | Sort key prefix | Behavior                                                               |
-| -------------- | --------------- | ---------------------------------------------------------------------- |
-| viewer-request | `REDIRECT#`     | Returns a 301/302 response on match                                    |
-| origin-request | `REWRITE#`      | Rewrites `uri`/`querystring` and/or switches `request.origin` on match |
+| Association    | Sort key prefix                                        | Behavior                                                                                                       |
+| -------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| viewer-request | `REDIRECT#`                                            | Returns a 301/302 response on match                                                                            |
+| origin-request | `REWRITE#`, and `REDIRECT#` with a `country` condition | Rewrites `uri`/`querystring` and/or switches `request.origin` on match; answers the 301/302 for a geo redirect |
 
 It dispatches on `cf.config.eventType`, so both associations point at the same published version. Any other event type passes through untouched.
 
@@ -15,8 +15,9 @@ Extracted from `edge-platform-functions-cdn`'s `src/snippets/dynamodb-redirect/`
 
 1. `Query(pk = <the viewer's hostname>, begins_with(sk, "REDIRECT#" | "REWRITE#"))`
    — see [the host a rule is keyed on](#the-host-a-rule-is-keyed-on).
-2. Rules with `disabled: true` are dropped.
-3. Remaining rules are evaluated in ascending sort-key order (`REDIRECT#00010` before `REDIRECT#00100`) — lower priority number wins.
+2. Rules with `disabled: true` are dropped, and so are rules the current event
+   cannot evaluate — see [the country a rule can be keyed on](#the-country-a-rule-can-be-keyed-on).
+3. Remaining rules are evaluated in ascending sort-key order (`REDIRECT#00010` before `REDIRECT#00100`) — lower priority number wins. One exception: redirects with a `country` condition always come **after** the other redirects — see [classic redirects first](#classic-redirects-first).
 4. The **first** rule whose `matches` **all** pass is applied; the rest are ignored.
 5. No match → the request passes through unmodified.
 
@@ -73,6 +74,177 @@ keeps a single-association distribution behaving as it did, and rules written by
 the console are keyed on hostnames, so none of them match under it. Reaching
 origin-request with nothing stamped logs a warning, once per execution
 environment.
+
+## The country a rule can be keyed on
+
+A `country` match condition tests the viewer's country, as an ISO 3166-1 alpha-2
+code, against a space-separated list — `"BE FR"` means Belgium or France with
+`matchOperator: "equals"`, and anything but them with `"notEquals"`. An
+exclusion is never written with `negate` — see
+[why an exclusion is notEquals](#why-an-exclusion-is-notequals).
+
+The value comes from CloudFront's own `CloudFront-Viewer-Country` header, and
+**two deployment conditions have to hold** before it carries anything:
+
+**1. The distribution must ask for the header**, in a cache policy or an origin
+request policy. CloudFront does not add it otherwise. On a behavior that caches,
+use a **cache policy**: the header then belongs to the cache key, so a response
+that varies by country cannot be served to the wrong country. An origin request
+policy forwards the value without splitting the cache, which is fine for logging
+and wrong for routing.
+
+This module publishes the function; it does not own your distribution, so this
+is yours to configure. Note the cost: a country in the cache key means up to one
+cached copy per country per URL, so a lower hit ratio and more origin traffic.
+`examples/infra` uses `Managed-CachingDisabled`, which cannot hold headers, so
+it names `CloudFront-Viewer-Country` in its origin request policy instead —
+correct there only because nothing is cached.
+
+**2. The rule must be evaluated at origin-request.** CloudFront works the
+country out _after_ the viewer-request event, so at viewer-request the header is
+either absent or something the viewer sent itself. A viewer-request function
+that sets it makes CloudFront answer the viewer with a 502.
+
+So `getParams` reads the header at origin-request only — the same trust rule as
+the viewer host — and a redirect carrying a `country` condition is deferred to
+origin-request, where it answers its 301/302 like viewer-request would. The
+response is `no-store`, so a redirect decided from one viewer's country is never
+handed to the next.
+
+Only those redirects move. An ordinary redirect is evaluated at viewer-request
+and **not** re-evaluated at origin-request: that event runs on cache misses
+only, so a rule firing there would redirect or not depending on whether
+CloudFront happened to hold the page. `readsCountry` in `rules-service.ts` is
+the whole test, and it reads the rule rather than the request precisely so that
+enabling the header cannot change how any existing rule behaves.
+
+### The query string of a geo redirect
+
+A geo redirect is built at origin-request, from the request CloudFront hands to
+that event — so from the query string the behavior's policies forward, not the
+one the viewer sent. With query strings not forwarded, `useIncomingQueryString`
+carries nothing and a path condition containing `?` never matches. Forward them
+in the origin request policy (`examples/infra` forwards all of them) if geo
+redirects are to keep campaign parameters such as `utm_*`.
+
+### When the country never arrives
+
+At origin-request, a request without a country on a path a country rule covers
+is logged at most once an hour per host and execution environment
+(`country rules, but no viewer country at origin-request`). A single one can be
+legitimate — CloudFront cannot place every address — but if it repeats, the
+behavior's policies do not ask for `CloudFront-Viewer-Country`, and every geo
+rule of that host is being skipped. Checking costs one lookup of the host's
+redirects once an hour, not one per cache miss. The record of checked hosts is
+capped at 500, like the rule cache, because hosts come from the viewer's `Host`
+header — behind a wildcard domain, any number of them.
+
+The same requests are **counted** for the geo alarm (`lib/geo-metrics.ts`): per
+host, every origin-request a country rule could apply to — its other conditions
+match — (`CountryRulesEvaluated`) and those that arrived without a country
+(`CountryRulesSkipped`). A path no geo rule covers is not counted, so static
+assets on a behavior that never asks for the country do not raise the alarm, in namespace `EdgeRoute/Geo`, dimensions
+`FunctionName` and `FunctionName, Host`. They are written as CloudWatch EMF at
+most once a minute per execution environment, on the next request — not one log
+line per request — and carry the host and the counts only: no IP, URL, header
+or country. Whether a country rule covers a request is asked once a minute per host and
+path (capped at 1000), judged on the first request seen for that path.
+The module's alarm reads them — see
+[the geo alarm](../modules/edge/README.md#the-geo-alarm).
+
+### Pages cached before the rule
+
+A geo rule only runs on a cache miss. Copies of a page cached **before** the
+rule existed are served as they are until their TTL runs out — to every
+country. After adding a geo rule on paths that may already be cached,
+invalidate them:
+
+```bash
+aws cloudfront create-invalidation --distribution-id <ID> --paths "/shop/*"
+```
+
+### Classic redirects first
+
+Because the two kinds of redirect run at two events, a **classic redirect
+always wins over a geo one** when both match, whatever their priorities: the
+classic one has already answered at viewer-request before the country exists.
+A geo redirect's priority only orders it among the other geo redirects.
+
+This is deliberate. Honouring priority across the two events would mean
+viewer-request deferring a classic redirect it has already matched, and carrying
+it to origin-request in a header every distribution would have to forward — a
+redirect that silently stops firing whenever that header is not forwarded. A
+fixed order cannot fail that way, and the console shows it: a `geo` badge on the
+card and a note next to the priority.
+
+To make a geo redirect win over a classic one for the same URL, give the
+classic one a country condition too — for instance one excluding France — so
+that both are geo redirects and their priorities decide.
+
+### What a geo redirect cannot read
+
+A redirect carrying a `country` condition is evaluated at origin-request, and
+the request there only holds the headers and cookies the behavior's policies
+forward. A `header` or `cookie` condition would read `""` for anything dropped
+— indistinguishable from a viewer who never sent it — and with `negate` that
+turns into a match for everyone. A `protocol` condition has the same flaw:
+`getParams` reads it from `X-Forwarded-Proto`, which CloudFront does not
+guarantee at origin-request, and falls back to `https` without it — so
+`protocol equals http` never fires and its negation always does. So the
+redirect schema refuses `header`, `cookie` and `protocol` conditions on a
+redirect that also has a `country` one. Rewrites are not restricted: they
+always ran at origin-request, so those conditions already depended on the
+policies there.
+
+A rewrite whose header or cookie condition holds for an empty value — a
+negation, say — has the same flaw: one the behavior does not send on reads as
+empty, and the condition holds for everyone. So the
+console API refuses it unless the behavior sends that header or cookie on (see
+[the write guard](../../console/api/infra/README.md#the-write-guard)). The
+edge itself does not second-guess it: it cannot see the policies.
+
+The edge enforces the same rule rather than trusting the schema alone: it reads
+DynamoDB directly, so a script or a restored backup can still write such an
+item. One found there is never evaluated, and logged once per execution
+environment with its sort key (`skipping a redirect the schema forbids`).
+
+### An unknown country skips the rule
+
+When the country is unknown — the wrong event, or a distribution that never asks
+for the header — a rule that reads it is **skipped**, not evaluated.
+
+This is not tidiness. Evaluated against an empty country an exclusion reads as
+"not France", so a rule meaning "redirect everyone except France" would fire for
+every request, France included — and a legacy one written with `negate` fails
+the same way. One rule
+would take the site down. Skipping makes the same rule inert instead, which is
+why `RequestParams.country` is optional rather than defaulting to `""` — absent
+means "unknown", which is not the same as "known, and not France".
+
+### Why an exclusion is notEquals
+
+The schema refuses `negate` on a `country` condition and stores an exclusion as
+`matchOperator: "notEquals"` instead. That protects every reader of the table
+that predates country conditions: an older version of this function still
+running during a deploy, the one a rollback returns to, or another consumer of
+the same items.
+
+Such a reader has no source for a type it does not know, so it tests `""`.
+`"" equals FR` is false, and nothing else can make the condition true — except
+`negate`, which would flip it into a match for every viewer. `notEquals` is an
+operator it does not know either, so it falls back to plain equality: still
+false. The worst an old reader can do with a geo rule is ignore it. Codes are
+two uppercase letters, so a `*` wildcard (which would match `""`) cannot get in
+either.
+
+`validate.test.ts` in `console/api` pins this with a frozen copy of the old
+evaluation: every country condition the schema accepts must stay false for it.
+Any future condition type has to keep that property.
+
+A country condition is also not a security control. IP geolocation is an
+indication, and a VPN defeats it in seconds. For a legal or licensing block, use
+the distribution's own `geo_restriction`, which answers a 403 before any of this
+code runs.
 
 ## The query string on a rewrite
 

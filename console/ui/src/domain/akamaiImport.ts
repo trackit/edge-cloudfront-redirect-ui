@@ -900,6 +900,10 @@ const mapSimpleCsv = (text: string, host: string): Candidate[] =>
  * name, so the edge compares the value against the whole `Cookie` header:
  * `equals` then never matches, and `contains` matches unrelated cookies. Until
  * the model carries a cookie name, the honest answer is to refuse the row.
+ *
+ * `country` is absent too, on purpose for now: the rule editor checks a country
+ * rule against the distribution's cache settings, and the import writes without
+ * that check. A row with one is refused rather than imported without it.
  */
 const PASSTHROUGH_MATCH_TYPES = new Set<MatchCondition["matchType"]>([
   "path",

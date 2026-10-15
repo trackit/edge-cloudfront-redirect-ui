@@ -118,6 +118,15 @@ run "viewer_host_header_is_forwarded_to_the_origin" {
     error_message = "forward the header by name; forwarding all viewer headers would send Host and break the OAC origin"
   }
 
+  # Without it, every country condition is skipped.
+  assert {
+    condition = contains(
+      aws_cloudfront_origin_request_policy.viewer_host.headers_config[0].headers[0].items,
+      "CloudFront-Viewer-Country",
+    )
+    error_message = "the origin request policy must ask for CloudFront-Viewer-Country, or no country condition can match"
+  }
+
   # A rewrite rule can match on the query string, so it has to survive too.
   assert {
     condition     = aws_cloudfront_origin_request_policy.viewer_host.query_strings_config[0].query_string_behavior == "all"

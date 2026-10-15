@@ -15,7 +15,19 @@ const readJson = (p: string) => JSON.parse(readFileSync(p, "utf8"));
 const redirectSchema = readJson(join(root, "redirect-rule.schema.json"));
 const rewriteSchema = readJson(join(root, "rewrite-rule.schema.json"));
 
-const ajv = new Ajv({ allErrors: true, useDefaults: false });
+// Strict-mode warnings are collected rather than printed: Ajv only logs them,
+// so a schema that trips one still validates and the warning goes unnoticed —
+// until it shows up in every API cold start.
+const warnings: unknown[][] = [];
+const ajv = new Ajv({
+  allErrors: true,
+  useDefaults: false,
+  logger: {
+    log: console.log,
+    warn: (...args: unknown[]) => warnings.push(args),
+    error: console.error,
+  },
+});
 ajv.addSchema(redirectSchema, "redirect-rule.schema.json");
 ajv.addSchema(rewriteSchema, "rewrite-rule.schema.json");
 
@@ -52,8 +64,16 @@ for (const file of readdirSync(join(root, "examples")).sort()) {
   }
 }
 
+// Compiled lazily by getSchema above; compile both so neither escapes.
+ajv.getSchema("redirect-rule.schema.json");
+ajv.getSchema("rewrite-rule.schema.json");
+for (const warning of warnings) {
+  console.error(`✗ Ajv warning: ${warning.map(String).join(" ")}`);
+  failures++;
+}
+
 if (failures > 0) {
-  console.error(`\n${failures} example(s) failed validation`);
+  console.error(`\n${failures} problem(s): failed examples or Ajv warnings`);
   process.exit(1);
 }
 console.log("\nAll examples valid.");

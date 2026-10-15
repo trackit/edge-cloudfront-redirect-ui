@@ -6,6 +6,7 @@ import { isNoOpSlot, moveToSlot, stepSlot } from "../domain/reorder";
 import { useDragSort } from "../useDragSort";
 import {
   describeMatches,
+  isGeoRedirect,
   ruleFrom,
   ruleKindLabel,
   ruleTo,
@@ -432,6 +433,17 @@ function RuleCard({
           >
             {ruleKindLabel(rule)}
           </span>
+          {/* Said on the card because the list's order is not the whole story
+              for these: they sit among the other redirects by priority, but
+              run after all of them. */}
+          {isGeoRedirect(rule) && (
+            <span
+              className="badge badge-geo"
+              title="Evaluated after every classic redirect of this host"
+            >
+              geo
+            </span>
+          )}
           <span className={`badge ${enabled ? "badge-on" : "badge-off"}`}>
             <span className="badge-dot" aria-hidden="true" />
             {enabled ? "enabled" : "disabled"}

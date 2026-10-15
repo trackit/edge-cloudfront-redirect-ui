@@ -548,6 +548,36 @@ describe("parseExport — matchRules JSON", () => {
   );
 
   /**
+   * Country conditions are not imported for now, on purpose: the rule editor is
+   * where a country rule is checked against the distribution's cache settings,
+   * and the import writes rules without that check. So a row carrying one is
+   * refused like any other untranslatable condition, never imported without it
+   * (which would widen it to every country).
+   */
+  it("refuses a rule with a country condition", () => {
+    const json = JSON.stringify([
+      {
+        name: "fr",
+        redirectURL: "https://www.example.fr/",
+        statusCode: 302,
+        matches: [
+          { matchType: "path", matchOperator: "equals", matchValue: "/shop" },
+          { matchType: "country", matchOperator: "equals", matchValue: "FR" },
+        ],
+      },
+    ]);
+    const preview = parseExport(json, {
+      filename: "rules.json",
+      defaultHost: HOST,
+    });
+    const row = preview.rows[0];
+    expect(row.status).toBe("skipped");
+    expect(row.input).toBeUndefined();
+    expect(row.blocked.join(" ")).toMatch(/match type "country"/);
+    expect(preview.summary).toMatchObject({ ready: 0, skipped: 1 });
+  });
+
+  /**
    * `matches` is read as a regular expression, which is what it means in the
    * exports we have seen — but unlike `regex` it does not say so. If an export
    * means it as a wildcard pattern, `*` flips from "anything" to "repeat the

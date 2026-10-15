@@ -4,6 +4,7 @@ import rewriteSchema from "@cloudfront-redirect-rules/shared/rewrite-rule.schema
 import { ApiError } from "./errors.js";
 import { formatAjvErrors } from "./ajv-errors.js";
 import { assertRegexes } from "./assert-regexes.js";
+import { explainCountryErrors } from "./country-errors.js";
 import type { RuleType } from "./rule-keys.js";
 
 // Both schemas are registered under their filenames because rewrite-rule cross-
@@ -62,7 +63,7 @@ export const validateRule = (body: unknown): void => {
       400,
       "VALIDATION_ERROR",
       "Rule failed schema validation",
-      formatAjvErrors(validate.errors),
+      formatAjvErrors(explainCountryErrors(validate.errors)),
     );
   }
 

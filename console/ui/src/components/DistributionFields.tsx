@@ -93,6 +93,21 @@ export default function DistributionFields({
           configured to reach are listed.
         </div>
       </div>
+
+      <div className="field">
+        <label htmlFor="edgeFunctionArn">Redirect function (optional)</label>
+        <input
+          id="edgeFunctionArn"
+          className="input mono"
+          placeholder="arn:aws:lambda:us-east-1:123456789012:function:edgeroute-redirect-rules"
+          value={value.edgeFunctionArn ?? ""}
+          onChange={(e) => onChange({ edgeFunctionArn: e.target.value })}
+        />
+        <div className="hint">
+          The edge module&apos;s <code>viewer_request_lambda_arn</code> output.
+          Lets the country check ignore behaviors running another function.
+        </div>
+      </div>
     </>
   );
 }

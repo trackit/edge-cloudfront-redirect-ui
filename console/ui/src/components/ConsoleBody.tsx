@@ -13,6 +13,7 @@ import { asApiError, takenPriorities, useRules } from "../domain/rules";
 import { useCanWrite } from "../auth/useAuth";
 import { CONSOLE_PATH, hostKey, hostPath } from "../domain/hostRoutes";
 import type { HostSummary, Rule, RuleInput } from "../api";
+import type { WriteOptions } from "../api/client";
 import type { Distribution } from "../domain/types";
 
 interface Props {
@@ -274,6 +275,16 @@ function HostWorkspace({
    * someone else having changed the host, and it clears on the next attempt.
    */
   const [reorderError, setReorderError] = useState<string | null>(null);
+  /**
+   * Why turning a rule on or off was refused. The API checks a country rewrite
+   * being turned on, and its refusal must not vanish into a switch that just
+   * stays off. `rule` is set when the refusal can be confirmed — in the editor,
+   * which is where that confirmation lives.
+   */
+  const [toggleError, setToggleError] = useState<{
+    message: string;
+    rule: Rule | null;
+  } | null>(null);
   // Disabled rather than hidden. A viewer whose console is missing controls
   // reads it as broken or as a different product; one whose controls are dead
   // and say why reads it as a permission. The API refuses either way — this only
@@ -294,15 +305,18 @@ function HostWorkspace({
     [],
   );
 
-  const save = async (input: RuleInput): Promise<void> => {
+  const save = async (
+    input: RuleInput,
+    options?: WriteOptions,
+  ): Promise<void> => {
     // `editing` is a Rule when replacing one: its `sk` addresses the rule as
     // stored, while `priority` in the body says where it should end up. A changed
     // priority therefore moves it, which is a PUT, not a second create.
     if (editing !== null && typeof editing !== "string") {
-      await update(editing.sk, input);
+      await update(editing.sk, input, options);
       return;
     }
-    await create(input);
+    await create(input, options);
     onCountsChanged();
   };
 
@@ -424,6 +438,25 @@ function HostWorkspace({
         </div>
       )}
 
+      {toggleError !== null && (
+        <div className="form-error" role="alert">
+          <strong>Could not change the rule</strong>
+          <span>{toggleError.message}</span>
+          {toggleError.rule !== null && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                setEditing(toggleError.rule);
+                setToggleError(null);
+              }}
+            >
+              Open the rule
+            </button>
+          )}
+        </div>
+      )}
+
       {reorderError !== null && (
         <div className="form-error" role="alert">
           <strong>Could not save the new order</strong>
@@ -440,13 +473,27 @@ function HostWorkspace({
         canWrite={canWrite}
         onCreate={setEditing}
         onEdit={setEditing}
-        onToggle={(rule) => void withBusy(rule.sk, () => toggle(rule))}
+        onToggle={(rule) =>
+          void withBusy(rule.sk, async () => {
+            setToggleError(null);
+            try {
+              await toggle(rule);
+            } catch (caught) {
+              const error = asApiError(caught, "Could not change the rule");
+              setToggleError({
+                message: error.message,
+                rule: error.code === "GEO_UNVERIFIED" ? rule : null,
+              });
+            }
+          })
+        }
         onDelete={setDeletingRule}
         onReorder={saveOrder}
       />
 
       {editing !== null && (
         <RuleEditor
+          targetId={distribution.targetId}
           host={host}
           target={editing}
           taken={editorTaken}

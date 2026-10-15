@@ -8,6 +8,12 @@ import {
   type Target,
 } from "../lib/targets-repository.js";
 import { getTableVerifier } from "../lib/verify-table.js";
+import { getGeoReadinessChecker } from "../lib/geo-readiness.js";
+import {
+  geoDecision,
+  type MatchLike,
+  type RuleKind,
+} from "../lib/geo-relevance.js";
 
 const notFound = (id: string): ApiError =>
   ApiError.notFound(`No target with id "${id}"`);
@@ -138,6 +144,65 @@ export const getTarget = async (req: ApiRequest): Promise<ApiResponse> => {
   const target = await getTargetsRepository().get(id);
   if (!target) throw notFound(id);
   return json(200, target);
+};
+
+/**
+ * Whether the target's distribution can serve the rule being written — what the
+ * editor warns about, and the same decision the write guard applies. Always 200
+ * for a known target: a distribution the API cannot read is `status: "unknown"`
+ * with the cause, not an error, so the editor can say so beside the rule.
+ */
+export const checkGeoForRule = async (
+  req: ApiRequest,
+): Promise<ApiResponse> => {
+  const { id } = req.params;
+  const target = await getTargetsRepository().get(id);
+  if (!target) throw notFound(id);
+
+  const { kind, matches } = parseGeoCheck(req.body);
+  const readiness = await getGeoReadinessChecker()(
+    {
+      name: target.name,
+      ...(target.roleArn ? { roleArn: target.roleArn } : {}),
+      ...(target.edgeFunctionArn
+        ? { edgeFunctionArn: target.edgeFunctionArn }
+        : {}),
+    },
+    { fresh: req.query["fresh"] === "true" },
+  );
+  return json(200, {
+    readiness,
+    decision: geoDecision(kind, matches, readiness),
+  });
+};
+
+const isMatch = (value: unknown): value is MatchLike => {
+  if (typeof value !== "object" || value === null) return false;
+  const match = value as Record<string, unknown>;
+  return (
+    typeof match["matchType"] === "string" &&
+    typeof match["matchOperator"] === "string" &&
+    typeof match["matchValue"] === "string"
+  );
+};
+
+/** `{ kind, matches }` — only what the decision reads, not a whole rule. */
+const parseGeoCheck = (
+  body: unknown,
+): { kind: RuleKind; matches: MatchLike[] } => {
+  const { kind, matches } = (body ?? {}) as Record<string, unknown>;
+  if (
+    (kind !== "redirect" && kind !== "rewrite") ||
+    !Array.isArray(matches) ||
+    !matches.every(isMatch)
+  ) {
+    throw new ApiError(
+      400,
+      "VALIDATION_ERROR",
+      'Geo check body must be { kind: "redirect" | "rewrite", matches: [...] }',
+    );
+  }
+  return { kind, matches };
 };
 
 /**

@@ -101,6 +101,23 @@ variable "target_table_arns" {
   }
 }
 
+variable "readable_distribution_arns" {
+  type        = list(string)
+  default     = []
+  description = "CloudFront distribution ARNs whose configuration the API may read, for the rule editor's warning about country conditions on a distribution that caches without the country. Empty means every distribution in this account. The ID may end in *; the account must be literal."
+
+  # GetDistributionConfig returns the whole configuration, origin custom headers
+  # included, and those sometimes carry a shared secret for the origin. So the
+  # grant is this account's distributions at most, and never a bare wildcard.
+  validation {
+    condition = alltrue([
+      for arn in var.readable_distribution_arns :
+      can(regex("^arn:aws[a-z-]*:cloudfront::[0-9]{12}:distribution/[^*?]*\\*?$", arn))
+    ])
+    error_message = "each readable_distribution_arns entry must be a CloudFront distribution ARN with a literal 12-digit account, and an ID that is literal except for an optional trailing * (no ? anywhere), e.g. arn:aws:cloudfront::123456789012:distribution/EQFO7A1FE1EPJ."
+  }
+}
+
 variable "allowed_regions" {
   type        = list(string)
   default     = []
