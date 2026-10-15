@@ -353,11 +353,7 @@ export function useRules(targetId: string, host: string) {
               message:
                 err.code === "RULE_EXISTS"
                   ? "priority already in use (created concurrently?)"
-                  : err.code === "GEO_UNVERIFIED"
-                    ? // The API's own message says to confirm, which an import
-                      // has no way to do; the editor does.
-                      "the distribution could not be checked, so this rewrite needs a confirmation an import cannot give. Add it from the rule editor, where you can save it anyway"
-                    : err.message,
+                  : err.message,
               // Only where they say something the message does not: a
               // VALIDATION_ERROR's message is the same sentence for every
               // refused field, so without these the user is told a row failed

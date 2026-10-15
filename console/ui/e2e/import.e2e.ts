@@ -357,30 +357,6 @@ test("reports rows the API rejects instead of failing the whole import", async (
   await expect(page.getByText(/Row 1:/)).toBeVisible();
 });
 
-test("a rewrite the API could not check points to the editor, which can confirm it", async ({
-  page,
-  api,
-}) => {
-  await openHostWithRules(page, api);
-  api.createRuleReply({
-    status: 409,
-    body: errorBody(
-      "GEO_UNVERIFIED",
-      "The distribution could not be checked: access denied. Confirm to save this rewrite anyway",
-    ),
-  });
-
-  await page.getByRole("button", { name: "Import", exact: true }).click();
-  await page
-    .getByPlaceholder(/Paste an Edge Redirector/)
-    .fill("source,target\n/one,/two");
-  await page.getByRole("button", { name: /Import 1 rule/ }).click();
-
-  await expect(page.getByText("Imported 0 rules.")).toBeVisible();
-  await expect(page.getByText(/Add it from the rule editor/)).toBeVisible();
-  await expect(page.getByText(/Confirm to save this rewrite/)).toHaveCount(0);
-});
-
 /**
  * A refused row's `details` are the only part that says *which field* the API
  * objected to: a `VALIDATION_ERROR`'s message is the same sentence whatever the
