@@ -1,16 +1,21 @@
-import { chip, errorBody, expect, readStorage, test } from "./fixtures";
+import { chip, errorBody, expect, test } from "./fixtures";
 
 /**
- * The connect screen: the only way a distribution comes to exist.
+ * The link screen: the only way a distribution joins the team's list.
  *
- * The unit suite already covers what `connectDistribution` does with each
+ * The unit suite already covers what `linkDistribution` does with each
  * response. What it cannot reach is the screen around it — whether the submit
  * button is actually disabled, whether an error the API returned is rendered at
- * all, and whether a success leaves anything behind in storage.
+ * all, and whether a success reaches the team's list.
  */
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/console");
+  // The list is asked for after load: until it answers, a spec arranging the
+  // API would change the answer to the load rather than to the form.
+  await expect(
+    page.getByRole("heading", { name: "Link your distribution" }),
+  ).toBeVisible();
 });
 
 const fill = async (
@@ -22,16 +27,31 @@ const fill = async (
   await page.getByLabel("DynamoDB routing table").fill(tableName);
 };
 
-test("shows the connect screen when nothing is stored", async ({ page }) => {
+test("shows the link screen when the team has no distribution", async ({
+  page,
+}) => {
   await expect(
-    page.getByRole("heading", { name: "Connect your distribution" }),
+    page.getByRole("heading", { name: "Link your distribution" }),
   ).toBeVisible();
+  // CF-57: the first step says Link too.
+  await expect(page.getByText("1. Link")).toBeVisible();
+});
+
+test("a viewer gets no form, and who to ask instead", async ({ page, api }) => {
+  api.signedInAs("viewer");
+  await page.reload();
+
+  await expect(
+    page.getByRole("heading", { name: "Link your distribution" }),
+  ).toBeVisible();
+  await expect(page.getByText("ask an editor to link one")).toBeVisible();
+  await expect(page.getByLabel("CloudFront distribution")).toHaveCount(0);
 });
 
 test("keeps submit disabled until both fields have a value", async ({
   page,
 }) => {
-  const submit = page.getByRole("button", { name: "Connect", exact: true });
+  const submit = page.getByRole("button", { name: "Link", exact: true });
   await expect(submit).toBeDisabled();
 
   await page.getByLabel("CloudFront distribution").fill("E1AAAAAAAAAAAA");
@@ -70,18 +90,18 @@ test("fills the form from the sample values", async ({ page }) => {
     "edgeroute-rules",
   );
   await expect(
-    page.getByRole("button", { name: "Connect", exact: true }),
+    page.getByRole("button", { name: "Link", exact: true }),
   ).toBeEnabled();
 });
 
-test("connects, lands on the console, and remembers it", async ({
+test("links, lands on the console, and lists it for the team", async ({
   page,
   api,
 }) => {
   await fill(page, "E1AAAAAAAAAAAA", "rules-prod");
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByRole("button", { name: "Link", exact: true }).click();
 
-  // The chip only exists once something is connected, so it is the signal that
+  // The chip only exists once something is linked, so it is the signal that
   // the console replaced the form — and unlike the body's copy, it is not
   // slated for replacement by the console skeleton.
   await expect(chip(page)).toContainText("E1AAAAAAAAAAAA");
@@ -100,20 +120,9 @@ test("connects, lands on the console, and remembers it", async ({
     }),
   );
 
-  // The id the server assigned has to survive into storage, or a reload lands
-  // back on this screen.
-  const stored = await readStorage(page);
-  expect(JSON.parse(stored ?? "null")).toEqual({
-    distributions: [
-      {
-        targetId: "t-generated",
-        distributionId: "E1AAAAAAAAAAAA",
-        tableName: "rules-prod",
-        region: "us-east-1",
-      },
-    ],
-    current: "E1AAAAAAAAAAAA",
-  });
+  // The list is the API's now, so a reload asks it again and finds it there.
+  await page.reload();
+  await expect(chip(page)).toContainText("E1AAAAAAAAAAAA");
 });
 
 test("renders a validation failure field by field", async ({ page, api }) => {
@@ -128,7 +137,7 @@ test("renders a validation failure field by field", async ({ page, api }) => {
   });
 
   await fill(page, "E1AAAAAAAAAAAA", "rules-prodd");
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByRole("button", { name: "Link", exact: true }).click();
 
   const alert = page.getByRole("alert");
   await expect(alert).toBeVisible();
@@ -140,11 +149,10 @@ test("renders a validation failure field by field", async ({ page, api }) => {
     '/tableName no DynamoDB table "rules-prodd" exists in us-east-1',
   ]);
 
-  // Still on the form, and nothing was remembered.
+  // Still on the form.
   await expect(
-    page.getByRole("button", { name: "Connect", exact: true }),
+    page.getByRole("button", { name: "Link", exact: true }),
   ).toBeEnabled();
-  expect(await readStorage(page)).toBeNull();
 });
 
 test("names the failure when the API cannot be reached", async ({
@@ -154,7 +162,7 @@ test("names the failure when the API cannot be reached", async ({
   api.createReply({ status: 502, body: errorBody("TARGET_UNREACHABLE", "no") });
 
   await fill(page, "E1AAAAAAAAAAAA", "rules-prod");
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByRole("button", { name: "Link", exact: true }).click();
 
   await expect(page.getByRole("alert")).toContainText(
     "The API cannot reach that table",
@@ -173,10 +181,9 @@ test("says the API is unreachable when the request never completes", async ({
   );
 
   await fill(page, "E1AAAAAAAAAAAA", "rules-prod");
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByRole("button", { name: "Link", exact: true }).click();
 
   await expect(page.getByRole("alert")).toContainText("Cannot reach the API");
-  expect(await readStorage(page)).toBeNull();
 });
 
 test("survives a response that is not the API's envelope", async ({ page }) => {
@@ -193,43 +200,52 @@ test("survives a response that is not the API's envelope", async ({ page }) => {
   );
 
   await fill(page, "E1AAAAAAAAAAAA", "rules-prod");
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByRole("button", { name: "Link", exact: true }).click();
 
-  await expect(page.getByRole("alert")).toContainText("Could not connect");
+  await expect(page.getByRole("alert")).toContainText("Could not link");
   await expect(page.getByRole("alert")).toContainText("504");
 });
 
-test("reuses an existing target when the table is already registered", async ({
+test("reuses the distribution a teammate already linked", async ({
   page,
   api,
 }) => {
-  api.createReply({
-    status: 409,
-    body: errorBody(
-      "TARGET_EXISTS",
-      'table "rules-prod" is already registered',
-    ),
-  });
+  // Linked by someone else after this page loaded the list.
   api.setTargets([
     {
       id: "t-existing",
-      name: "someone else",
+      name: "E1AAAAAAAAAAAA",
       region: "us-east-1",
       tableName: "rules-prod",
     },
   ]);
 
   await fill(page, "E1AAAAAAAAAAAA", "rules-prod");
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByRole("button", { name: "Link", exact: true }).click();
 
-  // A 409 is a success for what the user asked for: point me at this table.
+  // A 409 is a success for what the user asked for: it appears once.
   await expect(chip(page)).toContainText("E1AAAAAAAAAAAA");
+  await chip(page).click();
+  await expect(page.locator("#dist-panel [aria-current]")).toHaveCount(1);
+});
 
-  // The id of the target that was already there, not a new one — read from
-  // storage rather than off the console body, which the console skeleton
-  // replaces. This is the whole point of the reuse path.
-  const stored = JSON.parse((await readStorage(page)) ?? "null") as {
-    distributions: { targetId: string }[];
-  };
-  expect(stored.distributions[0].targetId).toBe("t-existing");
+test("refuses a distribution already linked to another table", async ({
+  page,
+  api,
+}) => {
+  api.setTargets([
+    {
+      id: "t-existing",
+      name: "E1AAAAAAAAAAAA",
+      region: "us-east-1",
+      tableName: "rules-other",
+    },
+  ]);
+
+  await fill(page, "E1AAAAAAAAAAAA", "rules-prod");
+  await page.getByRole("button", { name: "Link", exact: true }).click();
+
+  await expect(page.getByRole("alert")).toContainText(
+    "That distribution is already linked",
+  );
 });

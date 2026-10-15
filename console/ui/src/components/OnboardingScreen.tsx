@@ -4,23 +4,28 @@ import Brand from "./Brand";
 import DistributionFields from "./DistributionFields";
 import {
   SAMPLE_DISTRIBUTION,
-  connectDistribution,
   emptyDistribution,
+  linkDistribution,
 } from "../domain/distribution";
 import { ApiError } from "../api";
 import type { Distribution, DistributionDraft } from "../domain/types";
 import { IconArrow, IconBolt, IconServer, IconSliders } from "./icons";
 
 interface Props {
-  onConnect: (d: Distribution) => void;
+  onLink: (d: Distribution) => void;
   /** Leaves without submitting. Only meaningful when there is something to go back to. */
   onCancel?: () => void;
+  /**
+   * A viewer, who may not link: the API refuses it. They get the screen without
+   * the form, and who to ask instead.
+   */
+  readOnly?: boolean;
 }
 
 const STEPS = [
   {
     icon: <IconServer size={16} />,
-    title: "Connect",
+    title: "Link",
     desc: "Point EdgeRoute at your CloudFront distribution and its DynamoDB table.",
   },
   {
@@ -47,15 +52,22 @@ const errorHeading = (error: ApiError): string => {
       return "Check these details";
     case "TARGET_UNREACHABLE":
       return "The API cannot reach that table";
+    case "TARGET_EXISTS":
+      return "That distribution is already linked";
     default:
-      return "Could not connect";
+      return "Could not link";
   }
 };
 
 /* Ticket: MVP - Front — Console + env configuration, the "no env available"
    half. Explains EdgeRoute on the left, takes the distribution details on the
-   right. Shown until a distribution is connected, and again when adding one. */
-export default function OnboardingScreen({ onConnect, onCancel }: Props) {
+   right. Shown while the team has no linked distribution, and again when
+   linking another one. */
+export default function OnboardingScreen({
+  onLink,
+  onCancel,
+  readOnly = false,
+}: Props) {
   const canCancel = onCancel !== undefined;
   const [d, setD] = useState<DistributionDraft>(emptyDistribution);
   const [pending, setPending] = useState(false);
@@ -72,10 +84,10 @@ export default function OnboardingScreen({ onConnect, onCancel }: Props) {
     setPending(true);
     setError(null);
     try {
-      // Registers the table with the API, which assigns the target id the rules
-      // routes are keyed on. Only after that is there anything worth persisting.
-      onConnect(
-        await connectDistribution({
+      // Registers the distribution with the API, which assigns the target id
+      // the rules routes are keyed on, and lists it for the whole team.
+      onLink(
+        await linkDistribution({
           distributionId,
           tableName,
           region: d.region,
@@ -88,7 +100,7 @@ export default function OnboardingScreen({ onConnect, onCancel }: Props) {
           : new ApiError({
               status: 0,
               code: "MALFORMED_RESPONSE",
-              message: "Something went wrong connecting the distribution",
+              message: "Something went wrong linking the distribution",
             }),
       );
       setPending(false);
@@ -138,60 +150,70 @@ export default function OnboardingScreen({ onConnect, onCancel }: Props) {
 
         {/* right — the details we need */}
         <div className="onboard-main">
-          <form className="onboard-connect" onSubmit={submit}>
-            <h1>Connect your distribution</h1>
-            <p className="onboard-sub">
-              The CloudFront distribution EdgeRoute is attached to, and the
-              DynamoDB table that stores its rules.
-            </p>
-
-            <div className="onboard-form">
-              <DistributionFields
-                value={d}
-                onChange={(patch) => setD((prev) => ({ ...prev, ...patch }))}
-                isNew
-              />
+          {readOnly ? (
+            <div className="onboard-connect">
+              <h1>Link your distribution</h1>
+              <p className="onboard-sub">
+                No distribution is linked yet. Your account has read-only
+                access: ask an editor to link one.
+              </p>
             </div>
+          ) : (
+            <form className="onboard-connect" onSubmit={submit}>
+              <h1>Link your distribution</h1>
+              <p className="onboard-sub">
+                The CloudFront distribution EdgeRoute is attached to, and the
+                DynamoDB table that stores its rules.
+              </p>
 
-            {error !== null && (
-              <div className="onboard-error" role="alert">
-                <strong>{errorHeading(error)}</strong>
-                <span>{error.message}</span>
-                {error.details.length > 0 && (
-                  <ul>
-                    {/* Index as key: several details can share one path, and the
-                        capped final entry has none. The list never reorders. */}
-                    {error.details.map((detail, i) => (
-                      <li key={i}>
-                        <span className="mono">{detail.path}</span>{" "}
-                        {detail.message}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+              <div className="onboard-form">
+                <DistributionFields
+                  value={d}
+                  onChange={(patch) => setD((prev) => ({ ...prev, ...patch }))}
+                  isNew
+                />
               </div>
-            )}
 
-            <div className="onboard-actions">
-              <button
-                className="btn btn-ghost"
-                type="button"
-                disabled={pending}
-                onClick={() => setD(SAMPLE_DISTRIBUTION)}
-              >
-                Use sample values
-              </button>
-              <button
-                className="btn btn-primary btn-lg"
-                type="submit"
-                disabled={!valid || pending}
-                style={!valid || pending ? { opacity: 0.5 } : undefined}
-              >
-                {pending ? "Connecting…" : "Connect"}
-                <IconArrow size={18} />
-              </button>
-            </div>
-          </form>
+              {error !== null && (
+                <div className="onboard-error" role="alert">
+                  <strong>{errorHeading(error)}</strong>
+                  <span>{error.message}</span>
+                  {error.details.length > 0 && (
+                    <ul>
+                      {/* Index as key: several details can share one path, and the
+                        capped final entry has none. The list never reorders. */}
+                      {error.details.map((detail, i) => (
+                        <li key={i}>
+                          <span className="mono">{detail.path}</span>{" "}
+                          {detail.message}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              <div className="onboard-actions">
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  disabled={pending}
+                  onClick={() => setD(SAMPLE_DISTRIBUTION)}
+                >
+                  Use sample values
+                </button>
+                <button
+                  className="btn btn-primary btn-lg"
+                  type="submit"
+                  disabled={!valid || pending}
+                  style={!valid || pending ? { opacity: 0.5 } : undefined}
+                >
+                  {pending ? "Linking…" : "Link"}
+                  <IconArrow size={18} />
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       </div>
     </div>

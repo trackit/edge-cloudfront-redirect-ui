@@ -71,7 +71,7 @@ terraform init
 terraform apply
 
 terraform output cloudfront_domain_name       # the demo site
-terraform output cloudfront_distribution_id   # the console's connect screen wants this
+terraform output cloudfront_distribution_id   # the console's link screen wants this
 terraform output table_name
 terraform output table_arn                    # step 2 wants this
 ```
@@ -115,16 +115,17 @@ did not exist until that apply. Pointing it back — and creating the accounts t
 sign in — is [steps 4 and 5 of DEPLOY.md](DEPLOY.md#4-point-cognito-at-the-console),
 two commands and a user.
 
-### 3. Connect the console
+### 3. Link the console
 
-Open `console_url` and sign in. The first screen asks which distribution and
-table to manage — the `cloudfront_distribution_id` and `table_name` from step 1,
+Open `console_url` and sign in as an editor. The first screen asks which
+distribution and table to manage — the `cloudfront_distribution_id` and `table_name` from step 1,
 and the region they are in.
 
-![The console's connect screen](docs/screenshots/console-connect.png)
+![The console's link screen](docs/screenshots/console-connect.png)
 
-The answer is kept in this browser, not on the server, and the switcher in the
-bar swaps between several.
+The linked distribution is the team's: everyone who signs in, from any browser,
+sees it, and the switcher in the bar swaps between several. Only editors can
+link or unlink one.
 
 ### 4. Create your first rule
 

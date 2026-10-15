@@ -143,12 +143,12 @@ test("re-selecting the current distribution is a no-op that still closes", async
   await expect(chip(page)).toContainText(prod.distributionId);
 });
 
-test("reaching the connect screen for a new distribution", async ({ page }) => {
+test("reaching the link screen for a new distribution", async ({ page }) => {
   await chip(page).click();
-  await page.getByRole("button", { name: "Add distribution" }).click();
+  await page.getByRole("button", { name: "Link distribution" }).click();
 
   await expect(
-    page.getByRole("heading", { name: "Connect your distribution" }),
+    page.getByRole("heading", { name: "Link your distribution" }),
   ).toBeVisible();
   // Empty, not prefilled — this is a new environment, not an edit.
   await expect(page.getByLabel("CloudFront distribution")).toHaveValue("");

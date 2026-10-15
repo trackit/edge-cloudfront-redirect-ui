@@ -42,7 +42,7 @@ test("offers the regions the deployment allows, not a list of its own", async ({
   await page.goto("/console");
 
   await expect(
-    page.getByRole("heading", { name: "Connect your distribution" }),
+    page.getByRole("heading", { name: "Link your distribution" }),
   ).toBeVisible();
   await expect(regionSelect(page)).toBeVisible();
   await expect
@@ -73,7 +73,7 @@ test("stays completable when it cannot ask what is allowed", async ({
   page,
   api,
 }) => {
-  // A console that cannot render its own connect form because one endpoint is
+  // A console that cannot render its own link form because one endpoint is
   // down would be a worse bug than the one this fixes.
   api.failMeta();
   api.createReply({
@@ -93,7 +93,7 @@ test("stays completable when it cannot ask what is allowed", async ({
 
   await page.getByLabel("CloudFront distribution").fill("E1AAAAAAAAAAAA");
   await page.getByLabel("DynamoDB routing table").fill("rules-prod");
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByRole("button", { name: "Link", exact: true }).click();
 
   // Not merely rendered — the form still completes and lands in the console.
   await expect(chip(page)).toContainText("rules-prod");

@@ -1,33 +1,36 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
-import type { ApiClient } from "../api";
+import type { ApiClient, Target } from "../api";
 import type { Distribution, DistributionDraft } from "./types";
 
 /**
- * Where the connected distributions are kept, and how one comes to exist.
+ * The team's linked distributions, and which one this user is looking at.
  *
- * localStorage holds only the *links* — which registered targets this browser
- * knows about, and which one is selected. The targets themselves live in the
- * API's registry, so the ids here refer to server state. The ticket defers
- * moving this to the user profile; when that happens it is a change in this
- * module and nowhere else.
+ * The list is the API's target registry: one target per linked distribution,
+ * named after its distribution ID, so anyone who signs in, from any browser,
+ * sees the same distributions (CF-56). Only the *selection* is kept in the
+ * browser, under the signed-in user's key, so switching distribution changes
+ * nothing for anyone else and the next person on this browser never inherits
+ * it.
  */
-const STORAGE_KEY = "edgeroute.distributions";
+const SELECTION_KEY_PREFIX = "edgeroute.selected.";
 
 /**
- * The key this module used when it held a single distribution. Read once, on
- * first load, so a browser that connected before this change keeps its
- * environment instead of being sent back to the connect screen. Not written
- * again — the migration is one-way.
+ * Where this module kept the list itself before it moved to the API. Deleted on
+ * load and never read: the console was not live yet, so there is nothing to
+ * bring over, and a list left behind would outlive the person who linked it.
  */
-const LEGACY_STORAGE_KEY = "edgeroute.distribution";
+const RETIRED_STORAGE_KEYS = [
+  "edgeroute.distributions",
+  "edgeroute.distribution",
+];
 
 /**
- * Prefills the connect form. Nothing is sent until the user connects.
+ * Prefills the link form. Nothing is sent until the user links.
  *
- * Frozen for the same reason `EMPTY` is: the connect screen hands this straight
- * to `useState`, so it is the live draft rather than a copy of one, and two
- * sessions that reach for the sample share the one object.
+ * Frozen: the link screen hands this straight to `useState`, so it is the live
+ * draft rather than a copy of one, and two sessions that reach for the sample
+ * share the one object.
  */
 export const SAMPLE_DISTRIBUTION: DistributionDraft = Object.freeze({
   distributionId: "E2QWERTY123456",
@@ -41,22 +44,45 @@ export const emptyDistribution = (): DistributionDraft => ({
   region: "us-east-1",
 });
 
+/** A registry entry as the console shows it: the name is the distribution ID. */
+export const toDistribution = (target: Target): Distribution => ({
+  targetId: target.id,
+  distributionId: target.name,
+  tableName: target.tableName,
+  region: target.region,
+  ...(target.roleArn ? { roleArn: target.roleArn } : {}),
+  ...(target.edgeFunctionArn
+    ? { edgeFunctionArn: target.edgeFunctionArn }
+    : {}),
+});
+
 /**
- * Registers the draft's table with the API and returns the connected
- * distribution, carrying the target id the rules routes need.
- *
- * The table may already be registered — someone else connected it, or this
- * browser cleared its storage. That is a 409, and it is a success case for the
- * user's intent ("point me at this table"), so the existing target is looked up
- * and reused rather than surfaced as an error. The registry dedupes on
- * (account, region, tableName), so matching on region and table name finds the
- * same entry the server refused to duplicate.
- *
- * `name` is the distribution ID because the API requires a name and the form
- * collects none; the API has no field for a distribution, so this is where it
- * goes.
+ * Which distribution a name is, the way the API compares names: the ID, whether
+ * the name is the ID or its ARN, and the name itself without case otherwise.
  */
-export const connectDistribution = async (
+const nameIdentity = (name: string): string => {
+  const trimmed = name.trim();
+  const fromArn =
+    /^arn:aws[a-z-]*:cloudfront::\d{12}:distribution\/(E[A-Z0-9]+)$/.exec(
+      trimmed,
+    );
+  if (fromArn?.[1]) return fromArn[1];
+  return /^E[A-Z0-9]{7,}$/.test(trimmed) ? trimmed : trimmed.toUpperCase();
+};
+
+const sameName = (a: string, b: string): boolean =>
+  nameIdentity(a) === nameIdentity(b);
+
+/**
+ * Links the draft's distribution: registers it with the API and returns it with
+ * the target id the rules routes need.
+ *
+ * The distribution may already be linked — a teammate linked it first. That is
+ * a 409, and a success for what the user asked for when it points at the same
+ * table, so the existing target is looked up by name and reused. Linked to
+ * another table, it is not the same request, and the 409 stands.
+ */
+export const linkDistribution = async (
   draft: DistributionDraft,
   client: ApiClient = api,
 ): Promise<Distribution> => {
@@ -67,321 +93,295 @@ export const connectDistribution = async (
     tableName: draft.tableName,
     ...(edgeFunctionArn ? { edgeFunctionArn } : {}),
   };
-  // What is remembered: the trimmed ARN, or none rather than an empty string.
-  const connected: DistributionDraft = {
-    distributionId: draft.distributionId,
-    tableName: draft.tableName,
-    region: draft.region,
-    ...(edgeFunctionArn ? { edgeFunctionArn } : {}),
-  };
 
   try {
-    const target = await client.targets.create(input);
-    return { ...connected, targetId: target.id };
+    return toDistribution(await client.targets.create(input));
   } catch (error) {
     if (!(error instanceof ApiError) || error.code !== "TARGET_EXISTS") {
       throw error;
     }
 
-    const existing = (await client.targets.list()).find(
-      (t) => t.region === draft.region && t.tableName === draft.tableName,
+    const existing = (await client.targets.list()).find((t) =>
+      sameName(t.name, draft.distributionId),
     );
 
-    // The 409 said it exists but the list does not show it: the caller cannot
-    // act on that, so report the original refusal rather than inventing a
-    // reason. Only reachable if the registry changed between the two calls.
-    if (existing === undefined) throw error;
+    // Gone between the two calls, or linked to another table: either way the
+    // server's own refusal is the truthful answer.
+    if (
+      existing === undefined ||
+      existing.region !== draft.region ||
+      existing.tableName !== draft.tableName
+    ) {
+      throw error;
+    }
 
-    // Reconnecting reuses the registered target as it is, so a function ARN
+    // Linking again reuses the registered target as it is, so a function ARN
     // typed now would otherwise never reach the API.
     if (edgeFunctionArn && existing.edgeFunctionArn !== edgeFunctionArn) {
-      try {
+      return toDistribution(
         await client.targets.update(existing.id, {
           name: existing.name,
           region: existing.region,
           tableName: existing.tableName,
           ...(existing.roleArn ? { roleArn: existing.roleArn } : {}),
           edgeFunctionArn,
-        });
-      } catch (updateError) {
-        // A viewer may connect but not change the shared target. Connecting is
-        // what they asked for; the ARN stays as an editor set it.
-        if (
-          !(updateError instanceof ApiError) ||
-          updateError.code !== "FORBIDDEN"
-        ) {
-          throw updateError;
-        }
-      }
+        }),
+      );
     }
 
-    return { ...connected, targetId: existing.id };
+    return toDistribution(existing);
   }
 };
 
 /**
- * A stored value is whatever was in localStorage last time, which is not
- * necessarily a Distribution — a half-written key, or a shape from an older
- * build that predates `targetId`. Anything not carrying all four fields as
- * strings is treated as absent, so a stale entry shows the connect screen again
- * instead of rendering a console that cannot address any rules.
+ * Saves Settings onto the linked distribution's target, for everyone. A full
+ * replace on the API side, so the role, which the form does not edit, is sent
+ * back as it was rather than cleared. The function ARN is the form's: emptied
+ * there, it is removed.
  */
-const parse = (raw: string | null): Distribution | null => {
-  if (raw === null) return null;
+export const updateDistribution = async (
+  current: Distribution,
+  draft: DistributionDraft,
+  client: ApiClient = api,
+): Promise<Distribution> => {
+  const edgeFunctionArn = draft.edgeFunctionArn?.trim() || undefined;
+  return toDistribution(
+    await client.targets.update(current.targetId, {
+      name: draft.distributionId,
+      region: draft.region,
+      tableName: draft.tableName,
+      ...(current.roleArn ? { roleArn: current.roleArn } : {}),
+      ...(edgeFunctionArn ? { edgeFunctionArn } : {}),
+    }),
+  );
+};
 
+/**
+ * Unlinks a distribution for the whole team. Registry only: its rules table is
+ * never touched, so the distribution stays live at the edge. Already gone — a
+ * teammate unlinked it first — is the outcome asked for, not an error.
+ */
+export const unlinkDistribution = async (
+  distribution: Distribution,
+  client: ApiClient = api,
+): Promise<void> => {
   try {
-    const value: unknown = JSON.parse(raw);
-    if (typeof value !== "object" || value === null) return null;
+    await client.targets.remove(distribution.targetId);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return;
+    throw error;
+  }
+};
 
-    const { targetId, distributionId, tableName, region, edgeFunctionArn } =
-      value as Record<string, unknown>;
-    if (
-      typeof targetId !== "string" ||
-      typeof distributionId !== "string" ||
-      typeof tableName !== "string" ||
-      typeof region !== "string"
-    ) {
-      return null;
-    }
+/**
+ * The selected distribution: the one the user picked, or the first one when
+ * that is gone — a teammate unlinked it — or none was picked yet.
+ */
+export const resolveCurrent = (
+  distributions: readonly Distribution[],
+  selected: string | null,
+): Distribution | null =>
+  distributions.find((entry) => entry.targetId === selected) ??
+  distributions[0] ??
+  null;
 
-    return {
-      targetId,
-      distributionId,
-      tableName,
-      region,
-      // Optional, and from an older build absent: kept only when it is a string.
-      ...(typeof edgeFunctionArn === "string" ? { edgeFunctionArn } : {}),
-    };
+/**
+ * Where unlinking lands: the distribution after the one removed, or the one
+ * before it when it was the last. None left is the link screen.
+ */
+export const nextAfterUnlink = (
+  distributions: readonly Distribution[],
+  removedId: string,
+): string | null => {
+  const at = distributions.findIndex((entry) => entry.targetId === removedId);
+  const rest = distributions.filter((entry) => entry.targetId !== removedId);
+  if (rest.length === 0) return null;
+  return (rest[Math.min(Math.max(at, 0), rest.length - 1)] ?? rest[0]).targetId;
+};
+
+/** Adds a linked distribution, or replaces the entry it already has. */
+export const withLinked = (
+  distributions: readonly Distribution[],
+  value: Distribution,
+): Distribution[] => {
+  const at = distributions.findIndex(
+    (entry) => entry.targetId === value.targetId,
+  );
+  if (at === -1) return [...distributions, value];
+  const next = [...distributions];
+  next[at] = value;
+  return next;
+};
+
+/**
+ * What a failed load is shown as. Anything that is not an `ApiError` is a
+ * transport fault carrying nothing worth showing a user.
+ */
+export const toDistributionsError = (error: unknown): ApiError =>
+  error instanceof ApiError
+    ? error
+    : new ApiError({
+        status: 0,
+        code: "MALFORMED_RESPONSE",
+        message: "Something went wrong loading the distributions",
+      });
+
+export type DistributionsState =
+  | { status: "loading" }
+  | { status: "ready"; distributions: readonly Distribution[] }
+  | { status: "failed"; error: ApiError };
+
+const readSelection = (key: string | null): string | null => {
+  if (key === null) return null;
+  try {
+    return localStorage.getItem(key);
   } catch {
+    // Private-browsing modes throw on access rather than returning null.
     return null;
   }
 };
 
-/**
- * What the browser remembers: every distribution it has connected, and which one
- * the console is currently pointed at.
- *
- * `current` is a `distributionId`, and so is the identity of an entry in the list.
- * Not `targetId`: the API identifies a target by (account, region, table), so two
- * distributions served by the same rules table share one target id. Keying on it
- * would make connecting a second distribution silently overwrite the first, and
- * the design lists distributions — its two rows show the same table.
- *
- * A distribution ID is unique within AWS, so it is the right identity for the
- * thing the user is naming. `targetId` stays on each entry: it is what the rules
- * routes need, and two entries may legitimately carry the same one.
- *
- * Not an index, either — the list is rewritten on every change, and an index
- * would silently point at a different entry after one is replaced.
- *
- * Readonly throughout because every change here replaces the whole value: a
- * reducer that wrote into the previous state instead of returning a new one
- * would leave React with an unchanged reference and no re-render.
- *
- * The compiler refuses the ways that mistake actually gets made — writing to a
- * field, or reshaping the list. It is not a proof: TypeScript ignores readonly
- * modifiers when checking assignability, so an entry copied into a mutable
- * annotation can still be written through. That takes saying so explicitly,
- * which is the point at which review can see it.
- */
-export interface Stored {
-  readonly distributions: readonly Distribution[];
-  readonly current: string | null;
-}
-
-// Both the "nothing stored" result and the hook's initial state, so every empty
-// console shares this one object — an accidental write through any of them would
-// change what the next reader sees. `Stored` being readonly is what rules that
-// out; the freeze is the runtime backstop, and it covers the array too because
-// `Object.freeze` is shallow and the array is the field everything spreads from.
-export const EMPTY: Stored = Object.freeze({
-  distributions: Object.freeze([]),
-  current: null,
-});
-
-/**
- * Each entry is validated on its own, and an invalid one is dropped rather than
- * discarding the whole list — one corrupt entry should not cost the user the
- * environments that are still readable.
- *
- * `current` is only kept if it names an entry that survived, so the selection can
- * never point at something that is not in the list.
- */
-export const parseStored = (raw: string | null): Stored => {
-  if (raw === null) return EMPTY;
-
+const writeSelection = (key: string | null, targetId: string | null): void => {
+  if (key === null) return;
   try {
-    const value: unknown = JSON.parse(raw);
-    if (typeof value !== "object" || value === null) return EMPTY;
-
-    const { distributions, current } = value as Record<string, unknown>;
-    if (!Array.isArray(distributions)) return EMPTY;
-
-    const parsed = distributions
-      .map((entry) => parse(JSON.stringify(entry)))
-      .filter((entry): entry is Distribution => entry !== null);
-
-    const selected =
-      typeof current === "string" &&
-      parsed.some((entry) => entry.distributionId === current)
-        ? current
-        : (parsed[0]?.distributionId ?? null);
-
-    return { distributions: parsed, current: selected };
+    if (targetId === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, targetId);
   } catch {
-    return EMPTY;
+    // Storage unavailable: the selection still holds for this page.
+  }
+};
+
+const dropRetiredKeys = (): void => {
+  try {
+    for (const key of RETIRED_STORAGE_KEYS) localStorage.removeItem(key);
+  } catch {
+    // Nothing to clean up where storage cannot be reached.
   }
 };
 
 /**
- * Promotes the single-distribution shape this module used to write into a
- * one-entry list. Only consulted when the current key holds nothing, and never
- * written back — see LEGACY_STORAGE_KEY.
+ * The team's distributions, loaded once per console load, and the one selected.
+ *
+ * `userKey` identifies the signed-in user — the selection is theirs, not the
+ * browser's. Without one the selection lasts only for this page.
  */
-export const migrateLegacy = (raw: string | null): Stored => {
-  const legacy = parse(raw);
-  return legacy === null
-    ? EMPTY
-    : { distributions: [legacy], current: legacy.distributionId };
-};
-
-/**
- * Adds a distribution and selects it. Re-connecting the same distribution ID
- * replaces that entry rather than duplicating it — its table or region may have
- * changed, and two rows naming one distribution is not something the menu could
- * tell apart.
- */
-export const reduceConnect = (prev: Stored, value: Distribution): Stored => ({
-  distributions: [
-    ...prev.distributions.filter(
-      (entry) => entry.distributionId !== value.distributionId,
-    ),
-    value,
-  ],
-  current: value.distributionId,
-});
-
-/**
- * Swaps the selected distribution for an edited one, in place. Settings can
- * change every field including the distribution ID, so this is a replace rather
- * than an update — but it keeps the entry's position so the menu does not
- * reorder under the user.
- */
-export const reduceReplaceCurrent = (
-  prev: Stored,
-  value: Distribution,
-): Stored => {
-  const at = prev.distributions.findIndex(
-    (entry) => entry.distributionId === prev.current,
+export function useDistributions(
+  userKey: string | undefined,
+  client: ApiClient = api,
+) {
+  const storageKey = userKey ? `${SELECTION_KEY_PREFIX}${userKey}` : null;
+  const [state, setState] = useState<DistributionsState>({
+    status: "loading",
+  });
+  const [selected, setSelected] = useState<string | null>(() =>
+    readSelection(storageKey),
   );
-  if (at === -1) {
-    return {
-      distributions: [...prev.distributions, value],
-      current: value.distributionId,
-    };
-  }
+  const [attempt, setAttempt] = useState(0);
+  // Targets the API has said are gone. The list is a Scan, eventually
+  // consistent, so right after a teammate's delete it can still return one —
+  // which, selected, would 404 again and reload again until the Scan caught up.
+  const gone = useRef(new Set<string>());
 
-  const next = [...prev.distributions];
-  next[at] = value;
-  // Renaming onto an ID another entry already holds would leave two rows the
-  // menu cannot tell apart, so the older one goes.
-  return {
-    distributions: next.filter(
-      (entry, i) => i === at || entry.distributionId !== value.distributionId,
-    ),
-    current: value.distributionId,
-  };
-};
-
-/** Switches the selection, and only to an entry that is actually in the list. */
-export const reduceSelect = (prev: Stored, distributionId: string): Stored =>
-  prev.distributions.some((entry) => entry.distributionId === distributionId)
-    ? { ...prev, current: distributionId }
-    : prev;
-
-const read = (): Stored => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw !== null) return parseStored(raw);
-
-    // Nothing under the current key: fall back to the shape this module used to
-    // write before it held a list.
-    return migrateLegacy(localStorage.getItem(LEGACY_STORAGE_KEY));
-  } catch {
-    // Private-browsing modes throw on access rather than returning null.
-    return EMPTY;
-  }
-};
-
-/**
- * The distributions this browser knows about, and the one in use.
- *
- * Every mutation replaces the whole `Stored` value, so the list and the selection
- * can never be persisted out of step with each other.
- *
- * Nothing here deletes a target from the API's registry: it is shared state, and
- * removing it would break anyone else pointed at the same table. Forgetting a
- * distribution locally is all this module does.
- */
-export function useDistributions() {
-  const [stored, setStored] = useState<Stored>(read);
-
-  const distributions = stored.distributions;
-  const current =
-    distributions.find((entry) => entry.distributionId === stored.current) ??
-    null;
-
-  const connect = useCallback((value: Distribution) => {
-    setStored((prev) => reduceConnect(prev, value));
+  const reload = useCallback(() => {
+    setState({ status: "loading" });
+    setAttempt((n) => n + 1);
   }, []);
 
-  const replaceCurrent = useCallback((value: Distribution) => {
-    setStored((prev) => reduceReplaceCurrent(prev, value));
-  }, []);
-
-  const select = useCallback((distributionId: string) => {
-    setStored((prev) => reduceSelect(prev, distributionId));
-  }, []);
-
-  /**
-   * Forgets the selected distribution in this browser. Does not delete the
-   * target from the API's registry — that is shared state. If others remain,
-   * the first one becomes current; if none do, the console returns to connect.
-   */
-  const disconnectCurrent = useCallback(() => {
-    setStored((prev) => {
-      if (prev.current === null) return prev;
-      const next = prev.distributions.filter(
-        (entry) => entry.distributionId !== prev.current,
-      );
-      return {
-        distributions: next,
-        current: next[0]?.distributionId ?? null,
-      };
-    });
-  }, []);
+  /** The API no longer knows this target: drop it and ask for the list again. */
+  const forget = useCallback(
+    (targetId: string) => {
+      gone.current.add(targetId);
+      reload();
+    },
+    [reload],
+  );
 
   useEffect(() => {
-    try {
-      if (stored.distributions.length === 0) {
-        localStorage.removeItem(STORAGE_KEY);
-      } else {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-      }
-      // The legacy single-distribution key is dropped once its content has been
-      // carried over, so a later load cannot resurrect a stale environment.
-      localStorage.removeItem(LEGACY_STORAGE_KEY);
-    } catch {
-      // Storage unavailable or full: the console still works for this session.
-    }
-  }, [stored]);
+    dropRetiredKeys();
+  }, []);
 
-  return {
-    distributions,
-    current,
-    connect,
-    replaceCurrent,
-    select,
-    disconnectCurrent,
-  };
+  // A different user on the same page reads their own selection, never the
+  // previous one's.
+  useEffect(() => {
+    setSelected(readSelection(storageKey));
+  }, [storageKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: "loading" });
+
+    client.targets.list().then(
+      (targets) => {
+        if (!cancelled) {
+          setState({
+            status: "ready",
+            distributions: targets
+              .filter((target) => !gone.current.has(target.id))
+              .map(toDistribution),
+          });
+        }
+      },
+      (error: unknown) => {
+        if (!cancelled) {
+          setState({ status: "failed", error: toDistributionsError(error) });
+        }
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, attempt]);
+
+  const distributions = state.status === "ready" ? state.distributions : [];
+  const current = resolveCurrent(distributions, selected);
+
+  const select = useCallback(
+    (targetId: string | null) => {
+      setSelected(targetId);
+      writeSelection(storageKey, targetId);
+    },
+    [storageKey],
+  );
+
+  /** A distribution just linked, or saved from Settings: listed and selected. */
+  const linked = useCallback(
+    (value: Distribution) => {
+      setState((prev) =>
+        prev.status === "ready"
+          ? {
+              status: "ready",
+              distributions: withLinked(prev.distributions, value),
+            }
+          : prev,
+      );
+      select(value.targetId);
+    },
+    [select],
+  );
+
+  /** Unlinks the selected distribution for everyone and moves to the next one. */
+  const unlinkCurrent = useCallback(async () => {
+    if (current === null) return;
+    await unlinkDistribution(current, client);
+    // Gone for this page too: a stale Scan on a later reload must not bring it
+    // back.
+    gone.current.add(current.targetId);
+    const next = nextAfterUnlink(distributions, current.targetId);
+    // From the list as it is now, not as it was when the unlink started: a
+    // reload may have landed while the request was in flight.
+    setState((prev) =>
+      prev.status === "ready"
+        ? {
+            status: "ready",
+            distributions: prev.distributions.filter(
+              (entry) => entry.targetId !== current.targetId,
+            ),
+          }
+        : prev,
+    );
+    select(next);
+  }, [current, distributions, client, select]);
+
+  return { state, current, reload, forget, select, linked, unlinkCurrent };
 }

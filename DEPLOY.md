@@ -63,7 +63,7 @@ Keep these:
 
 ```bash
 terraform output cloudfront_domain_name       # the demo site
-terraform output cloudfront_distribution_id   # needed on the console's connect screen
+terraform output cloudfront_distribution_id   # needed on the console's link screen
 terraform output table_name
 terraform output table_arn                    # → step 2
 ```
@@ -206,7 +206,7 @@ other route is behind the JWT authorizer — including on the API's own
 convenience in front of the API, never a control.
 
 **The console, end to end.** Open `console_url`, sign in as the editor account
-from step 5, then on the connect screen enter:
+from step 5, then on the link screen enter:
 
 | Field           | Value                                    |
 | --------------- | ---------------------------------------- |
@@ -214,9 +214,9 @@ from step 5, then on the connect screen enter:
 | Table name      | `table_name` from step 1                 |
 | Region          | the region you deployed the table in     |
 
-The connect screen appears once per browser — it is stored in `localStorage`, not
-on the server, so every person who opens the console fills it in. Have those three
-values to hand.
+The link screen appears once for the whole team: the linked distribution is kept
+by the API, so everyone who signs in afterwards, from any browser, lands on it.
+Only editors can link; a viewer who arrives first is told to ask one.
 
 You should then see the seeded host with its three rules. To watch a change go
 live: open the rewrite rule, change its path from `/pricing.html` to
@@ -269,7 +269,7 @@ These are accepted for the MVP demo, not oversights:
   it adds a button to the hosted UI and changes no console code — it is left off
   because this is a tool other people deploy into their own accounts, and the
   provider is theirs to choose.
-- **The console's connect screen is per browser.** No server-side profile, so
-  there is nothing to pre-configure for other people.
+- **The linked distributions are the team's.** The first editor links them once;
+  each person's selected distribution is kept in their own browser.
 - **Nothing is cached** on the console distribution, deliberately, so a redeploy
   needs no invalidation.

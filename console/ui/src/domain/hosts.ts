@@ -4,9 +4,9 @@ import type { ApiClient, HostSummary } from "../api";
 import { hostKey } from "./hostRoutes";
 
 /**
- * The host list for a target. Server state, unlike the connected distribution in
- * `distribution.ts`: hosts live in the target's table, shared with anyone else
- * pointed at it, so the only way to see someone else's change is to ask again.
+ * The host list for a target. Server state: hosts live in the target's table,
+ * shared with anyone else pointed at it, so the only way to see someone else's
+ * change is to ask again.
  */
 export type HostsState =
   | { status: "loading" }
