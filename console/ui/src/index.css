@@ -4,6 +4,8 @@
    ============================================================ */
 
 :root {
+  color-scheme: light;
+
   /* palette */
   --navy-900: #0a1120;
   --navy-800: #0d1729;
@@ -41,6 +43,16 @@
   --text: #1a2438;
   --text-soft: #5a6884;
   --text-dim: #8a97b0;
+  /* Status colours as text on a console surface: darker than the swatches
+     above, which are too light to read on white. */
+  --green-text: #1f9c72;
+  --red-text: #c0392b;
+  --red-text-strong: #b3251f;
+  --amber-text: #7a5a10;
+  --menu-shadow: 0 8px 24px rgba(16, 32, 60, 0.18);
+  /* Behind a dialog or the drawer. */
+  --scrim: rgba(10, 17, 32, 0.55);
+  --scrim-strong: rgba(10, 17, 32, 0.6);
 
   --radius: 12px;
   --radius-sm: 8px;
@@ -56,6 +68,39 @@
   --mono:
     ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas,
     monospace;
+}
+
+/*
+  Dark mode: the console's light surfaces swapped for the navy the header and
+  the landing page already use. Only tokens change, so every component follows.
+  Set on <html> by index.html before first paint, and by the switch in the
+  profile menu.
+*/
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0b1322;
+  --surface: #111c30;
+  --surface-2: #17243b;
+  --surface-3: #1e2d48;
+  --border: #26385a;
+  --border-strong: #34496f;
+  --text: #e3eaf7;
+  --text-soft: #a8b6d1;
+  --text-dim: #7586a6;
+
+  --green-text: #4fdcaa;
+  --red-text: #ff8a80;
+  --red-text-strong: #ff8a80;
+  --amber-text: #ffd27a;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.55);
+  --menu-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  /* Navy at 55% barely dims a page that is already navy. */
+  --scrim: rgba(0, 0, 0, 0.62);
+  --scrim-strong: rgba(0, 0, 0, 0.66);
 }
 
 * {
@@ -192,7 +237,7 @@ button {
 }
 .badge-on {
   background: var(--green-glow);
-  color: #1f9c72;
+  color: var(--green-text);
 }
 .badge-off {
   background: var(--surface-3);
@@ -1087,7 +1132,7 @@ button {
   color: var(--text-soft);
 }
 .console-error strong {
-  color: #c0392b;
+  color: var(--red-text);
   font-size: 13.5px;
 }
 
@@ -1185,7 +1230,7 @@ button {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(10, 17, 32, 0.55);
+  background: var(--scrim);
 }
 
 .modal {
@@ -1201,7 +1246,7 @@ button {
   outline: none;
 }
 .modal::backdrop {
-  background: rgba(10, 17, 32, 0.55);
+  background: var(--scrim);
 }
 .modal-form {
   display: flex;
@@ -1380,7 +1425,7 @@ button {
   background: rgba(255, 207, 92, 0.14);
   border-radius: var(--radius-sm);
   font-size: 13px;
-  color: #7a5a10;
+  color: var(--amber-text);
 }
 .propagation svg {
   flex-shrink: 0;
@@ -1858,7 +1903,7 @@ button {
   color: var(--text);
 }
 .form-error strong {
-  color: #b3251f;
+  color: var(--red-text-strong);
 }
 .form-error ul {
   margin: 2px 0 0;
@@ -1883,7 +1928,7 @@ button {
   z-index: 100;
   display: flex;
   justify-content: flex-end;
-  background: rgba(10, 17, 32, 0.6);
+  background: var(--scrim-strong);
   backdrop-filter: blur(2px);
   animation: drawer-fade 0.15s ease;
 }
@@ -2175,7 +2220,7 @@ button {
   border-radius: var(--radius-sm);
   font-size: 12.5px;
   line-height: 1.5;
-  color: #7a5a10;
+  color: var(--amber-text);
 }
 /* Same grey card as the Keep-incoming switch. "Condition N" is a real header
    inside the box — a <legend> would notch the top border, which is exactly what
@@ -2349,7 +2394,7 @@ button {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  box-shadow: 0 8px 24px rgba(16, 32, 60, 0.18);
+  box-shadow: var(--menu-shadow);
 }
 .profile-who {
   display: flex;
@@ -2385,6 +2430,21 @@ button {
 }
 .profile-item:hover {
   background: var(--surface-2);
+}
+/* The switch at the far end, the way a settings row reads. */
+.profile-theme .switch {
+  margin-left: auto;
+}
+.switch-sm {
+  width: 32px;
+  height: 18px;
+}
+.switch-sm .switch-knob {
+  width: 12px;
+  height: 12px;
+}
+.switch-sm.is-on .switch-knob {
+  transform: translateX(14px);
 }
 .profile-item:focus-visible {
   outline: 2px solid var(--orange);
@@ -2495,7 +2555,7 @@ button {
 }
 .import-pill.is-ready {
   background: var(--green-glow);
-  color: #1f9c72;
+  color: var(--green-text);
 }
 .import-pill.is-warning {
   background: var(--orange-glow);
