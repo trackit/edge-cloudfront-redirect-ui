@@ -3,17 +3,14 @@ import { createPortal } from "react-dom";
 import { FORMAT_HELP, FORMAT_LABEL } from "../domain/importFormats";
 
 interface Props {
-  /**
-   * The button it hangs from. Used to place the panel, and to recognise the
-   * toggle's own clicks — those are the caller's to handle, so dismissing here
-   * as well would close and reopen in one gesture.
-   */
+  /** The button it hangs from, which places the panel. */
   anchor: HTMLElement | null;
   onDismiss: () => void;
 }
 
 /** How far the panel keeps away from the edges of the window. */
 const MARGIN = 8;
+/** Narrower only when the window is: see `place`. */
 const WIDTH = 460;
 /** Taller than the longest tab, so on a normal window nothing is capped. */
 const MAX_HEIGHT = 520;
@@ -30,8 +27,11 @@ const OFFSET = 6;
  * here is also what lets it overlap the dialog's own edge instead of forcing
  * the dialog to grow.
  *
- * Not a modal: it takes focus for the keyboard's sake and hands it straight
- * back, but it never traps it, and the dialog underneath stays live.
+ * Clicks outside it only close it (CF-55): a transparent backdrop under the
+ * panel takes them, so nothing behind — the dialog's buttons, or the overlay
+ * that closes the dialog — ever sees them. That includes the Formats button,
+ * which is how clicking it again still closes the panel. It takes focus for the
+ * keyboard's sake and hands it straight back, but it does not trap it.
  */
 export default function FormatsPopover({ anchor, onDismiss }: Props) {
   const tabsId = useId();
@@ -41,6 +41,7 @@ export default function FormatsPopover({ anchor, onDismiss }: Props) {
   const [placement, setPlacement] = useState<{
     top: number;
     left: number;
+    width: number;
     maxHeight: number;
   }>();
 
@@ -50,12 +51,14 @@ export default function FormatsPopover({ anchor, onDismiss }: Props) {
 
     const place = (): void => {
       const rect = anchor.getBoundingClientRect();
+      // Never wider than the window: at a fixed 460 it ran off a phone's edge.
+      const width = Math.min(WIDTH, window.innerWidth - 2 * MARGIN);
       // Right-aligned to the button, then pulled back inside the viewport. The
       // button sits at the right end of its row, so hanging the panel leftwards
       // is what keeps it on screen at the narrowest width the console supports.
       const left = Math.max(
         MARGIN,
-        Math.min(rect.right - WIDTH, window.innerWidth - WIDTH - MARGIN),
+        Math.min(rect.right - width, window.innerWidth - width - MARGIN),
       );
 
       /*
@@ -80,7 +83,7 @@ export default function FormatsPopover({ anchor, onDismiss }: Props) {
         window.innerHeight - MARGIN - height,
       );
 
-      setPlacement({ top: Math.max(MARGIN, top), left, maxHeight });
+      setPlacement({ top: Math.max(MARGIN, top), left, width, maxHeight });
     };
 
     place();
@@ -99,22 +102,9 @@ export default function FormatsPopover({ anchor, onDismiss }: Props) {
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
     selectedTabRef.current?.focus();
-
-    const onMouseDown = (event: MouseEvent): void => {
-      const target = event.target as Node;
-      if (panelRef.current?.contains(target) === true) return;
-      if (anchor?.contains(target) === true) return;
-      onDismiss();
-    };
-
-    document.addEventListener("mousedown", onMouseDown);
     return () => {
-      document.removeEventListener("mousedown", onMouseDown);
       previouslyFocused?.focus();
     };
-    // Subscribed once on purpose: `onDismiss` and `anchor` are stable for as
-    // long as this is open, and re-subscribing mid-gesture would drop the
-    // listener between a mousedown and its mouseup.
   }, []);
 
   const help = FORMAT_HELP[selected];
@@ -131,58 +121,80 @@ export default function FormatsPopover({ anchor, onDismiss }: Props) {
   };
 
   return createPortal(
-    <div
-      className="formats-popover"
-      ref={panelRef}
-      role="group"
-      aria-label="Accepted import formats"
-      style={{
-        top: placement?.top ?? 0,
-        left: placement?.left ?? 0,
-        width: WIDTH,
-        maxHeight: placement?.maxHeight,
-        visibility: placement === undefined ? "hidden" : undefined,
-      }}
-    >
-      <div className="seg formats-tabs" role="tablist" aria-label="Formats">
-        {FORMAT_HELP.map((entry, index) => (
-          <button
-            key={entry.format}
-            ref={index === selected ? selectedTabRef : undefined}
-            type="button"
-            role="tab"
-            id={`${tabsId}-tab-${entry.format}`}
-            aria-selected={index === selected}
-            aria-controls={`${tabsId}-panel`}
-            // Only the selected tab is in the tab order; the arrows move
-            // between them. Four stops on the way past a help panel is four
-            // too many.
-            tabIndex={index === selected ? 0 : -1}
-            className={index === selected ? "is-active" : ""}
-            onClick={() => setSelected(index)}
-            onKeyDown={onTabKeyDown}
-          >
-            {FORMAT_LABEL[entry.format]}
-          </button>
-        ))}
-      </div>
-
+    <>
+      {/*
+        Dismisses on `click`, not `mousedown`: closing on the press would take
+        the backdrop away before the release, and the release would then land
+        on — and click — whatever is underneath.
+      */}
+      {/*
+        A file dragged in closes it too, so the drop lands on the dropzone the
+        backdrop was covering. Should one still reach the backdrop, it is
+        refused here: unhandled, the browser opens the file in place of the
+        console, dialog and all.
+      */}
       <div
-        className="formats-panel"
-        role="tabpanel"
-        id={`${tabsId}-panel`}
-        aria-labelledby={`${tabsId}-tab-${help.format}`}
+        className="formats-backdrop"
+        aria-hidden="true"
+        onClick={onDismiss}
+        onDragEnter={onDismiss}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => event.preventDefault()}
+      />
+      <div
+        className="formats-popover"
+        ref={panelRef}
+        role="group"
+        aria-label="Accepted import formats"
+        style={{
+          top: placement?.top ?? 0,
+          left: placement?.left ?? 0,
+          width: placement?.width ?? WIDTH,
+          maxHeight: placement?.maxHeight,
+          visibility: placement === undefined ? "hidden" : undefined,
+        }}
       >
-        <p className="formats-blurb">{help.blurb}</p>
-        <pre className="formats-example mono">
-          <code>{help.example}</code>
-        </pre>
-        <p className="formats-file">
-          Detected from the extension first, so name it{" "}
-          <span className="mono">{help.filename}</span> or paste the text.
-        </p>
+        <div className="seg formats-tabs" role="tablist" aria-label="Formats">
+          {FORMAT_HELP.map((entry, index) => (
+            <button
+              key={entry.format}
+              ref={index === selected ? selectedTabRef : undefined}
+              type="button"
+              role="tab"
+              id={`${tabsId}-tab-${entry.format}`}
+              aria-selected={index === selected}
+              aria-controls={`${tabsId}-panel`}
+              // Only the selected tab is in the tab order; the arrows move
+              // between them. Four stops on the way past a help panel is four
+              // too many.
+              tabIndex={index === selected ? 0 : -1}
+              className={index === selected ? "is-active" : ""}
+              onClick={() => setSelected(index)}
+              onKeyDown={onTabKeyDown}
+              title={FORMAT_LABEL[entry.format]}
+            >
+              {entry.tab}
+            </button>
+          ))}
+        </div>
+
+        <div
+          className="formats-panel"
+          role="tabpanel"
+          id={`${tabsId}-panel`}
+          aria-labelledby={`${tabsId}-tab-${help.format}`}
+        >
+          <p className="formats-blurb">{help.blurb}</p>
+          <pre className="formats-example mono">
+            <code>{help.example}</code>
+          </pre>
+          <p className="formats-file">
+            Detected from the extension first, so name it{" "}
+            <span className="mono">{help.filename}</span> or paste the text.
+          </p>
+        </div>
       </div>
-    </div>,
+    </>,
     document.body,
   );
 }

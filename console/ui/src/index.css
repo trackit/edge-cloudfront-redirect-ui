@@ -2041,6 +2041,13 @@ button {
 }
 /* --- the import dialog's Formats help, portalled onto <body> --- */
 
+/* Under the panel and over everything else, transparent: a click outside the
+   panel lands here and only closes it (CF-55). */
+.formats-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 199;
+}
 /* Above .modal-overlay's 100: it is opened from inside the dialog and has to be
    able to overlap the dialog's own edge, which is the whole reason it is not
    rendered inline. */
@@ -2059,14 +2066,19 @@ button {
   background: var(--surface);
   box-shadow: var(--shadow-lg);
 }
-/* Four labels do not fit one row at the narrowest width the console supports,
-   and a tab strip that scrolls sideways hides the format someone came to read. */
+/* One row (CF-55): the tabs carry short names so the four fit the panel. On a
+   window too narrow even for those, the strip scrolls sideways rather than
+   wrapping into a second row that reads as a second set of tabs. */
 .formats-tabs {
-  flex-wrap: wrap;
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow-x: auto;
 }
 .formats-tabs button {
+  flex-shrink: 0;
   padding: 5px 9px;
   font-size: 12px;
+  white-space: nowrap;
 }
 .formats-blurb {
   margin: 0;
