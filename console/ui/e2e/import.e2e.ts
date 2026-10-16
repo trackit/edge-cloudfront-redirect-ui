@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import {
   distribution,
   errorBody,
@@ -561,6 +561,25 @@ const openFormats = async (page: Page, api: ApiStub): Promise<void> => {
 const popover = (page: Page) =>
   page.getByRole("group", { name: "Accepted import formats" });
 
+/**
+ * A real mouse click at the middle of `target`, wherever it is covered. While
+ * the help is open its backdrop covers the page, and Playwright's own `click`
+ * would wait for the target to be uncovered instead of clicking what is on top.
+ */
+const clickAt = async (page: Page, target: Locator): Promise<void> => {
+  const box = await target.boundingBox();
+  if (box === null) throw new Error("not on screen");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+};
+
+/** Every tab's top edge: one value is one row. */
+const tabRows = async (page: Page): Promise<Set<number>> => {
+  const boxes = await popover(page)
+    .getByRole("tab")
+    .evaluateAll((tabs) => tabs.map((tab) => tab.getBoundingClientRect().top));
+  return new Set(boxes.map(Math.round));
+};
+
 test("the Formats help names every format the importer accepts", async ({
   page,
   api,
@@ -569,15 +588,46 @@ test("the Formats help names every format the importer accepts", async ({
 
   // Four, not the three the ticket listed: the policy CSV is a format the
   // importer detects, and a help panel that omits it sends someone off to
-  // reshape a file that would have imported as it was.
+  // reshape a file that would have imported as it was. Short names, so they fit
+  // one row (CF-55).
   const tabs = popover(page).getByRole("tab");
   await expect(tabs).toHaveCount(4);
   await expect(tabs).toHaveText([
     "Edge Redirector CSV",
-    "Edge Redirector policy CSV",
+    "Policy CSV",
     "Simple CSV",
     "matchRules JSON",
   ]);
+});
+
+test("the Formats tabs sit on one row, with nothing cut off", async ({
+  page,
+  api,
+}) => {
+  await openFormats(page, api);
+  await expect(popover(page)).toBeVisible();
+
+  expect((await tabRows(page)).size).toBe(1);
+  // All four fully shown at the usual width, not just on one scrolled row.
+  const strip = popover(page).getByRole("tablist");
+  expect(await strip.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
+    true,
+  );
+});
+
+test("the Formats tabs stay on one row on a narrow window", async ({
+  page,
+  api,
+}) => {
+  await page.setViewportSize({ width: 390, height: 800 });
+  await openFormats(page, api);
+  await expect(popover(page)).toBeVisible();
+
+  expect((await tabRows(page)).size).toBe(1);
+  // And the panel itself stays inside the window.
+  const box = await popover(page).boundingBox();
+  expect(box?.x).toBeGreaterThanOrEqual(0);
+  expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
 });
 
 test("the Formats help shows one format at a time", async ({ page, api }) => {
@@ -619,14 +669,15 @@ test("the Formats help closes on the gestures that should close it", async ({
   await openFormats(page, api);
   await expect(popover(page)).toBeVisible();
 
-  // Toggling the button it came from.
-  await page.getByRole("button", { name: "Formats" }).click();
+  // Toggling the button it came from — through the backdrop, which is what
+  // takes that click now.
+  await clickAt(page, page.getByRole("button", { name: "Formats" }));
   await expect(popover(page)).toHaveCount(0);
 
   // A click outside it — on the dialog, which must stay open.
   await page.getByRole("button", { name: "Formats" }).click();
   await expect(popover(page)).toBeVisible();
-  await page.getByRole("heading", { name: "Import rules" }).click();
+  await clickAt(page, page.getByRole("heading", { name: "Import rules" }));
   await expect(popover(page)).toHaveCount(0);
   await expect(page.getByRole("dialog")).toBeVisible();
 
@@ -641,6 +692,89 @@ test("the Formats help closes on the gestures that should close it", async ({
   // And the second Escape closes the dialog, as it did before.
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("a click outside the Formats help only closes it", async ({
+  page,
+  api,
+}) => {
+  await openHostWithRules(page, api);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await page.getByPlaceholder(/Paste an Edge Redirector/).fill(csv);
+  const importButton = page.getByRole("button", { name: /Import 2 rules/ });
+  await expect(importButton).toBeEnabled();
+
+  // On the dialog's own buttons: neither runs (CF-55). Import would post the
+  // rules; Cancel would close the dialog and drop the pasted text.
+  for (const button of [
+    importButton,
+    page.getByRole("button", { name: "Cancel" }),
+  ]) {
+    await page.getByRole("button", { name: "Formats" }).click();
+    await expect(popover(page)).toBeVisible();
+    await clickAt(page, button);
+    await expect(popover(page)).toHaveCount(0);
+    await expect(page.getByRole("dialog")).toBeVisible();
+  }
+
+  // On the overlay around the dialog, which otherwise closes it.
+  await page.getByRole("button", { name: "Formats" }).click();
+  await expect(popover(page)).toBeVisible();
+  await page.mouse.click(4, 4);
+  await expect(popover(page)).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toBeVisible();
+
+  // Nothing was imported, and the pasted text is still there.
+  expect(
+    api.calls.filter(
+      (call) => call.method === "POST" && /\/rules$/.test(call.url),
+    ),
+  ).toHaveLength(0);
+  await expect(page.getByPlaceholder(/Paste an Edge Redirector/)).toHaveValue(
+    csv,
+  );
+  await expect(importButton).toBeEnabled();
+});
+
+test("a file dropped while the Formats help is open still loads", async ({
+  page,
+  api,
+}) => {
+  await openFormats(page, api);
+  await expect(popover(page)).toBeVisible();
+
+  // The part of the dropzone left of the panel, which still shows through.
+  const zone = await page.locator(".dropzone").boundingBox();
+  if (zone === null) throw new Error("no dropzone");
+  const point = { x: zone.x + 20, y: zone.y + zone.height / 2 };
+
+  /** A drag event sent where the browser would: to whatever is on top there. */
+  const drag = (type: string): Promise<boolean> =>
+    page.evaluate(
+      ({ type, point, csv }) => {
+        const data = new DataTransfer();
+        data.items.add(new File([csv], "export.csv", { type: "text/csv" }));
+        const event = new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: data,
+        });
+        document.elementFromPoint(point.x, point.y)?.dispatchEvent(event);
+        return event.defaultPrevented;
+      },
+      { type, point, csv },
+    );
+
+  // Entering the page closes the help, so the rest of the drag is the
+  // dropzone's.
+  await drag("dragenter");
+  await expect(popover(page)).toHaveCount(0);
+  await drag("dragover");
+  // Handled by the page, rather than left to the browser to open the file.
+  expect(await drag("drop")).toBe(true);
+
+  await expect(page.getByText("Detected: Edge Redirector CSV")).toBeVisible();
+  await expect(page.getByRole("dialog")).toBeVisible();
 });
 
 /**

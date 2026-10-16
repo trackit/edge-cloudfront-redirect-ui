@@ -22,6 +22,11 @@ export const FORMAT_LABEL: Record<SourceFormat, string> = {
 
 export interface FormatHelp {
   format: SourceFormat;
+  /**
+   * The tab's name, shorter than `FORMAT_LABEL` so the four fit one row (CF-55);
+   * the panel under it still says what the format is.
+   */
+  tab: string;
   /** Suggested name: detection reads the extension before it reads the text. */
   filename: string;
   /** Where this shape comes from, in one line. */
@@ -38,6 +43,7 @@ export interface FormatHelp {
 export const FORMAT_HELP: FormatHelp[] = [
   {
     format: "edge-redirector-csv",
+    tab: "Edge Redirector CSV",
     filename: "export.csv",
     blurb: "The Edge Redirector rule export — one rule per row.",
     example: [
@@ -47,6 +53,7 @@ export const FORMAT_HELP: FormatHelp[] = [
   },
   {
     format: "edge-redirector-policy-csv",
+    tab: "Policy CSV",
     filename: "policy.csv",
     blurb:
       "A flattened policy dump — several condition rows may share one policy.",
@@ -57,12 +64,14 @@ export const FORMAT_HELP: FormatHelp[] = [
   },
   {
     format: "simple-csv",
+    tab: "Simple CSV",
     filename: "map.csv",
     blurb: "A plain source-to-target mapping, for when there is no export.",
     example: ["source,target,status", "/old,/new,301"].join("\n"),
   },
   {
     format: "match-rules-json",
+    tab: "matchRules JSON",
     filename: "rules.json",
     blurb:
       "A matchRules document — a bare array, or wrapped in rules or matchRules.",
