@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { IconClose } from "./icons";
+import { IconClose, IconMoon } from "./icons";
 import { useAuth } from "../auth/useAuth";
+import { useTheme } from "../domain/theme";
 
 /**
  * Who is signed in, and the way out.
@@ -12,6 +13,7 @@ import { useAuth } from "../auth/useAuth";
 export default function ProfileMenu() {
   const { user, signOut } = useAuth();
   const [open, setOpen] = useState(false);
+  const [theme, setTheme] = useTheme();
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -68,6 +70,24 @@ export default function ProfileMenu() {
             <strong>{email}</strong>
             <span>{role}</span>
           </div>
+          {/* Stays open on a click, so the change can be seen and undone
+              without reopening the menu. */}
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={theme === "dark"}
+            className="profile-item profile-theme"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            <IconMoon size={15} />
+            Dark mode
+            <span
+              className={`switch switch-sm${theme === "dark" ? " is-on" : ""}`}
+              aria-hidden="true"
+            >
+              <span className="switch-knob" />
+            </span>
+          </button>
           <button
             type="button"
             role="menuitem"
