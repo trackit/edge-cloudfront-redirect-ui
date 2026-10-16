@@ -106,6 +106,8 @@ export default function RuleList({
             type="button"
             className="btn btn-primary"
             onClick={() => onCreate("redirect")}
+            disabled={!canWrite}
+            title={canWrite ? undefined : READ_ONLY}
           >
             <IconPlus size={16} />
             New redirect
@@ -114,6 +116,8 @@ export default function RuleList({
             type="button"
             className="btn btn-ghost"
             onClick={() => onCreate("rewrite")}
+            disabled={!canWrite}
+            title={canWrite ? undefined : READ_ONLY}
           >
             <IconPlus size={16} />
             New rewrite

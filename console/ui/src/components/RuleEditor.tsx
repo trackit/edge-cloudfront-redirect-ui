@@ -15,6 +15,7 @@ import type {
   ValidationDetail,
 } from "../api";
 import { asApiError } from "../domain/rules";
+import { useCanWrite } from "../auth/useAuth";
 import {
   describeDropped,
   needsDistributionCheck,
@@ -71,6 +72,8 @@ const initialDraft = (target: Props["target"]): RuleDraft =>
  * saves a round trip — the API owns the schema and the uniqueness of a priority,
  * and it is the one that can 409 on a race.
  */
+const READ_ONLY = "Your account has read-only access";
+
 export default function RuleEditor({
   targetId,
   host,
@@ -80,6 +83,9 @@ export default function RuleEditor({
   onClose,
 }: Props) {
   const editing = typeof target !== "string";
+  // A viewer opens a rule to read it (CF-59): every field locked, nothing to
+  // save, and no distribution check, which the API treats as a write.
+  const readOnly = !useCanWrite();
   const [draft, setDraft] = useState<RuleDraft>(() => initialDraft(target));
   const [details, setDetails] = useState<ValidationDetail[]>([]);
   const [failure, setFailure] = useState<ApiError | null>(null);
@@ -92,7 +98,7 @@ export default function RuleEditor({
     targetId,
     draft.kind,
     draft.matches,
-    checksDistribution,
+    checksDistribution && !readOnly,
   );
   const [confirmUnverified, setConfirmUnverified] = useState(false);
   const [awaitingCheck, setAwaitingCheck] = useState(false);
@@ -142,7 +148,7 @@ export default function RuleEditor({
 
   const submit = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
-    if (saving || awaitingCheck) return;
+    if (saving || awaitingCheck || readOnly) return;
 
     // Only a rewrite is ever held back: a redirect is no-store, so the same
     // setup makes it miss viewers, never misdirect them. So only a rewrite
@@ -229,7 +235,13 @@ export default function RuleEditor({
 
   return (
     <Drawer
-      title={editing ? `Edit ${kindLabel}` : `New ${kindLabel}`}
+      title={
+        readOnly
+          ? `View ${kindLabel}`
+          : editing
+            ? `Edit ${kindLabel}`
+            : `New ${kindLabel}`
+      }
       subtitle={`${host} · ${summary}`}
       onClose={onClose}
       footer={
@@ -240,13 +252,14 @@ export default function RuleEditor({
             onClick={onClose}
             disabled={saving}
           >
-            Cancel
+            {readOnly ? "Close" : "Cancel"}
           </button>
           <button
             type="submit"
             form="rule-editor"
             className="btn btn-primary"
-            disabled={saving || awaitingCheck}
+            disabled={saving || awaitingCheck || readOnly}
+            title={readOnly ? READ_ONLY : undefined}
           >
             {saving
               ? "Saving…"
@@ -271,8 +284,8 @@ export default function RuleEditor({
         data-geo-check={geo.status}
       >
         {/* Locked while a save waits for the check: what is saved is what was
-            on screen when Save was clicked. */}
-        <fieldset className="editor-lock" disabled={awaitingCheck}>
+            on screen when Save was clicked. And for a viewer, always. */}
+        <fieldset className="editor-lock" disabled={awaitingCheck || readOnly}>
           {(failure !== null || details.length > 0) && (
             <div className="form-error" role="alert">
               <strong>

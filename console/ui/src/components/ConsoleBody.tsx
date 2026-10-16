@@ -25,6 +25,8 @@ interface Props {
   onUnlinked?: (targetId: string) => void;
 }
 
+const READ_ONLY = "Your account has read-only access";
+
 /** What the rule editor is open on: an existing rule, or the kind being created. */
 type EditorTarget = Rule | "redirect" | "rewrite" | null;
 
@@ -47,6 +49,7 @@ export default function ConsoleBody({ distribution, onUnlinked }: Props) {
   // go with it, and those counts are only in the list.
   const [deleting, setDeleting] = useState<HostSummary | null>(null);
   const navigate = useNavigate();
+  const canWrite = useCanWrite();
 
   // Decoded by React Router, so this is the host itself, not its URL spelling.
   //
@@ -161,18 +164,30 @@ export default function ConsoleBody({ distribution, onUnlinked }: Props) {
           current={null}
           onAdd={() => setAdding(true)}
           onDelete={setDeleting}
+          canWrite={canWrite}
         />
 
         <main className="console-note">
           <h1>No hosts yet</h1>
-          <p>
-            A host is a domain your distribution serves. Add one to start
-            writing redirect and rewrite rules for it.
-          </p>
+          {canWrite ? (
+            <p>
+              A host is a domain your distribution serves. Add one to start
+              writing redirect and rewrite rules for it.
+            </p>
+          ) : (
+            <p>
+              A host is a domain your distribution serves. Your account has
+              read-only access: ask an editor to add one.
+            </p>
+          )}
+          {/* Disabled for a viewer rather than hidden, like every other write
+              control: the API refuses it either way (CF-59). */}
           <button
             className="btn btn-primary"
             type="button"
             onClick={() => setAdding(true)}
+            disabled={!canWrite}
+            title={canWrite ? undefined : READ_ONLY}
           >
             Add a host
           </button>
@@ -199,6 +214,7 @@ export default function ConsoleBody({ distribution, onUnlinked }: Props) {
         current={shown}
         onAdd={() => setAdding(true)}
         onDelete={setDeleting}
+        canWrite={canWrite}
       />
 
       {known ? (
@@ -300,7 +316,7 @@ function HostWorkspace({
   // and say why reads it as a permission. The API refuses either way — this only
   // decides what the user is told.
   const canWrite = useCanWrite();
-  const readOnly = canWrite ? undefined : "Your account has read-only access";
+  const readOnly = canWrite ? undefined : READ_ONLY;
 
   /** Marks a row busy for the duration of a write, so it cannot be double-fired. */
   const withBusy = useCallback(
