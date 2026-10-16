@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Brand from "../components/Brand";
 import ConsoleBody from "../components/ConsoleBody";
 import DistributionChip from "../components/DistributionChip";
@@ -7,6 +8,8 @@ import OnboardingScreen from "../components/OnboardingScreen";
 import SettingsModal from "../components/SettingsModal";
 import { useAuth, useCanWrite } from "../auth/useAuth";
 import { useDistributions } from "../domain/distribution";
+import { CONSOLE_PATH } from "../domain/hostRoutes";
+import type { Distribution } from "../domain/types";
 
 /**
  * Which overlay the console is showing. `null` is the console itself; `add`
@@ -14,6 +17,16 @@ import { useDistributions } from "../domain/distribution";
  * opens a centred dialog over it.
  */
 type Flow = null | "add" | "settings";
+
+/**
+ * What the host list and the selected host belong to. The table too, not only
+ * the target: Settings can repoint a target at another table, whose hosts are
+ * not the ones on screen.
+ */
+const hostsSource = (distribution: Distribution): string =>
+  [distribution.targetId, distribution.region, distribution.tableName].join(
+    "\u0000",
+  );
 
 /* Tickets: MVP - Front — Console + env configuration, Console - Display host,
    and CF-56. The team has no linked distribution → the link screen. Otherwise
@@ -25,6 +38,30 @@ export default function ConsolePage() {
   const { state, current, reload, forget, select, linked, unlinkCurrent } =
     useDistributions(user?.sub ?? user?.email);
   const [flow, setFlow] = useState<Flow>(null);
+  const navigate = useNavigate();
+
+  /*
+    CF-58: the host is in the URL and the distribution is not, so a host from
+    the distribution just left stayed selected and read "No such host". Whenever
+    the distribution changes — the switcher, Unlink moving to the next one,
+    linking another, a teammate unlinking this one — go back to the hostless
+    path, which lands on the new one's first host or its empty state.
+
+    Not on the first load, so a link to a host still opens it; and not on a
+    reload of the list (Try again), where the distribution comes back the same.
+    `replace`: the host left behind is not one Back can show under the new
+    distribution.
+  */
+  const source = current === null ? null : hostsSource(current);
+  const lastSource = useRef(source);
+  useEffect(() => {
+    if (source === null) return;
+    const previous = lastSource.current;
+    lastSource.current = source;
+    if (previous !== null && previous !== source) {
+      navigate(CONSOLE_PATH, { replace: true });
+    }
+  }, [source, navigate]);
 
   if (state.status === "loading") {
     return (
@@ -90,7 +127,11 @@ export default function ConsolePage() {
         </div>
       </header>
 
+      {/* Keyed so nothing carries over from the distribution before: not its
+          host list, and not a host's open editor where two distributions share
+          a host name. */}
       <ConsoleBody
+        key={source}
         distribution={current}
         onUnlinked={(targetId) => {
           // Settings open on it would otherwise reopen on the next one, seeded
