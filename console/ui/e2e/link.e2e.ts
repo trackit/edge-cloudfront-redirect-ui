@@ -42,10 +42,15 @@ test("a viewer gets no form, and who to ask instead", async ({ page, api }) => {
   await page.reload();
 
   await expect(
-    page.getByRole("heading", { name: "Link your distribution" }),
+    page.getByRole("heading", { name: "No distribution linked yet" }),
   ).toBeVisible();
-  await expect(page.getByText("ask an editor to link one")).toBeVisible();
+  await expect(
+    page.getByText("Ask an editor or an admin to set up a distribution"),
+  ).toBeVisible();
   await expect(page.getByLabel("CloudFront distribution")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Link", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("keeps submit disabled until both fields have a value", async ({

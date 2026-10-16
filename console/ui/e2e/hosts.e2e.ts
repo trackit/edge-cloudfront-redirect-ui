@@ -229,6 +229,78 @@ test("an empty target invites adding a host, keeping the rail", async ({
   ).toBeVisible();
 });
 
+test.describe("a viewer", () => {
+  // CF-59. Disabled rather than hidden, like every other write control: a dead
+  // button with a reason reads as a permission. The API refuses either way.
+  test.beforeEach(({ api }) => api.signedInAs("viewer"));
+
+  test("cannot add or delete a host, but can still open one", async ({
+    page,
+    api,
+  }) => {
+    api.setHosts(await seed(page));
+    await gotoConsole(page);
+
+    const rail = page.getByRole("navigation", { name: "Hosts" });
+    const add = rail.getByRole("button", { name: "Add a host" });
+    await expect(add).toBeDisabled();
+    await expect(add).toHaveAttribute("title", /read-only/i);
+
+    const deletes = rail.getByRole("button", { name: /^Delete / });
+    await expect(deletes).toHaveCount(3);
+    for (const button of await deletes.all()) {
+      await expect(button).toBeDisabled();
+      await expect(button).toHaveAttribute("title", /read-only/i);
+    }
+
+    await row(page, "shop.example.com").click();
+    await expect(page).toHaveURL(/\/console\/hosts\/shop\.example\.com$/);
+    await expect(page.locator("h1.host-name")).toHaveText("shop.example.com");
+  });
+
+  test("the keyboard skips add and delete", async ({ page, api }) => {
+    api.setHosts(await seed(page, [www]));
+    await gotoConsole(page);
+    await expect(page.locator("h1.host-name")).toHaveText("www.example.com");
+
+    // From the host link, Tab goes on past its delete button.
+    await row(page, "www.example.com").focus();
+    await page.keyboard.press("Tab");
+    await expect(
+      page.getByRole("button", { name: "Delete www.example.com" }),
+    ).not.toBeFocused();
+    await expect(page.locator(".hosts-del:focus")).toHaveCount(0);
+
+    // And back from the host link, past the add button above it.
+    await row(page, "www.example.com").focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(page.locator(".hosts-add:focus")).toHaveCount(0);
+  });
+
+  test("an empty target says to ask an editor", async ({ page, api }) => {
+    api.setHosts([]);
+    await seed(page);
+    await gotoConsole(page);
+
+    const main = page.locator("main");
+    await expect(
+      main.getByRole("heading", { name: "No hosts yet" }),
+    ).toBeVisible();
+    await expect(
+      main.getByRole("button", { name: "Add a host" }),
+    ).toBeDisabled();
+    await expect(
+      main.getByRole("button", { name: "Add a host" }),
+    ).toHaveAttribute("title", /read-only/i);
+    await expect(main).toContainText("ask an editor to add one");
+    await expect(
+      page
+        .getByRole("navigation", { name: "Hosts" })
+        .getByRole("button", { name: "Add a host" }),
+    ).toBeDisabled();
+  });
+});
+
 test("a failed load says so and can be retried", async ({ page, api }) => {
   await seed(page);
   api.setHosts([www]);

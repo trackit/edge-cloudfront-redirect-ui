@@ -110,7 +110,7 @@ button {
     box-shadow 0.15s ease;
   white-space: nowrap;
 }
-.btn:active {
+.btn:active:not(:disabled) {
   transform: translateY(1px);
 }
 .btn-primary {
@@ -118,7 +118,7 @@ button {
   color: #241500;
   box-shadow: 0 6px 18px rgba(255, 153, 0, 0.28);
 }
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   background: var(--orange-600);
 }
 .btn-ghost {
@@ -126,7 +126,7 @@ button {
   color: var(--text-soft);
   border-color: var(--border);
 }
-.btn-ghost:hover {
+.btn-ghost:hover:not(:disabled) {
   background: var(--surface-2);
   color: var(--text);
 }
@@ -135,7 +135,7 @@ button {
   color: var(--ink);
   border-color: rgba(255, 255, 255, 0.14);
 }
-.btn-dark:hover {
+.btn-dark:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.12);
 }
 .btn-danger {
@@ -143,7 +143,7 @@ button {
   color: var(--red);
   border-color: rgba(255, 107, 107, 0.4);
 }
-.btn-danger:hover {
+.btn-danger:hover:not(:disabled) {
   background: var(--red-glow);
 }
 .btn-sm {
@@ -156,6 +156,12 @@ button {
 }
 .btn-block {
   width: 100%;
+}
+/* Dimmed, and no hover or press feedback: without this a viewer's disabled
+   Redirect or Add a host looked exactly like a live one (CF-59). */
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ---------- badges ---------- */
@@ -577,7 +583,7 @@ button {
   color: var(--ink-soft);
   border-color: var(--line);
 }
-.onboard-actions .btn-ghost:hover {
+.onboard-actions .btn-ghost:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.06);
   color: var(--ink);
 }
@@ -1109,9 +1115,15 @@ button {
 .hosts-del:focus-visible {
   opacity: 1;
 }
-.hosts-del:hover {
+.hosts-del:hover:not(:disabled) {
   background: var(--red-glow);
   color: var(--red);
+}
+/* A viewer's (CF-59): still revealed on hover, dimmed, with the reason in its
+   title. Disabled, so Tab skips it. */
+.hosts-row:hover .hosts-del:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1136,10 +1148,14 @@ button {
   color: var(--text-soft);
   cursor: pointer;
 }
-.hosts-add:hover {
+.hosts-add:hover:not(:disabled) {
   background: var(--surface-2);
   color: var(--text);
   border-color: var(--border-strong);
+}
+.hosts-add:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 @media (max-width: 720px) {
@@ -1300,7 +1316,7 @@ button {
   color: var(--text-soft);
   border-color: var(--border);
 }
-.modal-foot .btn-ghost:hover {
+.modal-foot .btn-ghost:hover:not(:disabled) {
   background: var(--surface-3);
   color: var(--text);
 }

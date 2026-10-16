@@ -10,7 +10,14 @@ interface Props {
   onAdd: () => void;
   /** Takes the whole summary, so the confirmation can name what will be lost. */
   onDelete: (host: HostSummary) => void;
+  /**
+   * False for a viewer: add and delete stay on screen but disabled, with the
+   * reason, like every other write control. The host links still work (CF-59).
+   */
+  canWrite: boolean;
 }
+
+const READ_ONLY = "Your account has read-only access";
 
 /**
  * How many rules a host has, in words. The count includes disabled rules — it
@@ -33,6 +40,7 @@ export default function HostsSidebar({
   current,
   onAdd,
   onDelete,
+  canWrite,
 }: Props) {
   return (
     <nav className="hosts" aria-label="Hosts">
@@ -43,10 +51,11 @@ export default function HostsSidebar({
           className="hosts-add"
           type="button"
           onClick={onAdd}
+          disabled={!canWrite}
           // The icon alone says nothing to a screen reader, and "add" without a
           // noun is no better in a page that also adds rules.
           aria-label="Add a host"
-          title="Add a host"
+          title={canWrite ? "Add a host" : READ_ONLY}
         >
           <IconPlus size={15} />
         </button>
@@ -105,10 +114,11 @@ export default function HostsSidebar({
                 className="hosts-del"
                 type="button"
                 onClick={() => onDelete(host)}
+                disabled={!canWrite}
                 // Names the host: "Delete" alone is ambiguous read out of a list
                 // of them, and this is the destructive one.
                 aria-label={`Delete ${host.host}`}
-                title={`Delete ${host.host}`}
+                title={canWrite ? `Delete ${host.host}` : READ_ONLY}
               >
                 <IconTrash size={14} />
               </button>

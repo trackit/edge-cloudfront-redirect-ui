@@ -152,10 +152,10 @@ export default function OnboardingScreen({
         <div className="onboard-main">
           {readOnly ? (
             <div className="onboard-connect">
-              <h1>Link your distribution</h1>
+              <h1>No distribution linked yet</h1>
               <p className="onboard-sub">
-                No distribution is linked yet. Your account has read-only
-                access: ask an editor to link one.
+                Your account has read-only access, so it cannot link one. Ask an
+                editor or an admin to set up a distribution.
               </p>
             </div>
           ) : (
@@ -206,7 +206,6 @@ export default function OnboardingScreen({
                   className="btn btn-primary btn-lg"
                   type="submit"
                   disabled={!valid || pending}
-                  style={!valid || pending ? { opacity: 0.5 } : undefined}
                 >
                   {pending ? "Linking…" : "Link"}
                   <IconArrow size={18} />
