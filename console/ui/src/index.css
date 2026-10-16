@@ -806,6 +806,14 @@ button {
 .dist-action:hover svg {
   color: var(--orange);
 }
+.dist-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: transparent;
+}
+.dist-action:disabled svg {
+  color: var(--ink-dim);
+}
 .console-empty {
   flex: 1;
   display: flex;
@@ -1301,10 +1309,14 @@ button {
    the hints wrap less aggressively. */
 .modal-settings {
   width: min(480px, calc(100vw - 32px));
+  /* The unlink copy makes it taller than a short laptop screen, and the
+     overlay is fixed: without this the Save button is out of reach. */
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
 }
 
-/* Forget-this-environment band. Red rather than the amber propagation note:
-   disconnect is a deliberate loss of local state, not a fact about the edge. */
+/* Unlink band. Red rather than the amber propagation note: unlinking removes
+   the distribution from everyone's console, not a fact about the edge. */
 .modal-danger {
   display: flex;
   align-items: center;

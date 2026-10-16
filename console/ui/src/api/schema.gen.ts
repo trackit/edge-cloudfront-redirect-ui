@@ -747,7 +747,7 @@ export interface components {
         "application/json": components["schemas"]["Error"];
       };
     };
-    /** @description That table is already registered as another target. A table is identified by (account, region, tableName) — the account coming from `roleArn`, so two accounts may register the same table name, but two roles in one account may not. */
+    /** @description Another target already has that name. A target is one linked distribution, named after its distribution ID, so the name is unique (compared without case); two targets may share a table. */
     Conflict: {
       headers: {
         [name: string]: unknown;

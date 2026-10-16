@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import AddHostModal from "./AddHostModal";
 import DeleteHostDialog from "./DeleteHostDialog";
@@ -18,6 +18,11 @@ import type { Distribution } from "../domain/types";
 
 interface Props {
   distribution: Distribution;
+  /**
+   * The API no longer knows this distribution: a teammate unlinked it since the
+   * list was loaded. The page reloads the list, which moves to the next one.
+   */
+  onUnlinked?: (targetId: string) => void;
 }
 
 /** What the rule editor is open on: an existing rule, or the kind being created. */
@@ -30,8 +35,13 @@ type EditorTarget = Rule | "redirect" | "rewrite" | null;
  * Kept out of ConsolePage because that page owns which *screen* is showing
  * (connect, settings, console); this owns what the console screen contains.
  */
-export default function ConsoleBody({ distribution }: Props) {
+export default function ConsoleBody({ distribution, onUnlinked }: Props) {
   const { state, reload } = useHosts(distribution.targetId);
+  const unlinked =
+    state.status === "failed" && state.error.code === "UNKNOWN_TARGET";
+  useEffect(() => {
+    if (unlinked) onUnlinked?.(distribution.targetId);
+  }, [unlinked, onUnlinked, distribution.targetId]);
   const [adding, setAdding] = useState(false);
   // The whole summary, not just the name: the confirmation names the rules that
   // go with it, and those counts are only in the list.

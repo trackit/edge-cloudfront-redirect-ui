@@ -2,20 +2,26 @@ import { useEffect, useId, useRef, useState } from "react";
 import DistributionFields from "./DistributionFields";
 import { IconClose } from "./icons";
 import { ApiError } from "../api";
-import { connectDistribution } from "../domain/distribution";
+import { useCanWrite } from "../auth/useAuth";
+import { updateDistribution } from "../domain/distribution";
 import { useFocusTrap } from "../useFocusTrap";
 import type { Distribution, DistributionDraft } from "../domain/types";
 
 interface Props {
   distribution: Distribution;
-  /** Saved — re-registered if needed, then stored in place of the current one. */
+  /** Saved on the distribution's target, for the whole team. */
   onSave: (next: Distribution) => void;
-  /** Forget this environment in this browser and close. */
-  onDisconnect: () => void;
+  /**
+   * Unlinks the distribution for the whole team, moves to the next one and
+   * closes. Rejects when the API refuses, so the dialog can say why.
+   */
+  onUnlink: () => Promise<void>;
   onClose: () => void;
 }
 
 const errorHeading = (error: ApiError): string => {
+  // Its target is gone: a teammate unlinked it since the list was loaded.
+  if (error.status === 404) return "This distribution was unlinked";
   switch (error.code) {
     case "NETWORK_ERROR":
       return "Cannot reach the API";
@@ -23,13 +29,15 @@ const errorHeading = (error: ApiError): string => {
       return "Check these details";
     case "TARGET_UNREACHABLE":
       return "The API cannot reach that table";
+    case "TARGET_EXISTS":
+      return "That distribution is already linked";
     default:
       return "Could not save";
   }
 };
 
 /**
- * Edit or forget the connected environment.
+ * Edit or unlink the selected distribution.
  *
  * A centred overlay rather than a native <dialog>: under React Strict Mode the
  * dialog's mount/unmount probe calls `close()`, which fires `onClose` and clears
@@ -40,9 +48,12 @@ const errorHeading = (error: ApiError): string => {
 export default function SettingsModal({
   distribution,
   onSave,
-  onDisconnect,
+  onUnlink,
   onClose,
 }: Props) {
+  // A viewer reads the settings but may change neither them nor the list: the
+  // API refuses both, so neither is offered.
+  const canWrite = useCanWrite();
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -51,6 +62,9 @@ export default function SettingsModal({
     distributionId: distribution.distributionId,
     tableName: distribution.tableName,
     region: distribution.region,
+    ...(distribution.edgeFunctionArn
+      ? { edgeFunctionArn: distribution.edgeFunctionArn }
+      : {}),
   }));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
@@ -77,6 +91,30 @@ export default function SettingsModal({
   const tableName = draft.tableName.trim();
   const valid = distributionId !== "" && tableName !== "";
 
+  const fail = (caught: unknown, fallback: string): void => {
+    setError(
+      caught instanceof ApiError
+        ? caught
+        : new ApiError({
+            status: 0,
+            code: "MALFORMED_RESPONSE",
+            message: fallback,
+          }),
+    );
+    setPending(false);
+  };
+
+  const unlink = async (): Promise<void> => {
+    if (pending) return;
+    setPending(true);
+    setError(null);
+    try {
+      await onUnlink();
+    } catch (caught) {
+      fail(caught, "Something went wrong unlinking the distribution");
+    }
+  };
+
   const submit = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
     if (!valid || pending) return;
@@ -85,23 +123,17 @@ export default function SettingsModal({
     setError(null);
     try {
       onSave(
-        await connectDistribution({
+        await updateDistribution(distribution, {
           distributionId,
           tableName,
           region: draft.region,
+          ...(draft.edgeFunctionArn !== undefined
+            ? { edgeFunctionArn: draft.edgeFunctionArn }
+            : {}),
         }),
       );
     } catch (caught) {
-      setError(
-        caught instanceof ApiError
-          ? caught
-          : new ApiError({
-              status: 0,
-              code: "MALFORMED_RESPONSE",
-              message: "Something went wrong saving the distribution",
-            }),
-      );
-      setPending(false);
+      fail(caught, "Something went wrong saving the distribution");
     }
   };
 
@@ -124,7 +156,7 @@ export default function SettingsModal({
           <header className="modal-head">
             <div>
               <h2 id={titleId}>Settings</h2>
-              <p className="modal-sub">Connected CloudFront distribution</p>
+              <p className="modal-sub">Linked CloudFront distribution</p>
             </div>
             <button
               className="modal-x"
@@ -160,23 +192,30 @@ export default function SettingsModal({
               </div>
             )}
 
-            <div className="modal-danger">
-              <div className="modal-danger-text">
-                <strong>Disconnect</strong>
-                <span>
-                  Forget this distribution and return to the first-connection
-                  screen.
-                </span>
+            {canWrite && (
+              <div className="modal-danger">
+                <div className="modal-danger-text">
+                  <strong>Unlink distribution</strong>
+                  <span>
+                    Removes this distribution from the console for everyone on
+                    the team. It stays live: its rules keep redirecting and
+                    rewriting at the edge, and you can link it again anytime.
+                  </span>
+                  <span>
+                    You&apos;ll switch to your next distribution, or back to the
+                    Link your distribution screen if it was the last one.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={pending}
+                  onClick={() => void unlink()}
+                >
+                  Unlink
+                </button>
               </div>
-              <button
-                type="button"
-                className="btn btn-danger"
-                disabled={pending}
-                onClick={onDisconnect}
-              >
-                Disconnect
-              </button>
-            </div>
+            )}
           </div>
 
           <footer className="modal-foot">
@@ -191,7 +230,8 @@ export default function SettingsModal({
             <button
               className="btn btn-primary"
               type="submit"
-              disabled={!valid || pending}
+              disabled={!valid || pending || !canWrite}
+              title={canWrite ? undefined : "Your account has read-only access"}
             >
               {pending ? "Saving…" : "Save changes"}
             </button>

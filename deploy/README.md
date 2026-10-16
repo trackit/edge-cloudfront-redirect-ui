@@ -78,8 +78,8 @@ workflow to hold.
 6. Writes the console URL, the demo site, the distribution id, the table name,
    its region and the user pool id into the job summary.
 
-That last step is not a nicety. The console's connect screen is per-browser
-`localStorage`, so everyone who opens the URL types those values in by hand.
+That last step is not a nicety: the first editor to open the URL links the
+distribution with those values, and from then on the whole team sees it.
 
 It does **not** create sign-in accounts. `console/api/infra/seed-users.sh` prints
 the passwords it generates once, and a CI log is the wrong place for them — run it

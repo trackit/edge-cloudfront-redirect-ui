@@ -167,9 +167,9 @@ jobs:
         run: ./seed-demo.sh
         working-directory: examples/infra
 
-      # The console's connect screen is per-browser localStorage, so everyone who
-      # opens the URL types the distribution id, table name and region in by hand.
-      # Without this, every "send me the link" is a dig through Terraform output.
+      # The first editor to open the console links the distribution with the
+      # distribution id, table name and region. Without this, every "send me the
+      # link" is a dig through Terraform output.
       - name: Summarise the environment
         run: |
           {

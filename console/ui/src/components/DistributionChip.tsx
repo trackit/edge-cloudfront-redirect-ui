@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useCanWrite } from "../auth/useAuth";
 import type { Distribution } from "../domain/types";
 import {
   IconCheck,
@@ -11,13 +12,13 @@ import {
 interface Props {
   distributions: readonly Distribution[];
   current: Distribution;
-  onSelect: (distributionId: string) => void;
+  onSelect: (targetId: string) => void;
   onAddDistribution: () => void;
   onOpenSettings: () => void;
 }
 
 /**
- * The connected environment in the console bar, and the actions behind it.
+ * The selected distribution in the console bar, and the actions behind it.
  *
  * The three values were flat text before, which left nowhere to put an action
  * that belongs to the environment rather than to the page. Collapsing them into
@@ -26,7 +27,7 @@ interface Props {
  *
  * The panel replaces the bar's `Disconnect` button. That button existed only so
  * the connect screen stayed reachable once an environment was configured, and
- * "Add distribution" reaches it now — so the escape hatch survives without a
+ * "Link distribution" reaches it now — so the escape hatch survives without a
  * destructive-sounding action sitting permanently in the bar.
  */
 export default function DistributionChip({
@@ -36,6 +37,7 @@ export default function DistributionChip({
   onAddDistribution,
   onOpenSettings,
 }: Props) {
+  const canWrite = useCanWrite();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -117,14 +119,13 @@ export default function DistributionChip({
           className="dist-panel"
           id="dist-panel"
           role="group"
-          aria-label="Connected distributions"
+          aria-label="Linked distributions"
         >
           <p className="dist-panel-head">Distributions</p>
 
           {/*
-            Keyed on `distributionId`, not on `targetId`: two distributions served
-            by the same rules table share one target id, so keying on that would
-            collapse them into a single row. See the note in `distribution.ts`.
+            Keyed on `targetId`: each linked distribution is its own target, even
+            when two share a rules table.
 
             The selected row is still a button. Clicking it re-selects what is
             already selected, which is a no-op — but disabling it would make the
@@ -132,14 +133,14 @@ export default function DistributionChip({
             in the list.
           */}
           {distributions.map((entry) => {
-            const isCurrent = entry.distributionId === current.distributionId;
+            const isCurrent = entry.targetId === current.targetId;
             return (
               <button
-                key={entry.distributionId}
+                key={entry.targetId}
                 type="button"
                 className={`dist-row${isCurrent ? " is-current" : ""}`}
                 aria-current={isCurrent}
-                onClick={act(() => onSelect(entry.distributionId))}
+                onClick={act(() => onSelect(entry.targetId))}
               >
                 <span className="dist-ico" aria-hidden="true">
                   <IconServer size={14} />
@@ -170,9 +171,11 @@ export default function DistributionChip({
               type="button"
               className="dist-action"
               onClick={act(onAddDistribution)}
+              disabled={!canWrite}
+              title={canWrite ? undefined : "Your account has read-only access"}
             >
               <IconPlus size={16} />
-              Add distribution
+              Link distribution
             </button>
             <button
               type="button"

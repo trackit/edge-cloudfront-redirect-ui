@@ -1,11 +1,10 @@
 import { expect, test as base, type Page, type Route } from "@playwright/test";
 import type { GeoCheck, HostSummary, Rule } from "../src/api";
-import type { Stored } from "../src/domain/distribution";
 import type { Distribution } from "../src/domain/types";
 
 /**
- * The two things every spec here needs: a stubbed API, and a browser that
- * already remembers a distribution.
+ * The two things every spec here needs: a stubbed API, and a team that already
+ * has a linked distribution.
  *
  * Interception happens in the page, so it lands *before* Vite's `/api` proxy —
  * nothing leaves the browser. Anything a spec forgets to stub therefore hits the
@@ -28,8 +27,17 @@ export interface ApiStub {
    * 201 — it is not consumed, so a spec that submits twice gets it twice.
    */
   createReply: (reply: { status: number; body: unknown }) => void;
-  /** What `GET /targets` returns. */
+  /**
+   * The team's targets — what `GET /targets` returns. Stateful like a registry:
+   * a `POST` adds one (a 409 for a name already taken), a `PUT` replaces one
+   * and a `DELETE` removes it, so a reload sees what the page changed.
+   */
   setTargets: (targets: unknown[]) => void;
+  /**
+   * Answers every subsequent `DELETE /targets/{id}` with this instead of
+   * removing the target.
+   */
+  removeTargetReply: (reply: { status: number; body: unknown }) => void;
   /**
    * What `GET …/hosts` returns. The console fetches this on mount, so it is the
    * state the page starts in rather than something a spec arranges afterwards.
@@ -119,7 +127,8 @@ export interface ApiStub {
 const fakeIdToken = (role: string): string => {
   const payload = Buffer.from(
     JSON.stringify({
-      sub: "e2e-user",
+      // One user per role, so the selection each keeps is their own.
+      sub: `e2e-${role}`,
       email: `${role}@example.com`,
       "cognito:groups": [role],
     }),
@@ -143,13 +152,15 @@ const jsonOf = (route: Route): unknown => {
 
 /**
  * Stubs the console API. The default answer to a create is a 201 echoing the
- * body with a server-assigned id, which is the shape `connectDistribution`
+ * body with a server-assigned id, which is the shape `linkDistribution`
  * expects — a spec only overrides it when the failure is the point.
  */
 export const stubApi = async (page: Page): Promise<ApiStub> => {
   const calls: ApiStub["calls"] = [];
   let create: { status: number; body: unknown } | null = null;
-  let targets: unknown[] = [];
+  let targets: { id: string; name: string }[] = [];
+  let removeTarget: { status: number; body: unknown } | null = null;
+  let generated = 0;
   let hosts: HostSummary[] = [];
   let createHost: { status: number; body: unknown } | null = null;
   let deleteHost: { status: number; body: unknown } | null = null;
@@ -262,10 +273,26 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
       }
 
       if (method === "POST" && url.pathname.endsWith("/targets")) {
-        const reply = create ?? {
-          status: 201,
-          body: { id: "t-generated", ...(body as Record<string, unknown>) },
-        };
+        const input = body as { name: string };
+        const taken = targets.some(
+          (t) => t.name.toLowerCase() === input.name.toLowerCase(),
+        );
+        let reply = create;
+        if (reply === null && taken) {
+          reply = {
+            status: 409,
+            body: errorBody("TARGET_EXISTS", `"${input.name}" is linked`),
+          };
+        }
+        if (reply === null) {
+          generated += 1;
+          const created = {
+            ...input,
+            id: generated === 1 ? "t-generated" : `t-generated-${generated}`,
+          };
+          targets = [...targets, created];
+          reply = { status: 201, body: created };
+        }
         await route.fulfill({
           status: reply.status,
           contentType: "application/json",
@@ -283,6 +310,34 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
           contentType: "application/json",
           body: JSON.stringify(geoCheck),
         });
+        return;
+      }
+
+      const targetItem = TARGET_ITEM.exec(url.pathname);
+      if (targetItem && method === "PUT") {
+        const id = decodeURIComponent(targetItem[1]);
+        const updated = { ...(body as { name: string }), id };
+        targets = targets.map((t) => (t.id === id ? updated : t));
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(updated),
+        });
+        return;
+      }
+
+      if (targetItem && method === "DELETE") {
+        const id = decodeURIComponent(targetItem[1]);
+        if (removeTarget !== null) {
+          await route.fulfill({
+            status: removeTarget.status,
+            contentType: "application/json",
+            body: JSON.stringify(removeTarget.body),
+          });
+          return;
+        }
+        targets = targets.filter((t) => t.id !== id);
+        await route.fulfill({ status: 204, body: "" });
         return;
       }
 
@@ -480,7 +535,10 @@ export const stubApi = async (page: Page): Promise<ApiStub> => {
       create = reply;
     },
     setTargets: (next) => {
-      targets = next;
+      targets = next as { id: string; name: string }[];
+    },
+    removeTargetReply: (reply) => {
+      removeTarget = reply;
     },
     setHosts: (next) => {
       hosts = next;
@@ -574,6 +632,9 @@ export const gotoConsole = async (page: Page): Promise<void> => {
   await expect(page.getByRole("alert")).toHaveCount(0);
 };
 
+/** `…/targets/{id}`, one target — not its hosts or geo check below it. */
+const TARGET_ITEM = /\/targets\/([^/]+)$/;
+
 /** `…/targets/{id}/hosts`, the collection. */
 const HOSTS_COLLECTION = /\/hosts$/;
 
@@ -597,8 +658,12 @@ export const host = (
   ...over,
 });
 
-export const STORAGE_KEY = "edgeroute.distributions";
-export const LEGACY_STORAGE_KEY = "edgeroute.distribution";
+/** Matches `SELECTION_KEY_PREFIX` in `src/domain/distribution.ts`. */
+export const SELECTION_KEY_PREFIX = "edgeroute.selected.";
+
+/** Where a role's selection is kept: the fake id token's `sub` is per role. */
+export const selectionKey = (role: "editor" | "viewer") =>
+  `${SELECTION_KEY_PREFIX}e2e-${role}`;
 
 export const distribution = (
   over: Partial<Distribution> = {},
@@ -610,39 +675,50 @@ export const distribution = (
   ...over,
 });
 
+/** A distribution as the API lists it: a target named after its ID. */
+export const targetOf = (d: Distribution) => ({
+  id: d.targetId,
+  name: d.distributionId,
+  tableName: d.tableName,
+  region: d.region,
+  ...(d.roleArn ? { roleArn: d.roleArn } : {}),
+  ...(d.edgeFunctionArn ? { edgeFunctionArn: d.edgeFunctionArn } : {}),
+});
+
+/** The stub each page was given, so `seedStorage` can reach it from a page. */
+const stubs = new WeakMap<Page, ApiStub>();
+
 /**
- * Seeds localStorage before the app boots, so a spec about the console does not
- * have to walk the connect form to get there. `addInitScript` runs before any
- * page script, which is the only ordering that works — the store reads storage
- * during the first render.
+ * Gives the team these linked distributions, and selects `current` for every
+ * role before the app boots, so a spec about the console does not have to walk
+ * the link form to get there.
  *
- * Writes only when the key is absent, because this runs again on every
- * navigation: seeding unconditionally would restore the fixture on reload and
- * quietly make "survives a reload" untestable.
+ * The selection is written only when absent, because the init script runs again
+ * on every navigation: writing it unconditionally would restore it on reload
+ * and quietly make "survives a reload" untestable.
  */
-const seedOnce = (page: Page, key: string, value: unknown) =>
-  page.addInitScript(
-    ([k, json]) => {
-      if (window.localStorage.getItem(k) === null) {
-        window.localStorage.setItem(k, json);
+export const seedStorage = async (
+  page: Page,
+  value: { distributions: readonly Distribution[]; current: string | null },
+): Promise<void> => {
+  const stub = stubs.get(page);
+  if (stub === undefined) throw new Error("seedStorage needs the api fixture");
+  stub.setTargets(value.distributions.map(targetOf));
+
+  const selected = value.distributions.find(
+    (d) => d.distributionId === value.current,
+  )?.targetId;
+  if (selected === undefined) return;
+  await page.addInitScript(
+    ([keys, id]) => {
+      for (const k of keys) {
+        if (window.localStorage.getItem(k) === null) {
+          window.localStorage.setItem(k, id);
+        }
       }
     },
-    [key, JSON.stringify(value)] as const,
+    [[selectionKey("editor"), selectionKey("viewer")], selected] as const,
   );
-
-// `Stored` itself rather than a hand-written copy of its fields: the copy was
-// mutable where the real type is readonly, so it had already stopped accepting
-// the values the app produces, and a spec seeding one would not compile.
-export const seedStorage = async (page: Page, value: Stored): Promise<void> => {
-  await seedOnce(page, STORAGE_KEY, value);
-};
-
-/** Seeds the pre-switcher single-distribution key, for the migration spec. */
-export const seedLegacyStorage = async (
-  page: Page,
-  value: Distribution,
-): Promise<void> => {
-  await seedOnce(page, LEGACY_STORAGE_KEY, value);
 };
 
 /**
@@ -656,9 +732,9 @@ export const chip = (page: Page) =>
 export const rows = (page: Page) => page.locator("#dist-panel [aria-current]");
 
 export const panel = (page: Page) =>
-  page.getByRole("group", { name: "Connected distributions" });
+  page.getByRole("group", { name: "Linked distributions" });
 
-export const readStorage = (page: Page, key = STORAGE_KEY) =>
+export const readStorage = (page: Page, key: string) =>
   page.evaluate((k) => window.localStorage.getItem(k), key);
 
 /**
@@ -673,7 +749,9 @@ export const readStorage = (page: Page, key = STORAGE_KEY) =>
 export const test = base.extend<{ api: ApiStub }>({
   api: [
     async ({ page }, use) => {
-      await use(await stubApi(page));
+      const stub = await stubApi(page);
+      stubs.set(page, stub);
+      await use(stub);
     },
     { auto: true },
   ],

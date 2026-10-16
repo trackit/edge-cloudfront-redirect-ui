@@ -18,7 +18,7 @@ export type AuthStatus = "unknown" | "signed-in" | "signed-out";
 export interface AuthState {
   status: AuthStatus;
   /** Claims from the id token: who is signed in and what they may do. */
-  user?: { email?: string; groups: string[] };
+  user?: { sub?: string; email?: string; groups: string[] };
   /**
    * Takes the session the code exchange just issued and treats the visitor as
    * signed in.
@@ -51,6 +51,7 @@ const userFrom = (idToken: string): AuthState["user"] => {
   const claims = readClaims(idToken);
   const groups = claims["cognito:groups"];
   return {
+    ...(typeof claims.sub === "string" ? { sub: claims.sub } : {}),
     ...(typeof claims.email === "string" ? { email: claims.email } : {}),
     groups: Array.isArray(groups) ? groups.map(String) : [],
   };

@@ -94,7 +94,6 @@ describe("targets API", () => {
   });
 
   it("GET /targets lists sorted by name", async () => {
-    // Distinct tables — the same (region, tableName) twice is a 409.
     await create({ name: "Zebra", tableName: "rules-zebra" });
     await create({ name: "Alpha", tableName: "rules-alpha" });
 
@@ -185,13 +184,17 @@ describe("targets API", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("POST /targets 409s the same table registered twice", async () => {
+  it("POST /targets 409s a name that is already taken, whatever its case", async () => {
     await create();
 
-    // Different name, same (region, tableName) — two entries the UI can't tell
-    // apart, both writing to the same data.
+    // A target is one linked distribution, named after its distribution ID: a
+    // second entry under that name would list the distribution twice.
     const res = await handler(
-      event("POST", "/targets", { ...input, name: "Prod copy" }),
+      event("POST", "/targets", {
+        ...input,
+        name: "PROD",
+        tableName: "rules-other",
+      }),
     );
     expect(res.statusCode).toBe(409);
     expect(parse(res.body)).toMatchObject({
@@ -199,25 +202,50 @@ describe("targets API", () => {
     });
   });
 
-  it("PUT /targets/:id 409s when repointed at another target's table", async () => {
-    const first = await create();
-    await create({ name: "Staging", tableName: "rules-staging" });
+  it("POST /targets 409s a distribution already linked by its ARN", async () => {
+    await create({ name: "E1ABCDEFGHIJKL" });
 
     const res = await handler(
-      event("PUT", `/targets/${first.id}`, {
+      event("POST", "/targets", {
         ...input,
-        tableName: "rules-staging",
+        name: "arn:aws:cloudfront::123456789012:distribution/E1ABCDEFGHIJKL",
+        tableName: "rules-other",
       }),
     );
     expect(res.statusCode).toBe(409);
   });
 
-  it("PUT /targets/:id allows keeping its own table", async () => {
-    const created = await create();
+  it("POST /targets allows two targets on the same table", async () => {
+    // Two distributions served by one rules table are two linked distributions.
+    await create();
 
-    // The uniqueness check must exclude the target being updated.
     const res = await handler(
-      event("PUT", `/targets/${created.id}`, { ...input, name: "Renamed" }),
+      event("POST", "/targets", { ...input, name: "Prod copy" }),
+    );
+    expect(res.statusCode).toBe(201);
+  });
+
+  it("PUT /targets/:id 409s a rename onto another target's name", async () => {
+    const first = await create();
+    await create({ name: "Staging", tableName: "rules-staging" });
+
+    const res = await handler(
+      event("PUT", `/targets/${first.id}`, { ...input, name: "Staging" }),
+    );
+    expect(res.statusCode).toBe(409);
+  });
+
+  it("PUT /targets/:id allows keeping its own name and repointing its table", async () => {
+    const created = await create();
+    await create({ name: "Staging", tableName: "rules-staging" });
+
+    // The uniqueness check must exclude the target being updated, and another
+    // target's table is no longer a clash.
+    const res = await handler(
+      event("PUT", `/targets/${created.id}`, {
+        ...input,
+        tableName: "rules-staging",
+      }),
     );
     expect(res.statusCode).toBe(200);
   });
@@ -236,93 +264,6 @@ describe("targets API", () => {
       }),
     );
     expect((parse(padded.body) as { name: string }).name).toBe("Prod");
-  });
-
-  it("POST /targets allows the same table name in two different accounts", async () => {
-    // A table name is only unique within an account, so two accounts following
-    // the same naming convention both have rules-prod in us-east-1. Keying the
-    // uniqueness check on (region, tableName) alone would 409 the second one —
-    // the exact case the per-target role exists to support.
-    const first = await handler(
-      event("POST", "/targets", {
-        ...input,
-        roleArn: "arn:aws:iam::111111111111:role/edgeroute-target-prod",
-      }),
-    );
-    expect(first.statusCode).toBe(201);
-
-    const second = await handler(
-      event("POST", "/targets", {
-        ...input,
-        name: "Prod (other account)",
-        roleArn: "arn:aws:iam::222222222222:role/edgeroute-target-prod",
-      }),
-    );
-    expect(second.statusCode).toBe(201);
-  });
-
-  it("POST /targets still 409s the same table via the same role", async () => {
-    const roleArn = "arn:aws:iam::111111111111:role/edgeroute-target-prod";
-    await handler(event("POST", "/targets", { ...input, roleArn }));
-
-    const again = await handler(
-      event("POST", "/targets", { ...input, name: "Copy", roleArn }),
-    );
-    expect(again.statusCode).toBe(409);
-  });
-
-  it("POST /targets 409s two different roles in the SAME account", async () => {
-    // What identifies a table is (account, region, tableName). Two roles in one
-    // account granting access to one table are two views of one table, not two
-    // targets — keying on the whole ARN would let both through.
-    await handler(
-      event("POST", "/targets", {
-        ...input,
-        roleArn: "arn:aws:iam::111111111111:role/role-one",
-      }),
-    );
-
-    const second = await handler(
-      event("POST", "/targets", {
-        ...input,
-        name: "Same table, other role",
-        roleArn: "arn:aws:iam::111111111111:role/role-two",
-      }),
-    );
-    expect(second.statusCode).toBe(409);
-  });
-
-  it("POST /targets 409s the same table registered with and without a role", async () => {
-    // "No role" means the API's own account, which can't be named without an STS
-    // call, so it is treated as clashing with any account — failing closed.
-    await handler(event("POST", "/targets", input));
-
-    const second = await handler(
-      event("POST", "/targets", {
-        ...input,
-        name: "Now with a role",
-        roleArn: "arn:aws:iam::111111111111:role/edgeroute-target-prod",
-      }),
-    );
-    expect(second.statusCode).toBe(409);
-  });
-
-  it("PUT /targets/:id cannot repoint onto another target's table by adding a role", async () => {
-    const first = await create();
-    const second = await create({
-      name: "Staging",
-      tableName: "rules-staging",
-    });
-
-    const res = await handler(
-      event("PUT", `/targets/${second.id}`, {
-        ...input,
-        name: "Staging",
-        roleArn: "arn:aws:iam::111111111111:role/edgeroute-target-prod",
-      }),
-    );
-    expect(res.statusCode).toBe(409);
-    expect(first.id).not.toBe(second.id);
   });
 
   it("POST /targets round-trips an optional roleArn and rejects a bad one", async () => {
