@@ -10,8 +10,13 @@ interface Props {
 
 /** How far the panel keeps away from the edges of the window. */
 const MARGIN = 8;
-/** Narrower only when the window is: see `place`. */
-const WIDTH = 460;
+/**
+ * Room for the four tabs on one row in the widest common fallback font —
+ * DejaVu Sans needs ~485px for them, and Inter is not shipped, so that is what
+ * a Linux browser without it renders. Narrower only when the window is: see
+ * `place`.
+ */
+const WIDTH = 540;
 /** Taller than the longest tab, so on a normal window nothing is capped. */
 const MAX_HEIGHT = 520;
 /** The gap between the button and the panel below it. */
