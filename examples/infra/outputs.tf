@@ -110,3 +110,30 @@ output "test_rewrite_command" {
   description = "Before the rule: 404 from S3. After it: 200 and the page the rule points at."
   value       = "curl -i https://${aws_cloudfront_distribution.this.domain_name}/old-pricing"
 }
+
+# The origins a rewrite can switch to (CF-60). Paste them into the console's
+# "Change origin" fields; seed-demo.sh writes a rule to each.
+output "s3_rewrite_origin_domain_name" {
+  value       = local.use_placeholder_origin ? aws_s3_bucket.s3_rewrite[0].bucket_regional_domain_name : null
+  description = "The second bucket's domain, for a rewrite's S3 origin (auth method origin-access-identity, region below). Null behind an existing origin."
+}
+
+output "s3_rewrite_origin_region" {
+  value       = local.use_placeholder_origin ? aws_s3_bucket.s3_rewrite[0].region : null
+  description = "The second bucket's region, which an origin-access-identity S3 origin has to name."
+}
+
+output "echo_origin_domain_name" {
+  value       = trimsuffix(trimprefix(aws_lambda_function_url.echo.function_url, "https://"), "/")
+  description = "The echo function's domain, for a rewrite's custom origin (HTTPS, port 443). It answers with the request it received."
+}
+
+output "test_s3_rewrite_command" {
+  description = "Before the S3 rewrite: 403 from the distribution's own bucket. After it: 200 and the second bucket's page."
+  value       = "curl -i https://${aws_cloudfront_distribution.this.domain_name}/s3-rewrite.html"
+}
+
+output "test_custom_rewrite_command" {
+  description = "Before the custom-origin rewrite: 403 from the distribution's own bucket. After it: 200 and the request the echo received."
+  value       = "curl -i 'https://${aws_cloudfront_distribution.this.domain_name}/echo?from=edge'"
+}

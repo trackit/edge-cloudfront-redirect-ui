@@ -10,6 +10,8 @@ DynamoDB (rules)  ◄─── you insert a rule here (steps 2 and 4)
       │
 CloudFront ──(viewer-request)──► L@E redirect (301/302)
            └─(origin-request)──► L@E rewrite ──► S3 placeholder origin
+                                              ├──► second S3 bucket   (a rule can switch to it)
+                                              └──► echo function URL  (a rule can switch to it)
 ```
 
 ## Prerequisites
@@ -124,11 +126,52 @@ That is baked into the bundle at package time, so changing it republishes the
 function and the distribution redeploys (~5–15 min). Set it before the demo, not
 during it.
 
-> Two behaviours cannot be seen against this S3 origin, since nothing echoes the
+> Two behaviours cannot be seen against this S3 origin, since it does not echo the
 > request back: `X-EdgeRoute-Viewer-Host` being removed before the request leaves
 > for the origin, and `forwardSettings.useIncomingQueryString: false` dropping the
-> query string. Both are covered by unit tests; observing them live needs an
-> origin that echoes its request.
+> query string. The echo origin in the next section shows both.
+
+## 5. See a rewrite switch origin
+
+A rewrite can also send the request to a different origin, which the console
+calls **Change origin**: an S3 bucket or a custom origin. The example creates one
+of each to switch to, and `./seed-demo.sh` writes a rule for both:
+
+| Path               | Origin                                            | Shows                                                   |
+| ------------------ | ------------------------------------------------- | ------------------------------------------------------- |
+| `/s3-rewrite.html` | a second private bucket (`s3_rewrite_origin_*`)   | its own page; the distribution's bucket has no such key |
+| `/echo`            | a Lambda function URL (`echo_origin_domain_name`) | the request it received, as JSON                        |
+
+```bash
+eval "$(terraform output -raw test_s3_rewrite_command)"      # 200, "S3 rewrite"
+eval "$(terraform output -raw test_custom_rewrite_command)"  # 200, the echo
+```
+
+Without the rules, both answer 403 from the distribution's own bucket.
+
+To build the rules in the console instead, take the origin from the outputs:
+
+- **S3 origin**: bucket domain `s3_rewrite_origin_domain_name`, auth method
+  `origin-access-identity`, region `s3_rewrite_origin_region`.
+- **Custom origin**: domain `echo_origin_domain_name`, HTTPS, port 443.
+
+What the echo shows:
+
+- `path` is the rewritten path, and `headers.host` is the echo's own domain:
+  the origin got its own Host, not the viewer's.
+- `x-edgeroute-viewer-host` is absent: the edge removed it before the request
+  left.
+- `query` is what the viewer sent, until the rule's **Use incoming query
+  string** is turned off. Then it is empty.
+
+> **Why the example uses an origin access identity.** AWS now recommends origin
+> access control (OAC) over an OAI, but OAC does not sign a request whose origin
+> Lambda@Edge changed. An S3 origin set by the edge with `origin-access-identity`
+> has to use the same OAI as the origin it replaced, and the edge cannot use an
+> OAI at all when the request starts at a custom origin. So both buckets trust the
+> distribution's one OAI, and with `origin_domain_name` set there is no second
+> bucket. The same applies to any distribution whose rules switch to a private
+> bucket.
 
 ## Smoke-test country conditions
 
@@ -147,7 +190,7 @@ a `CloudFront-Viewer-Country` request header changes nothing. The rules are
 deleted on exit (`KEEP=1` keeps them). It exits non-zero on any failure, and
 says what usually causes each one.
 
-## 5. Tear down
+## 6. Tear down
 
 ```bash
 terraform destroy
@@ -161,7 +204,7 @@ terraform destroy
 
 ## Using your own origin
 
-By default the example creates a private S3 bucket (OAC-locked, `force_destroy`)
+By default the example creates a private S3 bucket (OAI-locked, `force_destroy`)
 as the origin. To put the distribution in front of an existing origin instead:
 
 ```bash
@@ -169,6 +212,8 @@ terraform apply -var 'origin_domain_name=my-app.example.com'
 ```
 
 No placeholder bucket is created; the distribution uses a custom (HTTPS) origin.
+Nor is the second bucket, since the edge cannot switch from a custom origin to a
+bucket behind an OAI. The echo origin is still created.
 
 ## Cost note
 

@@ -112,10 +112,10 @@ run "viewer_host_header_is_forwarded_to_the_origin" {
   }
 
   # Managed-AllViewer would also do it, and would also forward Host — which an S3
-  # origin behind OAC rejects, since it has to receive the bucket's own hostname.
+  # origin behind an OAI rejects, since it has to receive the bucket's own hostname.
   assert {
     condition     = aws_cloudfront_origin_request_policy.viewer_host.headers_config[0].header_behavior == "whitelist"
-    error_message = "forward the header by name; forwarding all viewer headers would send Host and break the OAC origin"
+    error_message = "forward the header by name; forwarding all viewer headers would send Host and break the S3 origin"
   }
 
   # Without it, every country condition is skipped.
@@ -151,6 +151,66 @@ run "placeholder_origin_serves_more_than_one_page" {
   assert {
     condition     = alltrue([for o in values(aws_s3_object.page) : o.content_type == "text/html"])
     error_message = "each demo page must be served as text/html, or a browser will offer to download it"
+  }
+}
+
+# =============================================================================
+# Origins a rewrite can switch to (CF-60)
+# =============================================================================
+
+run "s3_rewrite_bucket_shares_the_distributions_oai" {
+  command = plan
+
+  # An edge-set S3 origin with `origin-access-identity` must use the OAI of the
+  # origin it replaced, and OAC signs nothing the edge redirected. So the
+  # distribution's own origin has to be on the same OAI the second bucket trusts.
+  assert {
+    condition     = alltrue([for o in aws_cloudfront_distribution.this.origin : length(o.s3_origin_config) == 1])
+    error_message = "the placeholder origin must use an OAI, or a rewrite to the second bucket is refused"
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket.s3_rewrite) == 1 && length(aws_s3_bucket_policy.s3_rewrite) == 1
+    error_message = "a second bucket, readable through the OAI, is what an S3 rewrite switches to"
+  }
+
+  assert {
+    condition     = aws_s3_object.s3_rewrite_page[0].key == "s3-rewrite.html" && !contains(keys(aws_s3_object.page), "s3-rewrite.html")
+    error_message = "the S3 rewrite page must exist on the second bucket only, or the rule's effect cannot be told apart"
+  }
+}
+
+run "no_s3_rewrite_bucket_behind_an_existing_origin" {
+  command = plan
+
+  variables {
+    origin_domain_name = "origin.example.com"
+  }
+
+  # An OAI cannot be used when the request starts at a custom origin.
+  assert {
+    condition     = length(aws_s3_bucket.s3_rewrite) == 0 && length(aws_cloudfront_origin_access_identity.origin) == 0
+    error_message = "no OAI or second bucket behind a custom origin: the edge could not use them"
+  }
+
+  assert {
+    condition     = aws_lambda_function.echo.function_name == "edgeroute-example-redirect-rules-echo"
+    error_message = "the echo origin works behind any origin, so it is always created"
+  }
+}
+
+run "echo_origin_is_public" {
+  command = plan
+
+  # CloudFront calls a custom origin as an anonymous client.
+  assert {
+    condition     = aws_lambda_function_url.echo.authorization_type == "NONE"
+    error_message = "the echo origin's function URL must not require IAM auth"
+  }
+
+  assert {
+    condition     = aws_lambda_permission.echo_url.function_url_auth_type == "NONE" && aws_lambda_permission.echo_invoke.invoked_via_function_url
+    error_message = "a public function URL needs both the InvokeFunctionUrl and the InvokeFunction grant"
   }
 }
 
