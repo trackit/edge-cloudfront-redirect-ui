@@ -219,7 +219,7 @@ cache_ttl_ms was applied with).
   curl -i https://${HOST}/promo          # 302
   curl -i https://${HOST}/old-pricing    # 200, the Pricing page
   curl -i https://${HOST}/s3-rewrite.html  # 200, from the second bucket
-  curl -i https://${HOST}/echo?from=edge   # 200, the request the echo received
+  curl -i 'https://${HOST}/echo?from=edge' # 200, the request the echo received
 
 In the console, connect to table "${TABLE_NAME}" in ${REGION} to see these under
 the host ${HOST}.

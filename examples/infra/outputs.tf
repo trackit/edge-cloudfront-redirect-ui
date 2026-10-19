@@ -107,7 +107,7 @@ output "repoint_rewrite_put_item_command" {
 }
 
 output "test_rewrite_command" {
-  description = "Before the rule: 404 from S3. After it: 200 and the page the rule points at."
+  description = "Before the rule: 403 from S3. After it: 200 and the page the rule points at."
   value       = "curl -i https://${aws_cloudfront_distribution.this.domain_name}/old-pricing"
 }
 

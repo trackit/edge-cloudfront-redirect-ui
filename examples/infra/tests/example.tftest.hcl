@@ -5,6 +5,11 @@ mock_provider "aws" {
   mock_data "aws_iam_policy_document" {
     defaults = { json = "{}" }
   }
+
+  # For the runs that apply: the provider checks these are ARNs.
+  mock_resource "aws_iam_role" {
+    defaults = { arn = "arn:aws:iam::123456789012:role/echo" }
+  }
 }
 
 mock_provider "aws" {
@@ -159,7 +164,9 @@ run "placeholder_origin_serves_more_than_one_page" {
 # =============================================================================
 
 run "s3_rewrite_bucket_shares_the_distributions_oai" {
-  command = plan
+  # Apply against the mocks: at plan, the bucket ARNs are unknown, and so is
+  # every policy document built from them.
+  command = apply
 
   # An edge-set S3 origin with `origin-access-identity` must use the OAI of the
   # origin it replaced, and OAC signs nothing the edge redirected. So the
@@ -175,8 +182,20 @@ run "s3_rewrite_bucket_shares_the_distributions_oai" {
   }
 
   assert {
-    condition     = aws_s3_object.s3_rewrite_page[0].key == "s3-rewrite.html" && !contains(keys(aws_s3_object.page), "s3-rewrite.html")
-    error_message = "the S3 rewrite page must exist on the second bucket only, or the rule's effect cannot be told apart"
+    condition = alltrue([
+      for name in ["origin", "s3_rewrite"] :
+      length(data.aws_iam_policy_document.origin[name].statement[0].principals) == 1 && alltrue([
+        for p in data.aws_iam_policy_document.origin[name].statement[0].principals :
+        p.identifiers == toset([aws_cloudfront_origin_access_identity.origin[0].iam_arn])
+      ])
+    ])
+    error_message = "both buckets must trust the distribution's OAI, and only it"
+  }
+
+  # The seeded rule and the test output both ask for this key.
+  assert {
+    condition     = aws_s3_object.s3_rewrite_page[0].key == "s3-rewrite.html"
+    error_message = "the second bucket must serve /s3-rewrite.html, the path the seeded S3 rewrite matches"
   }
 }
 

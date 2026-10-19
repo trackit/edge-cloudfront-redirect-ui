@@ -94,7 +94,7 @@ The placeholder origin serves three pages — `index.html`, `pricing.html` and
 `plans.html` — so a rewrite has somewhere visibly different to land:
 
 ```bash
-# Before: nothing at that key, so S3 answers 404.
+# Before: nothing at that key, so S3 answers 403.
 eval "$(terraform output -raw test_rewrite_command)"
 
 eval "$(terraform output -raw sample_rewrite_put_item_command)"
@@ -104,7 +104,7 @@ eval "$(terraform output -raw test_rewrite_command)"
 ```
 
 Both associations must be attached for this to pass — which this example does. If
-it still 404s after the cache TTL, check CloudWatch in the region you curled
+it still 403s after the cache TTL, check CloudWatch in the region you curled
 from: reaching origin-request with no stamped hostname is logged.
 
 To watch a rule **change** being served rather than a rule existing, repoint the
