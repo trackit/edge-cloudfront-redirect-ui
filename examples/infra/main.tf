@@ -75,36 +75,34 @@ resource "aws_s3_object" "page" {
   content_type = "text/html"
 }
 
-resource "aws_cloudfront_origin_access_control" "origin" {
+# An origin access identity rather than origin access control, which AWS now
+# recommends, because a rewrite can switch origin and only an OAI survives that.
+# OAC does not sign a request whose origin Lambda@Edge changed, and an S3 origin
+# set by the edge with `authMethod: origin-access-identity` must use the same OAI
+# as the origin it replaced ("authMethod" in the Lambda@Edge event structure
+# reference). So both buckets below trust this one identity.
+resource "aws_cloudfront_origin_access_identity" "origin" {
   count = local.use_placeholder_origin ? 1 : 0
 
-  name                              = "${var.function_name}-oac"
-  description                       = "OAC for the edgeroute example origin"
-  origin_access_control_origin_type = "s3"
-  signing_behavior                  = "always"
-  signing_protocol                  = "sigv4"
+  comment = "edgeroute example origins (${var.function_name})"
 }
 
-# Grants the distribution (and only it) read access to the bucket. Depends on
-# the distribution ARN — the distribution does not depend on this policy, so
-# there is no cycle.
+# Grants the identity (and only it) read access to a bucket. Without
+# s3:ListBucket, a missing key answers 403 rather than 404.
 data "aws_iam_policy_document" "origin" {
-  count = local.use_placeholder_origin ? 1 : 0
+  for_each = local.use_placeholder_origin ? {
+    origin     = aws_s3_bucket.origin[0].arn
+    s3_rewrite = aws_s3_bucket.s3_rewrite[0].arn
+  } : {}
 
   statement {
-    sid       = "AllowCloudFrontServicePrincipalReadOnly"
+    sid       = "AllowCloudFrontOriginAccessIdentityReadOnly"
     actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.origin[0].arn}/*"]
+    resources = ["${each.value}/*"]
 
     principals {
-      type        = "Service"
-      identifiers = ["cloudfront.amazonaws.com"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "AWS:SourceArn"
-      values   = [aws_cloudfront_distribution.this.arn]
+      type        = "AWS"
+      identifiers = [aws_cloudfront_origin_access_identity.origin[0].iam_arn]
     }
   }
 }
@@ -113,7 +111,134 @@ resource "aws_s3_bucket_policy" "origin" {
   count = local.use_placeholder_origin ? 1 : 0
 
   bucket = aws_s3_bucket.origin[0].id
-  policy = data.aws_iam_policy_document.origin[0].json
+  policy = data.aws_iam_policy_document.origin["origin"].json
+}
+
+# --- Origins a rewrite can switch to ---------------------------------------
+
+# A second private bucket, so a rewrite with an S3 origin has somewhere else to
+# send a request. Only with the placeholder origin: an OAI cannot be used when
+# the request starts at a custom origin.
+#
+# trivy:ignore:AVD-AWS-0089 access logging is unnecessary for a throwaway demo origin
+# trivy:ignore:AVD-AWS-0090 versioning is unnecessary for a throwaway demo origin
+resource "aws_s3_bucket" "s3_rewrite" {
+  count = local.use_placeholder_origin ? 1 : 0
+
+  bucket_prefix = "edgeroute-example-s3-rewrite-"
+  force_destroy = true
+  tags          = var.tags
+}
+
+resource "aws_s3_bucket_public_access_block" "s3_rewrite" {
+  count = local.use_placeholder_origin ? 1 : 0
+
+  bucket                  = aws_s3_bucket.s3_rewrite[0].id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# The same key the request asks for, so the rule only has to switch origin: on
+# the distribution's own bucket this path does not exist.
+resource "aws_s3_object" "s3_rewrite_page" {
+  count = local.use_placeholder_origin ? 1 : 0
+
+  bucket       = aws_s3_bucket.s3_rewrite[0].id
+  key          = "s3-rewrite.html"
+  content      = "<!doctype html><title>edgeroute example origin</title><h1>S3 rewrite</h1><p>Served from the second bucket, not the distribution's own origin.</p>"
+  content_type = "text/html"
+}
+
+resource "aws_s3_bucket_policy" "s3_rewrite" {
+  count = local.use_placeholder_origin ? 1 : 0
+
+  bucket = aws_s3_bucket.s3_rewrite[0].id
+  policy = data.aws_iam_policy_document.origin["s3_rewrite"].json
+}
+
+# A custom origin that answers with the request it received, as JSON. Switching
+# to it is the custom-origin rewrite, and the echo shows what the edge sent: the
+# path, the query string, and the headers, so the viewer-host header being
+# removed and a dropped query string can be seen too.
+data "archive_file" "echo" {
+  type        = "zip"
+  output_path = "${path.module}/.terraform/echo.zip"
+
+  source {
+    filename = "index.mjs"
+    content  = <<-JS
+      export const handler = async (event) => ({
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          {
+            origin: "edgeroute example echo",
+            method: event.requestContext.http.method,
+            path: event.rawPath,
+            query: event.rawQueryString,
+            headers: event.headers,
+          },
+          null,
+          2,
+        ),
+      });
+    JS
+  }
+}
+
+data "aws_iam_policy_document" "echo_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
+# No policy: the echo calls nothing, and its logs are not worth a grant.
+resource "aws_iam_role" "echo" {
+  name               = "${var.function_name}-echo"
+  assume_role_policy = data.aws_iam_policy_document.echo_assume.json
+  tags               = var.tags
+}
+
+# trivy:ignore:AVD-AWS-0066 tracing is unnecessary for a throwaway demo origin
+resource "aws_lambda_function" "echo" {
+  function_name    = "${var.function_name}-echo"
+  role             = aws_iam_role.echo.arn
+  runtime          = "nodejs22.x"
+  handler          = "index.handler"
+  filename         = data.archive_file.echo.output_path
+  source_code_hash = data.archive_file.echo.output_base64sha256
+  tags             = var.tags
+}
+
+# Public on purpose: CloudFront calls a custom origin like any client, and the
+# echo holds nothing.
+resource "aws_lambda_function_url" "echo" {
+  function_name      = aws_lambda_function.echo.function_name
+  authorization_type = "NONE"
+}
+
+# A public function URL needs both grants since October 2025.
+resource "aws_lambda_permission" "echo_url" {
+  statement_id           = "AllowPublicFunctionUrl"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.echo.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
+
+resource "aws_lambda_permission" "echo_invoke" {
+  statement_id             = "AllowPublicInvokeViaFunctionUrl"
+  action                   = "lambda:InvokeFunction"
+  function_name            = aws_lambda_function.echo.function_name
+  principal                = "*"
+  invoked_via_function_url = true
 }
 
 # --- Distribution -----------------------------------------------------------
@@ -134,7 +259,7 @@ data "aws_cloudfront_cache_policy" "caching_disabled" {
 # `no viewer host stamped at origin-request` with the bucket's domain as the key.
 #
 # A whitelist rather than Managed-AllViewer: that one forwards `Host` too, and an
-# S3 origin behind OAC has to receive the bucket's own hostname. Query strings are
+# S3 origin behind an OAI has to receive the bucket's own hostname. Query strings are
 # forwarded because a rewrite can match on them.
 #
 # `CloudFront-Viewer-Country` is for country conditions: it is how CloudFront is
@@ -174,11 +299,17 @@ resource "aws_cloudfront_distribution" "this" {
   default_root_object = local.use_placeholder_origin ? "index.html" : null
 
   origin {
-    origin_id                = local.origin_id
-    domain_name              = local.origin_domain
-    origin_access_control_id = local.use_placeholder_origin ? aws_cloudfront_origin_access_control.origin[0].id : null
+    origin_id   = local.origin_id
+    domain_name = local.origin_domain
 
-    # Only for an existing (non-S3) origin; the S3 placeholder uses OAC instead.
+    dynamic "s3_origin_config" {
+      for_each = local.use_placeholder_origin ? [1] : []
+      content {
+        origin_access_identity = aws_cloudfront_origin_access_identity.origin[0].cloudfront_access_identity_path
+      }
+    }
+
+    # Only for an existing (non-S3) origin; the S3 placeholder uses the OAI instead.
     dynamic "custom_origin_config" {
       for_each = local.use_placeholder_origin ? [] : [1]
       content {

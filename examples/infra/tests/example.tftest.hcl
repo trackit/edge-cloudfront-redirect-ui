@@ -5,6 +5,11 @@ mock_provider "aws" {
   mock_data "aws_iam_policy_document" {
     defaults = { json = "{}" }
   }
+
+  # For the runs that apply: the provider checks these are ARNs.
+  mock_resource "aws_iam_role" {
+    defaults = { arn = "arn:aws:iam::123456789012:role/echo" }
+  }
 }
 
 mock_provider "aws" {
@@ -112,10 +117,10 @@ run "viewer_host_header_is_forwarded_to_the_origin" {
   }
 
   # Managed-AllViewer would also do it, and would also forward Host — which an S3
-  # origin behind OAC rejects, since it has to receive the bucket's own hostname.
+  # origin behind an OAI rejects, since it has to receive the bucket's own hostname.
   assert {
     condition     = aws_cloudfront_origin_request_policy.viewer_host.headers_config[0].header_behavior == "whitelist"
-    error_message = "forward the header by name; forwarding all viewer headers would send Host and break the OAC origin"
+    error_message = "forward the header by name; forwarding all viewer headers would send Host and break the S3 origin"
   }
 
   # Without it, every country condition is skipped.
@@ -151,6 +156,80 @@ run "placeholder_origin_serves_more_than_one_page" {
   assert {
     condition     = alltrue([for o in values(aws_s3_object.page) : o.content_type == "text/html"])
     error_message = "each demo page must be served as text/html, or a browser will offer to download it"
+  }
+}
+
+# =============================================================================
+# Origins a rewrite can switch to (CF-60)
+# =============================================================================
+
+run "s3_rewrite_bucket_shares_the_distributions_oai" {
+  # Apply against the mocks: at plan, the bucket ARNs are unknown, and so is
+  # every policy document built from them.
+  command = apply
+
+  # An edge-set S3 origin with `origin-access-identity` must use the OAI of the
+  # origin it replaced, and OAC signs nothing the edge redirected. So the
+  # distribution's own origin has to be on the same OAI the second bucket trusts.
+  assert {
+    condition     = alltrue([for o in aws_cloudfront_distribution.this.origin : length(o.s3_origin_config) == 1])
+    error_message = "the placeholder origin must use an OAI, or a rewrite to the second bucket is refused"
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket.s3_rewrite) == 1 && length(aws_s3_bucket_policy.s3_rewrite) == 1
+    error_message = "a second bucket, readable through the OAI, is what an S3 rewrite switches to"
+  }
+
+  assert {
+    condition = alltrue([
+      for name in ["origin", "s3_rewrite"] :
+      length(data.aws_iam_policy_document.origin[name].statement[0].principals) == 1 && alltrue([
+        for p in data.aws_iam_policy_document.origin[name].statement[0].principals :
+        p.identifiers == toset([aws_cloudfront_origin_access_identity.origin[0].iam_arn])
+      ])
+    ])
+    error_message = "both buckets must trust the distribution's OAI, and only it"
+  }
+
+  # The seeded rule and the test output both ask for this key.
+  assert {
+    condition     = aws_s3_object.s3_rewrite_page[0].key == "s3-rewrite.html"
+    error_message = "the second bucket must serve /s3-rewrite.html, the path the seeded S3 rewrite matches"
+  }
+}
+
+run "no_s3_rewrite_bucket_behind_an_existing_origin" {
+  command = plan
+
+  variables {
+    origin_domain_name = "origin.example.com"
+  }
+
+  # An OAI cannot be used when the request starts at a custom origin.
+  assert {
+    condition     = length(aws_s3_bucket.s3_rewrite) == 0 && length(aws_cloudfront_origin_access_identity.origin) == 0
+    error_message = "no OAI or second bucket behind a custom origin: the edge could not use them"
+  }
+
+  assert {
+    condition     = aws_lambda_function.echo.function_name == "edgeroute-example-redirect-rules-echo"
+    error_message = "the echo origin works behind any origin, so it is always created"
+  }
+}
+
+run "echo_origin_is_public" {
+  command = plan
+
+  # CloudFront calls a custom origin as an anonymous client.
+  assert {
+    condition     = aws_lambda_function_url.echo.authorization_type == "NONE"
+    error_message = "the echo origin's function URL must not require IAM auth"
+  }
+
+  assert {
+    condition     = aws_lambda_permission.echo_url.function_url_auth_type == "NONE" && aws_lambda_permission.echo_invoke.invoked_via_function_url
+    error_message = "a public function URL needs both the InvokeFunctionUrl and the InvokeFunction grant"
   }
 }
 

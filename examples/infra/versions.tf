@@ -9,5 +9,10 @@ terraform {
       # runs the same provider: 6.69.0 cannot upload a Lambda zip over ~48 KB.
       version = ">= 6.0, < 6.69.0"
     }
+    # Zips the echo origin's handler.
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
   }
 }
