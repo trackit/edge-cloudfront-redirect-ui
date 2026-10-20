@@ -75,6 +75,18 @@ resource "aws_s3_object" "page" {
   content_type = "text/html"
 }
 
+# The origin used OAC until CF-60. Dropped from state rather than destroyed:
+# Terraform deletes it before the distribution stops using it, and CloudFront
+# refuses that with OriginAccessControlInUse, failing the apply. A stack that
+# had it keeps an unused OAC named "<function_name>-oac", safe to delete by hand.
+removed {
+  from = aws_cloudfront_origin_access_control.origin
+
+  lifecycle {
+    destroy = false
+  }
+}
+
 # An origin access identity rather than origin access control, which AWS now
 # recommends, because a rewrite can switch origin and only an OAI survives that.
 # OAC does not sign a request whose origin Lambda@Edge changed, and an S3 origin
