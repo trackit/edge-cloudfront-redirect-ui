@@ -1,6 +1,6 @@
 {
   "name": "@cloudfront-redirect-rules/lambda",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Standalone Lambda@Edge: DynamoDB-backed redirects (viewer-request) and rewrites (origin-request)",
   "license": "Apache-2.0",

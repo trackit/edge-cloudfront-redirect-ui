@@ -1,7 +1,7 @@
 {
   "name": "@cloudfront-redirect-rules/ui",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "description": "Console SPA — public landing page and (from the next tickets) the rules console.",
   "scripts": {
