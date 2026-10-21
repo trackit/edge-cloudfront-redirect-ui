@@ -296,6 +296,17 @@ Run at least lint, typecheck and `npm test` locally before opening a PR.
 
 Separately, `.github/workflows/deploy-dev.yml` deploys the sandbox dev environment on every push to `dev` (and on demand), after re-running the checks. See [deploy/README.md](deploy/README.md).
 
+### Releases
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`: the CI checks again, then a GitHub release whose notes are the squash-merge subjects since the previous release, grouped into features, fixes, docs and maintenance by their prefix. A hyphenated tag (`v1.1.0-rc.1`) is published as a pre-release, and like any tag it must match the version in `package.json`, suffix included. Nothing is deployed and no build is attached: the bundles bake in their deployment's config at apply time, so consumers pin the modules to the tag (`?ref=v1.0.0`) instead.
+
+To cut one:
+
+1. Bump every workspace in a PR to `dev`: `npm version 1.1.0 --workspaces --include-workspace-root --no-git-tag-version`.
+2. Tag that PR's merge commit and push the tag. Right after it merges, before anything else lands, that is `origin/dev`: `git tag v1.1.0 origin/dev && git push origin v1.1.0`.
+
+The workflow refuses a tag that does not match the root `package.json` version.
+
 ### Code comments
 
 The comments here carry the _why_ — a constraint that is not visible from the code, a decision that looks arbitrary until you know what it rules out. That is worth keeping. What is not worth keeping is length: a reviewer reading a diff should not have to read around the prose to find the change.
